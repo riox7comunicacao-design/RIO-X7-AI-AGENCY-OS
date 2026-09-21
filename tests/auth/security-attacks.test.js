@@ -327,7 +327,8 @@ test('[ATAQUE L] USER inválido é rejeitado em cada campo, e comportamento real
     name: 'X',
     email: 'x@example.test',
     role: ROLE.ADMIN,
-    permissions: [PERMISSION.READ_CRM],
+    // Fase A: as permissões efetivas vêm da role — aqui, o conjunto exato do ADMIN.
+    permissions: ROLE_PERMISSION_TEMPLATE[ROLE.ADMIN],
     status: USER_STATUS.ACTIVE,
   };
 
@@ -344,13 +345,19 @@ test('[ATAQUE L] USER inválido é rejeitado em cada campo, e comportamento real
   assert.throws(() => defineUser({ ...base, permissions: [123] }), /permissions/);
   assert.throws(() => defineUser({ ...base, permissions: ['not-valid'] }), /permissions/);
 
-  // Comportamento REAL documentado (não inventado): a implementação atual
-  // NÃO rejeita permissões duplicadas no array — duplicatas são aceitas
-  // silenciosamente. Isso não concede mais acesso (o array é consultado só
-  // com .includes()), mas é registrado aqui como comportamento real, não
-  // como algo a "corrigir" sem autorização.
-  const comDuplicata = defineUser({ ...base, permissions: [PERMISSION.READ_CRM, PERMISSION.READ_CRM] });
-  assert.deepEqual(comDuplicata.permissions, [PERMISSION.READ_CRM, PERMISSION.READ_CRM]);
+  // Comportamento documentado (ATUALIZADO na Fase A): até o Passo 0009.7 o
+  // defineUser() aceitava permissões duplicadas no array. Agora as permissões
+  // efetivas são determinadas pela role, e um `permissions` que difira do
+  // conjunto exato da role — inclusive por duplicata — é rejeitado, então
+  // duplicatas deixam de existir.
+  assert.throws(
+    () => defineUser({ ...base, permissions: [PERMISSION.READ_CRM, PERMISSION.READ_CRM] }),
+    /não podem diferir das permissions da role/
+  );
+  assert.throws(
+    () => defineUser({ ...base, permissions: [...ROLE_PERMISSION_TEMPLATE[ROLE.ADMIN], PERMISSION.READ_CRM] }),
+    /não podem diferir das permissions da role/
+  );
 
   // Comportamento REAL documentado: campos inesperados/estranhos no objeto
   // de entrada (ex.: password, token, actorType) NUNCA aparecem no USER
@@ -516,23 +523,27 @@ test('[BRIDGE-3] usuário INACTIVE nunca é convertido', () => {
 
 test('[BRIDGE-4] toApprovalQueueIdentity sozinho NÃO valida a permissão específica de negócio (isso é responsabilidade do approvalQueue.js)', () => {
   // Documentação de comportamento real: a ponte só garante ATIVO + forma.
-  // Ela converte com sucesso mesmo um Closer sem APPROVE:LEAD_APPROVAL —
-  // a rejeição de fato acontece dentro de approveProspect(), que já checa
-  // isso desde 0009.2. Isso não é uma falha da ponte: é a divisão de
-  // responsabilidades pretendida (ver approvalQueueBridge.js).
-  const closerSemAprovacao = createAuthorizationContext(
-    defineUser({
+  // Ela converte com sucesso a identidade mesmo quando as permissions que
+  // carrega não incluem APPROVE:LEAD_APPROVAL — a rejeição de fato acontece
+  // dentro de approveProspect(), que já checa isso desde 0009.2. Isso não é
+  // uma falha da ponte: é a divisão de responsabilidades pretendida (ver
+  // approvalQueueBridge.js).
+  //
+  // Fase A: as permissões efetivas vêm da role e nenhuma role atual carece de
+  // APPROVE:LEAD_APPROVAL, então um "Closer sem aprovação" deixou de ser
+  // construível via defineUser(). O mesmo cenário é reproduzido aqui editando
+  // a saída já convertida pela ponte (uma identidade simples).
+  const closerContext = createAuthorizationContext(
+    buildCloser({
       userId: 'user-closer-sem-aprovacao',
       authUserId: 'auth-closer-sem-aprovacao',
-      name: 'Closer Sem Aprovação',
       email: 'closer-sem-aprovacao@example.test',
-      role: ROLE.COMMERCIAL_CLOSER,
-      permissions: [PERMISSION.READ_CRM],
-      status: USER_STATUS.ACTIVE,
     })
   );
 
-  const identity = toApprovalQueueIdentity(closerSemAprovacao); // não lança aqui
+  const convertida = toApprovalQueueIdentity(closerContext); // a ponte não lança nem olha a permissão de negócio
+  const identity = { ...convertida, permissions: [PERMISSION.READ_CRM] };
+  assert.equal(convertida.permissions.includes(PERMISSION.APPROVE_LEAD_APPROVAL), true);
   assert.equal(identity.permissions.includes(PERMISSION.APPROVE_LEAD_APPROVAL), false);
 
   const { createEmptyQueue, addProspect, approveProspect } = require('../../src/research-prospector/approvalQueue');

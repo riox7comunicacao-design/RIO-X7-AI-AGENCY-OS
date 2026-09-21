@@ -8,8 +8,14 @@
 //
 // Nunca aceita/armazena senha, token, ou qualquer segredo — isso nunca
 // pertenceu a este modelo (Regra 8/9 do RULES.md; 0009, seção 1).
+//
+// As permissões efetivas de um USER são DETERMINADAS PELA ROLE (constants.js:
+// ROLE_PERMISSIONS) — não há customização por usuário nesta etapa. O campo
+// `permissions` do USER é sempre a lista canônica da role. Por compatibilidade
+// transitória, defineUser() ainda aceita um `permissions` explícito, mas SOMENTE
+// quando for exatamente o conjunto da role; qualquer outro conjunto é rejeitado.
 
-const { ROLE, USER_STATUS, isValidPermissionString } = require('./constants');
+const { ROLE, USER_STATUS, isValidPermissionString, getRolePermissions } = require('./constants');
 
 function isNonEmptyString(value) {
   return typeof value === 'string' && value.trim().length > 0;
@@ -44,7 +50,11 @@ function defineUser({
   if (!Object.values(ROLE).includes(role)) {
     throw new Error(`USER inválido: role desconhecida "${role}"`);
   }
-  if (!Array.isArray(permissions) || !permissions.every(isValidPermissionString)) {
+  // `permissions` é OPCIONAL (compatibilidade transitória): quando informado,
+  // precisa ser uma lista de permissões válidas — e, mais abaixo, exatamente o
+  // conjunto da role. Só `undefined` significa "omitido"; qualquer outro valor
+  // que não seja uma lista válida (null, string, objeto…) continua rejeitado.
+  if (permissions !== undefined && (!Array.isArray(permissions) || !permissions.every(isValidPermissionString))) {
     throw new Error('USER inválido: permissions deve ser uma lista de permissões no formato ACTION:DOMAIN');
   }
   if (!Object.values(USER_STATUS).includes(status)) {
@@ -54,13 +64,28 @@ function defineUser({
     throw new Error('USER inválido: createdAt/updatedAt são obrigatórios');
   }
 
+  // ÚLTIMA validação (preserva a precedência dos erros acima). As permissões
+  // efetivas vêm da role; um `permissions` explícito só é aceito se for
+  // exatamente o conjunto da role — mesmos membros e mesma contagem, em
+  // qualquer ordem, ou seja, sem faltar, sobrar nem repetir nenhuma.
+  const rolePermissions = getRolePermissions(role);
+  if (
+    permissions !== undefined &&
+    !(permissions.length === rolePermissions.length && rolePermissions.every((permission) => permissions.includes(permission)))
+  ) {
+    throw new Error(
+      `USER inválido: permissions não podem diferir das permissions da role ${role} ` +
+        '(as permissões efetivas são determinadas pela role; não há customização por usuário — omita "permissions" ou informe exatamente o conjunto da role)'
+    );
+  }
+
   return Object.freeze({
     userId: userId.trim(),
     authUserId: authUserId === null ? null : authUserId.trim(),
     name: name.trim(),
     email: email.trim().toLowerCase(),
     role,
-    permissions: Object.freeze([...permissions]),
+    permissions: Object.freeze([...rolePermissions]),
     status,
     createdAt,
     updatedAt,

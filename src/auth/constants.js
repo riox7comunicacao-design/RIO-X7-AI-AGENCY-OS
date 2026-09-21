@@ -52,7 +52,7 @@ const PERMISSION = Object.freeze({
 
 const PERMISSION_FORMAT = /^[A-Z][A-Z0-9_]*:[A-Z][A-Z0-9_]*$/;
 
-// Valida só a FORMA e se a ação (prefixo) é uma das 9 reconhecidas — nunca
+// Valida só a FORMA e se a ação (prefixo) é uma das 10 reconhecidas — nunca
 // decide se um usuário específico deve ou não ter essa permissão (isso é
 // hasPermission/requirePermission, em authorizationContext.js).
 function isValidPermissionString(permission) {
@@ -63,36 +63,74 @@ function isValidPermissionString(permission) {
   return Object.values(ACTION).includes(action);
 }
 
-// Template de permissões por role — usado SÓ como ponto de partida ao criar
-// (seedar) um usuário. Nunca é lido em tempo de checagem de autorização
-// (hasPermission/requirePermission sempre leem o array `permissions` já
-// persistido no próprio USER, nunca derivam nada a partir do `role`) — isso
-// é o que preserva ROLE != PERMISSION na prática, não só na intenção.
+// Permissões EFETIVAS por role (Fase A do fechamento da fronteira de
+// identidade e autorização).
 //
-// ADMIN recebe, explicitamente, cada permissão já nomeada até este passo —
-// nunca um coringa "*:*" (proibido pela decisão 0010, seção 10). Qualquer
-// privilégio administrativo adicional no futuro precisa ser nomeado aqui
-// explicitamente, nunca presumido a partir do role.
+// Decisão do proprietário: as permissões efetivas de um USER são determinadas
+// pela ROLE — não há customização por usuário nesta etapa (se um dia for
+// necessária, será outro projeto arquitetural, nunca uma extensão silenciosa
+// deste arquivo). Por isso cada role tem UMA lista literal e explícita, que
+// NÃO é derivada do enum global PERMISSION: adicionar uma permissão nova ao
+// enum não a concede a nenhuma role. Quem a adiciona precisa decidir,
+// explicitamente, se ADMIN e COMMERCIAL_CLOSER a recebem e editar as listas
+// abaixo — tests/auth/role-permissions.test.js falha até essa decisão ser
+// tomada.
 //
-// COMMERCIAL_CLOSER recebe exatamente o conjunto aprovado no Passo 0009.6 —
-// nenhum poder adicional foi presumido além do que foi explicitamente
-// autorizado (MANAGE:USERS fica de fora, propositalmente).
-const ROLE_PERMISSION_TEMPLATE = Object.freeze({
-  [ROLE.ADMIN]: Object.freeze(Object.values(PERMISSION)),
-  [ROLE.COMMERCIAL_CLOSER]: Object.freeze([
-    PERMISSION.READ_CRM,
-    PERMISSION.ANALYZE_CRM,
-    PERMISSION.PROPOSE_CRM,
-    PERMISSION.APPROVE_LEAD_APPROVAL,
-    PERMISSION.APPROVE_OUTBOUND_APPROVAL,
-  ]),
+// ROLE != PERMISSION continua valendo: a role é o rótulo e a fonte destas
+// listas, lidas quando o USER é criado (defineUser). As checagens de
+// autorização (hasPermission/requirePermission) leem apenas o array
+// `permissions` do contexto — nunca comparam o nome da role.
+//
+// ADMIN: exatamente as 7 permissões abaixo — nunca um coringa "*:*" (proibido
+// pela decisão 0010, seção 10).
+const ADMIN_PERMISSIONS = Object.freeze([
+  PERMISSION.READ_CRM,
+  PERMISSION.ANALYZE_CRM,
+  PERMISSION.PROPOSE_CRM,
+  PERMISSION.WRITE_CRM,
+  PERMISSION.APPROVE_LEAD_APPROVAL,
+  PERMISSION.APPROVE_OUTBOUND_APPROVAL,
+  PERMISSION.MANAGE_USERS,
+]);
+
+// COMMERCIAL_CLOSER: exatamente as 5 permissões abaixo — WRITE:CRM e
+// MANAGE:USERS ficam de fora, propositalmente.
+const COMMERCIAL_CLOSER_PERMISSIONS = Object.freeze([
+  PERMISSION.READ_CRM,
+  PERMISSION.ANALYZE_CRM,
+  PERMISSION.PROPOSE_CRM,
+  PERMISSION.APPROVE_LEAD_APPROVAL,
+  PERMISSION.APPROVE_OUTBOUND_APPROVAL,
+]);
+
+const ROLE_PERMISSIONS = Object.freeze({
+  [ROLE.ADMIN]: ADMIN_PERMISSIONS,
+  [ROLE.COMMERCIAL_CLOSER]: COMMERCIAL_CLOSER_PERMISSIONS,
 });
+
+// Devolve a lista canônica (congelada) de permissões efetivas de uma role.
+// Lança para qualquer valor fora de ROLE — inclusive nomes herdados do
+// protótipo ("constructor", "__proto__"), que nunca são roles.
+function getRolePermissions(role) {
+  if (!Object.prototype.hasOwnProperty.call(ROLE_PERMISSIONS, role)) {
+    throw new Error(`role desconhecida "${String(role)}": nenhuma permissão definida`);
+  }
+  return ROLE_PERMISSIONS[role];
+}
+
+// Nome antigo (Passo 0009.6), mantido como alias do MESMO objeto para não
+// quebrar os usos existentes. Código novo deve usar ROLE_PERMISSIONS.
+const ROLE_PERMISSION_TEMPLATE = ROLE_PERMISSIONS;
 
 module.exports = {
   ACTION,
   ROLE,
   USER_STATUS,
   PERMISSION,
+  ADMIN_PERMISSIONS,
+  COMMERCIAL_CLOSER_PERMISSIONS,
+  ROLE_PERMISSIONS,
   ROLE_PERMISSION_TEMPLATE,
+  getRolePermissions,
   isValidPermissionString,
 };
