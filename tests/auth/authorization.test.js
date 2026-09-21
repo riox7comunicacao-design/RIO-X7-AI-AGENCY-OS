@@ -8,7 +8,6 @@ const {
   ROLE_PERMISSION_TEMPLATE,
   isValidPermissionString,
   defineUser,
-  createAuthorizationContext,
   requireActiveUser,
   hasPermission,
   requirePermission,
@@ -18,6 +17,9 @@ const {
   createSupabaseAuthAdapter,
   toApprovalQueueIdentity,
 } = require('../../src/auth');
+// Fase C: createAuthorizationContext não é mais exportado por src/auth; os testes o
+// obtêm do helper de composição (o mesmo emissor interno que o userResolver usa).
+const { createAuthorizationContext } = require('../helpers/authFixtures');
 
 function buildAdmin(overrides = {}) {
   return defineUser({
@@ -130,7 +132,7 @@ test('[I] permissão inválida (formato errado ou ação desconhecida) é sempre
 });
 
 // [J] role inválida deve ser rejeitada.
-test('[J] role inválida é rejeitada em defineUser e em createAuthorizationContext', () => {
+test('[J] role inválida é rejeitada em defineUser, e um literal com role inválida nunca origina contexto', () => {
   assert.throws(
     () =>
       defineUser({
@@ -143,14 +145,16 @@ test('[J] role inválida é rejeitada em defineUser e em createAuthorizationCont
       }),
     /role desconhecida/
   );
+  // Fase C: o emissor só aceita um USER definido por defineUser() — um literal com
+  // role inválida nem chega a ser avaliado, é rejeitado por não ser um USER definido.
   assert.throws(
     () => createAuthorizationContext({ userId: 'x', name: 'X', role: 'SYSTEM', permissions: [], status: USER_STATUS.ACTIVE }),
-    /role desconhecida/
+    /USER definido por defineUser/
   );
 });
 
 // [K] status inválido deve ser rejeitado.
-test('[K] status inválido é rejeitado em defineUser e em createAuthorizationContext', () => {
+test('[K] status inválido é rejeitado em defineUser, e um literal com status inválido nunca origina contexto', () => {
   assert.throws(
     () =>
       defineUser({
@@ -163,18 +167,27 @@ test('[K] status inválido é rejeitado em defineUser e em createAuthorizationCo
       }),
     /status desconhecido/
   );
+  // Fase C: idem — um literal com status inválido não é um USER definido.
   assert.throws(
     () => createAuthorizationContext({ userId: 'x', name: 'X', role: ROLE.ADMIN, permissions: [], status: 'PAUSED' }),
-    /status desconhecido/
+    /USER definido por defineUser/
   );
 });
 
 // [L] AuthorizationContext não aceita dados incompletos.
-test('[L] AuthorizationContext não aceita dados incompletos', () => {
-  assert.throws(() => createAuthorizationContext(null), /USER resolvido é obrigatório/);
-  assert.throws(() => createAuthorizationContext({}), /userId/);
-  assert.throws(() => createAuthorizationContext({ userId: 'x' }), /name/);
-  assert.throws(() => createAuthorizationContext({ userId: 'x', name: 'X' }), /role desconhecida/);
+test('[L] AuthorizationContext não aceita dados incompletos: só um USER definido origina contexto', () => {
+  // Fase C: nenhum objeto incompleto (ou completo, mas solto) origina contexto.
+  const incompletos = [
+    null,
+    undefined,
+    {},
+    { userId: 'x' },
+    { userId: 'x', name: 'X' },
+    { userId: 'x', name: 'X', role: ROLE.ADMIN },
+  ];
+  for (const incompleto of incompletos) {
+    assert.throws(() => createAuthorizationContext(incompleto), /USER definido por defineUser/);
+  }
 });
 
 // [M] AI actor não pode ser tratado como USER humano.
@@ -188,8 +201,14 @@ test('[M] um objeto fabricado simulando um especialista de IA se passando por AD
   };
 
   assert.equal(Object.isFrozen(forged), false);
-  assert.throws(() => requirePermission(forged, PERMISSION.APPROVE_LEAD_APPROVAL), /criado por createAuthorizationContext/);
-  assert.throws(() => hasPermission(forged, PERMISSION.APPROVE_LEAD_APPROVAL), /criado por createAuthorizationContext/);
+  assert.throws(() => requirePermission(forged, PERMISSION.APPROVE_LEAD_APPROVAL), /emitido pelo emissor interno confiável/);
+  assert.throws(() => hasPermission(forged, PERMISSION.APPROVE_LEAD_APPROVAL), /emitido pelo emissor interno confiável/);
+
+  // Fase C: congelar o objeto à mão (a "prova" antiga) também não basta — o que vale é a
+  // marca de emissão, não o Object.freeze.
+  const forgedCongelado = Object.freeze({ ...forged, authUserId: 'auth-ai-actor', permissions: Object.freeze([...forged.permissions]) });
+  assert.throws(() => requirePermission(forgedCongelado, PERMISSION.APPROVE_LEAD_APPROVAL), /emitido pelo emissor interno confiável/);
+  assert.throws(() => hasPermission(forgedCongelado, PERMISSION.APPROVE_LEAD_APPROVAL), /emitido pelo emissor interno confiável/);
 
   // "SYSTEM" (o actor de IA já usado em approvalQueue.js) nunca é um role de USER válido.
   assert.throws(

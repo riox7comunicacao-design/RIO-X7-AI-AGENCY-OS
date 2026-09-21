@@ -1,8 +1,8 @@
 'use strict';
 
-// Helpers de teste da fronteira de identidade (Fase B).
+// Helpers de teste da fronteira de identidade (Fases B e C).
 //
-// Produzem uma VerifiedIdentity REAL — o objeto que authAdapter.verifyAccessToken
+// Fase B: produzem uma VerifiedIdentity REAL — o objeto que authAdapter.verifyAccessToken
 // de fato devolve — SEM rede: o SDK real do Supabase roda contra um `fetch`
 // falso e controlado, então o caminho de verificação (GET /auth/v1/user, leitura
 // da resposta, validações e marca interna) é o de produção. Nada aqui fabrica
@@ -18,6 +18,18 @@
 // interna: ela não protege contra código que controla o processo.
 
 const { createSupabaseAuthAdapter } = require('../../src/auth/authAdapter');
+
+// Ponto de composição de testes do AuthorizationContext (Fase C). O emissor
+// único vive em src/auth/internal/contextIssuer.js e NÃO é exportado pelo
+// barrel de src/auth; este helper é o único ponto de testes que o importa e o
+// expõe sob o nome antigo `createAuthorizationContext`, para que os testes
+// existentes mudem só a linha de import. Em src/ NÃO existe mais nenhum
+// construtor público de contexto: aqui é só o mesmo emissor interno,
+// estrito (aceita só USER de defineUser() com authUserId), usado por testes.
+const contextIssuerModule = require('../../src/auth/internal/contextIssuer');
+const { issueAuthorizationContext, isIssuedAuthorizationContext } = contextIssuerModule;
+
+const createAuthorizationContext = issueAuthorizationContext;
 
 const FAKE_ENV = Object.freeze({
   SUPABASE_URL: 'https://exemplo.supabase.co',
@@ -132,6 +144,10 @@ async function verifiedIdentityFor(t, spec) {
 }
 
 module.exports = {
+  contextIssuerModule,
+  issueAuthorizationContext,
+  createAuthorizationContext,
+  isIssuedAuthorizationContext,
   FAKE_ENV,
   BAD_JWT_RESPONSE,
   fakeAccessToken,

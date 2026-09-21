@@ -8,7 +8,9 @@
 // de forma testável, sem inventar uma camada de persistência real que este
 // passo não pediu e não deveria criar.
 
-const { createAuthorizationContext } = require('./authorizationContext');
+// O resolver é o ÚNICO módulo que emite AuthorizationContext (Fase C): usa o
+// emissor interno, que só aceita um USER definido por defineUser() com authUserId.
+const { issueAuthorizationContext } = require('./internal/contextIssuer');
 
 function createUserStore(initialUsers = []) {
   const byUserId = new Map();
@@ -62,7 +64,7 @@ function resolveAuthorizationContext(userStore, { authUserId, email } = {}) {
     throw new Error('usuário não encontrado: nenhum USER Rio X7 corresponde a esta identidade autenticada');
   }
 
-  return createAuthorizationContext(user);
+  return issueAuthorizationContext(user);
 }
 
 module.exports = { createUserStore, resolveAuthorizationContext };

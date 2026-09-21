@@ -1,7 +1,6 @@
 const { ACTION, ROLE, USER_STATUS, PERMISSION, ROLE_PERMISSION_TEMPLATE, isValidPermissionString } = require('./constants');
 const { defineUser } = require('./user');
 const {
-  createAuthorizationContext,
   assertIsAuthorizationContext,
   requireActiveUser,
   hasPermission,
@@ -17,6 +16,9 @@ const {
 } = require('./authAdapter');
 const { toApprovalQueueIdentity } = require('./approvalQueueBridge');
 
+// Fase C: createAuthorizationContext e o emissor de contexto NÃO são exportados.
+// O emissor é interno (internal/contextIssuer.js) e só o userResolver o usa; o
+// barrel público só oferece as VERIFICAÇÕES de contexto abaixo.
 module.exports = {
   ACTION,
   ROLE,
@@ -25,7 +27,6 @@ module.exports = {
   ROLE_PERMISSION_TEMPLATE,
   isValidPermissionString,
   defineUser,
-  createAuthorizationContext,
   assertIsAuthorizationContext,
   requireActiveUser,
   hasPermission,

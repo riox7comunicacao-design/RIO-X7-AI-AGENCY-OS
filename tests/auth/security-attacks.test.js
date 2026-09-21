@@ -19,7 +19,6 @@ const {
   ROLE_PERMISSION_TEMPLATE,
   isValidPermissionString,
   defineUser,
-  createAuthorizationContext,
   requireActiveUser,
   hasPermission,
   requirePermission,
@@ -29,6 +28,9 @@ const {
   createSupabaseAuthAdapter,
   toApprovalQueueIdentity,
 } = require('../../src/auth');
+// Fase C: createAuthorizationContext não é mais exportado por src/auth; os testes o
+// obtêm do helper de composição (o mesmo emissor interno que o userResolver usa).
+const { createAuthorizationContext } = require('../helpers/authFixtures');
 
 function buildAdmin(overrides = {}) {
   return defineUser({
@@ -98,16 +100,15 @@ test('[ATAQUE C] CLOSER INACTIVE com APPROVE:LEAD_APPROVAL ainda assim é REJEIT
 // ===========================================================================
 // ATAQUE D — contexto adulterado (role/permissions incompatíveis com o USER real)
 // ===========================================================================
-// LIMITAÇÃO REAL, NÃO CORRIGIDA NESTE PASSO: createAuthorizationContext()
-// valida só a FORMA do objeto recebido — não confirma que os dados vieram de
-// fato de um USER armazenado em algum lugar confiável. Qualquer código no
-// mesmo processo (não só um especialista de IA — qualquer módulo que
-// consiga chamar require('../../src/auth')) pode montar um objeto com a
-// forma certa e "virar" ADMIN. Isso é possível hoje porque não existe
-// nenhuma autenticação real conectada (Supabase não está configurado) nem
-// nenhuma restrição de que só o userResolver pode chamar esta função.
-// PENDENTE — DEPENDE DE AUTENTICAÇÃO REAL (ver threat model, item 4).
-test('[ATAQUE D] contexto forjado com role=ADMIN, sem corresponder a nenhum USER real, é aceito hoje (risco documentado, não corrigido)', () => {
+// ATUALIZADO NA FASE C: createAuthorizationContext() deixou de ser um
+// construtor público. O emissor interno só aceita um USER devolvido por
+// defineUser() (e com authUserId), e os serviços só aceitam contextos que esse
+// emissor emitiu: um objeto forjado — mesmo com a forma certa, mesmo congelado
+// — é rejeitado nos dois pontos. Isto é uma fronteira arquitetural interna
+// confiável, NÃO criptografia: não protege contra código malicioso que já
+// controle o processo e importe o emissor interno (o teste estático de imports
+// da Fase F vigia quem pode importá-lo).
+test('[ATAQUE D] contexto forjado com role=ADMIN, sem corresponder a nenhum USER real, é REJEITADO', () => {
   const closerReal = buildCloser();
 
   const forjado = {
@@ -118,20 +119,23 @@ test('[ATAQUE D] contexto forjado com role=ADMIN, sem corresponder a nenhum USER
     status: USER_STATUS.ACTIVE,
   };
 
-  // createAuthorizationContext() não rejeita isso — não há verificação
-  // cruzada contra um USER store real dentro desta função.
-  const context = createAuthorizationContext(forjado);
-  assert.equal(context.role, ROLE.ADMIN);
-  assert.doesNotThrow(() => requirePermission(context, PERMISSION.MANAGE_USERS));
+  // 1) O emissor só aceita USER definido por defineUser(): um literal com a forma certa não é.
+  assert.throws(() => createAuthorizationContext(forjado), /USER definido por defineUser/);
 
-  // Isso é o ataque funcionando, não uma proteção. Documentado como
-  // PENDENTE — DEPENDE DE AUTENTICAÇÃO REAL.
+  // 2) Um objeto que imita o contexto — inclusive congelado e com authUserId — não passa como contexto emitido.
+  const contextoForjado = Object.freeze({
+    ...forjado,
+    authUserId: 'auth-forjado',
+    permissions: Object.freeze([...forjado.permissions]),
+  });
+  assert.throws(() => requirePermission(contextoForjado, PERMISSION.MANAGE_USERS), /emitido pelo emissor interno confiável/);
+  assert.throws(() => hasPermission(contextoForjado, PERMISSION.MANAGE_USERS), /emitido pelo emissor interno confiável/);
 });
 
 // ===========================================================================
 // ATAQUE E — IA fingindo ser ADMIN
 // ===========================================================================
-test('[ATAQUE E-1] um objeto {actorType:"AI", role:"ADMIN", ...} SEM passar por createAuthorizationContext é REJEITADO', () => {
+test('[ATAQUE E-1] um objeto {actorType:"AI", role:"ADMIN", ...} SEM passar pelo emissor interno é REJEITADO', () => {
   const fingindoSerAdmin = {
     actorType: 'AI',
     userId: 'ai-actor-coo',
@@ -141,23 +145,23 @@ test('[ATAQUE E-1] um objeto {actorType:"AI", role:"ADMIN", ...} SEM passar por 
     status: USER_STATUS.ACTIVE,
   };
 
-  // Este objeto nunca foi produzido por createAuthorizationContext() — não
-  // é frozen. Esta é a proteção estrutural que de fato existe hoje.
+  // Este objeto nunca foi emitido pelo emissor interno (a marca de emissão é a
+  // proteção estrutural — desde a Fase C não depende mais de Object.freeze).
   assert.equal(Object.isFrozen(fingindoSerAdmin), false);
-  assert.throws(() => requirePermission(fingindoSerAdmin, PERMISSION.MANAGE_USERS), /criado por createAuthorizationContext/);
-  assert.throws(() => hasPermission(fingindoSerAdmin, PERMISSION.MANAGE_USERS), /criado por createAuthorizationContext/);
+  assert.throws(() => requirePermission(fingindoSerAdmin, PERMISSION.MANAGE_USERS), /emitido pelo emissor interno confiável/);
+  assert.throws(() => hasPermission(fingindoSerAdmin, PERMISSION.MANAGE_USERS), /emitido pelo emissor interno confiável/);
 });
 
-// LIMITAÇÃO REAL, NÃO CORRIGIDA: se o mesmo objeto passar primeiro por
-// createAuthorizationContext() (que não sabe nada sobre "actorType" — o
-// campo é simplesmente ignorado/descartado, nem aceito nem usado para
-// rejeitar), o resultado fica indistinguível de um contexto humano legítimo.
-// Não existe, hoje, nenhum "actor model" que marque a origem (IA vs. humano
-// autenticado) de um AuthorizationContext. PENDENTE — DEPENDE DE
-// AUTENTICAÇÃO REAL (ver threat model, item 4). Nenhuma validação de
-// "actorType" foi adicionada para simular proteção: seria trivialmente
-// contornável por quem simplesmente omitisse o campo, dando falsa confiança.
-test('[ATAQUE E-2] o mesmo objeto, PASSANDO por createAuthorizationContext, produz um contexto indistinguível de um ADMIN humano legítimo', () => {
+// ATUALIZADO NA FASE C: o mesmo objeto, passado ao emissor interno, é
+// rejeitado — o emissor só aceita um USER definido por defineUser(). O que
+// CONTINUA verdade, e é registrado aqui com honestidade: não existe "actor
+// model" que marque a origem (IA vs. humano) dentro do próprio dado. Quem tem
+// acesso ao emissor interno E a defineUser() consegue emitir um contexto — a
+// fronteira é arquitetural (só o userResolver deve importar o emissor; o teste
+// estático de imports da Fase F vigia isso), não criptográfica. Nenhuma
+// validação de "actorType" foi adicionada: seria trivialmente contornável por
+// quem simplesmente omitisse o campo, dando falsa confiança.
+test('[ATAQUE E-2] o mesmo objeto, PASSADO ao emissor interno, é REJEITADO: só um USER definido origina contexto', () => {
   const fingindoSerAdmin = {
     actorType: 'AI',
     userId: 'ai-actor-coo',
@@ -167,79 +171,104 @@ test('[ATAQUE E-2] o mesmo objeto, PASSANDO por createAuthorizationContext, prod
     status: USER_STATUS.ACTIVE,
   };
 
-  const context = createAuthorizationContext(fingindoSerAdmin);
+  // O literal nunca origina contexto, nem passando pelo emissor.
+  assert.throws(() => createAuthorizationContext(fingindoSerAdmin), /USER definido por defineUser/);
+
+  // Documentação honesta do limite da fronteira: o caminho legítimo
+  // (defineUser + emissor interno) existe e emite — e actorType é descartado.
+  const definido = defineUser({
+    userId: 'ai-actor-coo',
+    authUserId: 'auth-ai-actor-coo',
+    name: 'COO Orchestrator',
+    email: 'coo@example.test',
+    role: ROLE.ADMIN,
+    status: USER_STATUS.ACTIVE,
+    actorType: 'AI',
+  });
+  assert.equal(Object.prototype.hasOwnProperty.call(definido, 'actorType'), false);
+  const context = createAuthorizationContext(definido);
   assert.equal(Object.prototype.hasOwnProperty.call(context, 'actorType'), false, 'actorType é descartado, não usado para bloquear nem preservado');
   assert.doesNotThrow(() => requirePermission(context, PERMISSION.MANAGE_USERS));
-
-  // AI != HUMAN continua sendo verdade só como REGRA DE ARQUITETURA/PROCESSO
-  // (nenhum código de orquestração deveria chamar createAuthorizationContext
-  // diretamente) — não como uma garantia que o runtime hoje impõe sozinho.
 });
 
 // ===========================================================================
 // ATAQUE F — Permission injection
 // ===========================================================================
-// Mesma fronteira de confiança do Ataque D: createAuthorizationContext()
-// aceita qualquer array de permissions bem formatado, sem confirmar que
-// aquele CLOSER realmente tem essas permissões em algum registro confiável.
-// PENDENTE — DEPENDE DE AUTENTICAÇÃO REAL.
-test('[ATAQUE F] injetar MANAGE:USERS no array de permissions de um CLOSER é aceito hoje (risco documentado, não corrigido)', () => {
+// ATUALIZADO NA FASE C: a injeção de permissions é bloqueada em três camadas —
+// defineUser() rejeita um conjunto ≠ role (Fase A), o emissor rejeita a cópia
+// adulterada (não é um USER definido) e, mesmo para um USER autêntico, as
+// permissions do contexto são derivadas da ROLE, nunca de user.permissions.
+test('[ATAQUE F] injetar MANAGE:USERS nas permissions de um CLOSER é REJEITADO em todas as camadas', () => {
   const closerReal = buildCloser();
+
+  // 1) defineUser() rejeita um conjunto de permissions diferente do da role.
+  assert.throws(
+    () => buildCloser({ permissions: [...closerReal.permissions, PERMISSION.MANAGE_USERS] }),
+    /não podem diferir das permissions da role/
+  );
+
+  // 2) Uma cópia adulterada de um USER real não é um USER definido: o emissor a rejeita.
   const comPermissaoInjetada = {
     ...closerReal,
     permissions: [...closerReal.permissions, PERMISSION.MANAGE_USERS],
   };
+  assert.throws(() => createAuthorizationContext(comPermissaoInjetada), /USER definido por defineUser/);
 
-  const context = createAuthorizationContext(comPermissaoInjetada);
-  assert.doesNotThrow(() => requirePermission(context, PERMISSION.MANAGE_USERS));
-
-  // A única coisa que createAuthorizationContext() de fato valida é o
-  // FORMATO de cada string de permissão — nunca a legitimidade/origem delas.
+  // 3) O USER autêntico continua sem MANAGE:USERS: o contexto vem da role.
+  const context = createAuthorizationContext(closerReal);
+  assert.equal(hasPermission(context, PERMISSION.MANAGE_USERS), false);
+  assert.throws(() => requirePermission(context, PERMISSION.MANAGE_USERS), /acesso negado/);
 });
 
 // ===========================================================================
 // ATAQUE G — Role injection
 // ===========================================================================
-test('[ATAQUE G] trocar role de COMMERCIAL_CLOSER para ADMIN, mantendo as permissions do Closer, é aceito (mas concede só o que o array já permite)', () => {
+// ATUALIZADO NA FASE C: a troca de role numa cópia do USER é rejeitada pelo
+// emissor (não é um USER definido), e defineUser() não aceita as permissions do
+// Closer para uma role ADMIN — as permissions efetivas são as da role.
+test('[ATAQUE G] trocar role de COMMERCIAL_CLOSER para ADMIN é REJEITADO: cópia adulterada não origina contexto e defineUser não aceita permissions de outra role', () => {
   const closerReal = buildCloser();
+
+  // 1) Cópia do USER com o role trocado: não é um USER definido.
   const comRoleTrocado = { ...closerReal, role: ROLE.ADMIN };
+  assert.throws(() => createAuthorizationContext(comRoleTrocado), /USER definido por defineUser/);
 
-  const context = createAuthorizationContext(comRoleTrocado);
-  assert.equal(context.role, ROLE.ADMIN);
+  // 2) Declarar ADMIN mantendo as permissions do Closer: defineUser rejeita (permissions ≠ conjunto da role).
+  assert.throws(() => buildAdmin({ permissions: [...closerReal.permissions] }), /não podem diferir das permissions da role/);
 
-  // Importante: trocar SÓ o role não concede NADA por si só — permissions
-  // continua sendo a lista original do Closer (ROLE != PERMISSION é
-  // respeitado mesmo neste ataque: MANAGE:USERS continua ausente).
-  assert.equal(hasPermission(context, PERMISSION.MANAGE_USERS), false);
-  assert.throws(() => requirePermission(context, PERMISSION.MANAGE_USERS), /acesso negado/);
-
-  // O risco real de "role injection" só se materializa combinado com o
-  // Ataque F (também trocar/estender permissions) — isolado, o role sozinho
-  // não é lido por nenhuma checagem de autorização. Isso É uma proteção
-  // real (ROLE != PERMISSION na prática), mesmo dentro da mesma limitação
-  // de confiança de origem dos dados (Ataque D/F).
+  // 3) Um ADMIN autêntico tem as permissions do ADMIN; o CLOSER autêntico continua sem MANAGE:USERS.
+  assert.equal(hasPermission(createAuthorizationContext(buildAdmin()), PERMISSION.MANAGE_USERS), true);
+  assert.equal(hasPermission(createAuthorizationContext(closerReal), PERMISSION.MANAGE_USERS), false);
 });
 
 // ===========================================================================
 // ATAQUE H — Status injection (INACTIVE -> ACTIVE)
 // ===========================================================================
-// Mesma fronteira de confiança dos ataques D/F: createAuthorizationContext()
-// não consulta nenhum store para confirmar o status real do usuário — aceita
-// o status que o objeto de entrada declarar. PENDENTE — DEPENDE DE
-// AUTENTICAÇÃO REAL (a implementação real do userResolver, quando conectada
-// a um store persistente de verdade, deve buscar o status atual no store,
-// nunca aceitar um status embutido no objeto vindo de fora).
-test('[ATAQUE H] declarar status=ACTIVE num USER originalmente INACTIVE é aceito hoje (risco documentado, não corrigido)', () => {
+// ATUALIZADO NA FASE C: uma cópia do USER com status=ACTIVE não é um USER
+// definido (o emissor a rejeita), e o contexto emitido é imutável — não dá para
+// "reativar" um contexto INACTIVE depois de emitido. Continua valendo a nota do
+// resolver: com um store persistente real, o status atual deve vir do store a
+// cada resolução, nunca de um objeto vindo de fora.
+test('[ATAQUE H] declarar status=ACTIVE num USER originalmente INACTIVE é REJEITADO, e o contexto emitido não pode ser reativado', () => {
   const inactiveAdmin = buildAdmin({
     userId: 'user-admin-was-inactive',
     authUserId: 'auth-admin-was-inactive',
     status: USER_STATUS.INACTIVE,
   });
-  const adulterado = { ...inactiveAdmin, status: USER_STATUS.ACTIVE };
 
-  const context = createAuthorizationContext(adulterado);
-  assert.doesNotThrow(() => requireActiveUser(context));
-  assert.doesNotThrow(() => requirePermission(context, PERMISSION.MANAGE_USERS));
+  // 1) Cópia adulterada do USER: não é um USER definido.
+  const adulterado = { ...inactiveAdmin, status: USER_STATUS.ACTIVE };
+  assert.throws(() => createAuthorizationContext(adulterado), /USER definido por defineUser/);
+
+  // 2) O contexto legítimo do USER INACTIVE fica INACTIVE, e não dá para alterá-lo depois de emitido.
+  const context = createAuthorizationContext(inactiveAdmin);
+  assert.equal(Reflect.set(context, 'status', USER_STATUS.ACTIVE), false, 'contexto congelado: a alteração é recusada');
+  assert.equal(context.status, USER_STATUS.INACTIVE);
+  assert.throws(() => requireActiveUser(context), /inativo/);
+  assert.throws(() => requirePermission(context, PERMISSION.MANAGE_USERS), /inativo/);
+
+  // 3) Nem o USER definido (congelado) aceita ser "reativado".
+  assert.equal(Reflect.set(inactiveAdmin, 'status', USER_STATUS.ACTIVE), false);
 });
 
 // ===========================================================================
@@ -290,19 +319,33 @@ test('[ATAQUE J-1] template de ADMIN não contém nenhum coringa e é uma lista 
   }
 });
 
-test('[ATAQUE J-2] role=ADMIN sozinho, sem permissions concedidas, não autoriza NADA — ROLE != PERMISSION estrutural', () => {
-  const adminSemPermissoes = {
-    userId: 'user-admin-sem-permissoes',
-    name: 'Admin Sem Permissões',
-    role: ROLE.ADMIN,
-    permissions: [], // nenhuma permissão concedida, apesar do role
-    status: USER_STATUS.ACTIVE,
-  };
-  const context = createAuthorizationContext(adminSemPermissoes);
+// ATUALIZADO NA FASE C: as permissões efetivas de um USER vêm da role, então um
+// "ADMIN sem permissions" deixou de ser construível. A garantia ROLE !=
+// PERMISSION continua provada assim: com a fonte canônica role -> permissions
+// trocada (só neste teste) por uma lista que NÃO dá MANAGE:USERS a ninguém, o
+// contexto de um ADMIN autêntico não autoriza MANAGE:USERS — as decisões usam só
+// `permissions`, nunca o nome da role.
+test('[ATAQUE J-2] o nome da role sozinho não autoriza NADA — ROLE != PERMISSION estrutural (as decisões leem só permissions)', (t) => {
+  const admin = buildAdmin();
+  const closer = buildCloser();
 
-  for (const permission of Object.values(PERMISSION)) {
-    assert.equal(hasPermission(context, permission), false, `role ADMIN sozinho não deveria conceder ${permission}`);
-    assert.throws(() => requirePermission(context, permission), /acesso negado/);
+  // Fonte canônica trocada só neste teste: as DUAS roles passam a ter a MESMA lista, sem MANAGE:USERS.
+  const constants = require('../../src/auth/constants');
+  t.mock.method(constants, 'getRolePermissions', () => Object.freeze([PERMISSION.READ_CRM]));
+
+  const adminContext = createAuthorizationContext(admin);
+  const closerContext = createAuthorizationContext(closer);
+  assert.equal(adminContext.role, ROLE.ADMIN);
+  assert.equal(closerContext.role, ROLE.COMMERCIAL_CLOSER);
+
+  for (const context of [adminContext, closerContext]) {
+    for (const permission of Object.values(PERMISSION)) {
+      const esperado = permission === PERMISSION.READ_CRM;
+      assert.equal(hasPermission(context, permission), esperado, `${context.role} + ${permission}`);
+      if (!esperado) {
+        assert.throws(() => requirePermission(context, permission), /acesso negado/, `${context.role} + ${permission}`);
+      }
+    }
   }
 });
 
@@ -393,11 +436,11 @@ test('[ATAQUE M] nenhum contexto incompleto passa por requireActiveUser/requireP
     assert.throws(() => requirePermission(incompleto, PERMISSION.READ_CRM), /AuthorizationContext inválido/);
   }
 
-  // Mesmo um objeto completo, se for manualmente Object.freeze()d por fora
-  // de createAuthorizationContext(), ainda precisa ter a forma certa —
-  // congelar não basta se os campos estiverem incompletos.
+  // Fase C: a marca de emissão é checada ANTES da forma. Um objeto congelado à
+  // mão — incompleto ou até com a forma perfeita — não foi emitido pelo emissor
+  // interno e é rejeitado por esse motivo (congelar não basta).
   const congeladoIncompleto = Object.freeze({ userId: 'x' });
-  assert.throws(() => requireActiveUser(congeladoIncompleto), /forma inesperada/);
+  assert.throws(() => requireActiveUser(congeladoIncompleto), /emitido pelo emissor interno confiável/);
 });
 
 // ===========================================================================
@@ -570,24 +613,28 @@ test('[BRIDGE-5] contexto inválido nunca é convertido', () => {
   assert.throws(() => toApprovalQueueIdentity(null), /AuthorizationContext inválido/);
 });
 
-// LIMITAÇÃO REAL, HERDADA DO ATAQUE D/E — a ponte não adiciona nenhuma
-// proteção além da que authorizationContext.js já oferece: se um ator
-// (IA ou não) já conseguiu produzir um AuthorizationContext forjado através
-// de createAuthorizationContext(), a ponte o converte normalmente, porque
-// nada a esta altura ainda sabe que a identidade é forjada. PENDENTE —
-// DEPENDE DE AUTENTICAÇÃO REAL.
-test('[BRIDGE-6] um AuthorizationContext forjado (Ataque D), uma vez criado, é convertido pela ponte como se fosse legítimo', () => {
-  const forjado = createAuthorizationContext({
+// ATUALIZADO NA FASE C: um AuthorizationContext forjado não chega mais à ponte —
+// o emissor não o cria e a ponte (que reutiliza requireActiveUser) rejeita
+// qualquer objeto que o emissor não tenha emitido, mesmo congelado e com a
+// forma perfeita. Continua valendo o limite da fronteira: é arquitetural
+// interna, não protege contra código que controle o processo.
+test('[BRIDGE-6] um AuthorizationContext forjado (Ataque D) nunca é criado e nunca é convertido pela ponte', () => {
+  const dadosForjados = {
     userId: 'ai-actor-fabricando-admin',
     name: 'IA fabricando ADMIN',
     role: ROLE.ADMIN,
     permissions: ROLE_PERMISSION_TEMPLATE[ROLE.ADMIN],
     status: USER_STATUS.ACTIVE,
-  });
+  };
 
-  const identity = toApprovalQueueIdentity(forjado);
-  assert.equal(identity.role, ROLE.ADMIN);
-  // A ponte não é o lugar certo para resolver isso — a correção real
-  // pertence à camada de autenticação (userResolver conectado a um store
-  // real + Supabase Auth), não a este módulo.
+  // 1) O emissor não cria contexto a partir de um literal.
+  assert.throws(() => createAuthorizationContext(dadosForjados), /USER definido por defineUser/);
+
+  // 2) A ponte rejeita um objeto que imita o contexto (congelado, com authUserId), pois não foi emitido.
+  const imitacao = Object.freeze({
+    ...dadosForjados,
+    authUserId: 'auth-forjado',
+    permissions: Object.freeze([...dadosForjados.permissions]),
+  });
+  assert.throws(() => toApprovalQueueIdentity(imitacao), /emitido pelo emissor interno confiável/);
 });

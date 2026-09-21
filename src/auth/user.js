@@ -14,8 +14,27 @@
 // `permissions` do USER é sempre a lista canônica da role. Por compatibilidade
 // transitória, defineUser() ainda aceita um `permissions` explícito, mas SOMENTE
 // quando for exatamente o conjunto da role; qualquer outro conjunto é rejeitado.
+//
+// Marca interna (Fase C): defineUser() registra cada USER que devolve em um
+// registro privado deste módulo, e isDefinedUser() só reconhece objetos
+// efetivamente devolvidos por defineUser() — nunca um literal, uma cópia ou um
+// clone com os mesmos campos (a marca é por identidade de objeto). Isto é uma
+// fronteira arquitetural interna confiável (trusted internal architectural
+// boundary), NÃO um mecanismo criptográfico: não autentica ninguém e não
+// protege contra código malicioso que já controle o mesmo processo. O contrato
+// de campos do USER não mudou.
 
 const { ROLE, USER_STATUS, isValidPermissionString, getRolePermissions } = require('./constants');
+
+// Registro interno dos USERs devolvidos por defineUser (ver o cabeçalho). Só
+// defineUser registra; nenhuma função exportada marca objetos.
+const DEFINED_USERS = new WeakSet();
+
+// true somente para um objeto que defineUser() efetivamente devolveu. Nunca
+// lança, seja qual for o valor recebido.
+function isDefinedUser(value) {
+  return typeof value === 'object' && value !== null && DEFINED_USERS.has(value);
+}
 
 function isNonEmptyString(value) {
   return typeof value === 'string' && value.trim().length > 0;
@@ -79,7 +98,7 @@ function defineUser({
     );
   }
 
-  return Object.freeze({
+  const user = Object.freeze({
     userId: userId.trim(),
     authUserId: authUserId === null ? null : authUserId.trim(),
     name: name.trim(),
@@ -90,6 +109,9 @@ function defineUser({
     createdAt,
     updatedAt,
   });
+  // Único ponto que registra um USER: o fim de defineUser, depois de todas as validações.
+  DEFINED_USERS.add(user);
+  return user;
 }
 
-module.exports = { defineUser };
+module.exports = { defineUser, isDefinedUser };

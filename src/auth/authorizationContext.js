@@ -1,75 +1,36 @@
 // AuthorizationContext — a identidade humana autenticada que está executando
-// uma ação, já resolvida e validada (Passo 0009.6 / decisão 0010).
+// uma ação, já resolvida e validada (Passo 0009.6 / decisão 0010; emissão
+// fechada na Fase C do fechamento da fronteira de identidade e autorização).
 //
-// REGRA CENTRAL: a única forma legítima de obter um AuthorizationContext é
-// chamar createAuthorizationContext() com um USER já resolvido (ver
-// userResolver.js). Nenhum especialista de IA, nenhum código de orquestração,
-// deve construir esse objeto à mão — hasPermission()/requirePermission()
-// recusam qualquer objeto que não tenha sido produzido por esta função (ver
-// assertIsAuthorizationContext abaixo). Isso não é prova criptográfica de
-// origem — é uma mitigação estrutural, documentada como tal.
+// REGRA CENTRAL: este módulo NÃO emite contextos — só os VERIFICA. A única
+// forma de obter um AuthorizationContext é o emissor interno
+// (internal/contextIssuer.js), que só aceita um USER definido por defineUser()
+// com authUserId, deriva as permissions da role e é chamado apenas pelo
+// userResolver. hasPermission()/requirePermission()/requireActiveUser() recusam
+// qualquer objeto que o emissor não tenha emitido: um literal, uma cópia ou um
+// clone com a forma exata de um contexto (mesmo congelado) não é aceito.
+//
+// Isto é uma fronteira arquitetural interna confiável (trusted internal
+// architectural boundary), NÃO um mecanismo criptográfico: impede que código de
+// negócio trate por engano — ou por ingenuidade — um objeto qualquer como
+// contexto, e faz a violação aparecer em teste. Não protege contra código
+// malicioso que já tenha controle do mesmo processo (que pode importar o
+// emissor, substituir funções ou fabricar o próprio registro).
+//
+// Nenhuma checagem abaixo lê `role`: as decisões usam só `permissions` e
+// `status` do contexto (ROLE != PERMISSION).
 
-const { ROLE, USER_STATUS, isValidPermissionString } = require('./constants');
+const { USER_STATUS, isValidPermissionString } = require('./constants');
+const { isIssuedAuthorizationContext } = require('./internal/contextIssuer');
 
-function isNonEmptyString(value) {
-  return typeof value === 'string' && value.trim().length > 0;
-}
-
-// Constrói o contexto a partir de um USER já resolvido (defineUser() ou
-// equivalente). Não faz nenhuma verificação de sessão/token — isso já
-// aconteceu antes, na resolução do USER (authAdapter.js + userResolver.js).
-function createAuthorizationContext(user) {
-  if (!user || typeof user !== 'object') {
-    throw new Error('AuthorizationContext inválido: um USER resolvido é obrigatório');
-  }
-  const { userId, name, role, permissions, status } = user;
-
-  if (!isNonEmptyString(userId)) {
-    throw new Error('AuthorizationContext inválido: userId é obrigatório');
-  }
-  if (!isNonEmptyString(name)) {
-    throw new Error('AuthorizationContext inválido: name é obrigatório');
-  }
-  if (!Object.values(ROLE).includes(role)) {
-    throw new Error(`AuthorizationContext inválido: role desconhecida "${role}"`);
-  }
-  if (!Array.isArray(permissions) || !permissions.every(isValidPermissionString)) {
-    throw new Error('AuthorizationContext inválido: permissions deve ser uma lista de permissões válidas');
-  }
-  if (!Object.values(USER_STATUS).includes(status)) {
-    throw new Error(`AuthorizationContext inválido: status desconhecido "${status}"`);
-  }
-
-  // Object.freeze aqui é o que assertIsAuthorizationContext() verifica
-  // depois — um objeto fabricado à mão por outro código, mesmo com a forma
-  // certa, não é frozen por esta função e é rejeitado (defesa em profundidade,
-  // não uma garantia absoluta: nada impede alguém de chamar Object.freeze()
-  // sobre um objeto forjado, mas isso deixa de ser um acidente e passa a
-  // exigir intenção deliberada de contornar a regra).
-  return Object.freeze({
-    userId: userId.trim(),
-    name: name.trim(),
-    role,
-    permissions: Object.freeze([...permissions]),
-    status,
-  });
-}
-
+// A marca vem ANTES de qualquer outra verificação: um objeto que o emissor não
+// emitiu é rejeitado mesmo que tenha a forma exata de um contexto.
 function assertIsAuthorizationContext(context) {
-  if (!context || typeof context !== 'object' || !Object.isFrozen(context)) {
+  if (!isIssuedAuthorizationContext(context)) {
     throw new Error(
-      'AuthorizationContext inválido: objeto precisa ter sido criado por createAuthorizationContext() — ' +
+      'AuthorizationContext inválido: objeto não foi emitido pelo emissor interno confiável — ' +
         'um objeto solto (ex.: fabricado por um especialista de IA para simular um humano) nunca é aceito'
     );
-  }
-  if (
-    !isNonEmptyString(context.userId) ||
-    !isNonEmptyString(context.name) ||
-    !Object.values(ROLE).includes(context.role) ||
-    !Array.isArray(context.permissions) ||
-    !Object.values(USER_STATUS).includes(context.status)
-  ) {
-    throw new Error('AuthorizationContext inválido: forma inesperada');
   }
 }
 
@@ -83,7 +44,7 @@ function requireActiveUser(context) {
 
 // Consulta pura (booleana) — nunca lança só porque o usuário está inativo ou
 // não tem a permissão (esses são resultados válidos: `false`); só lança para
-// entrada estruturalmente inválida (contexto forjado, permissão malformada),
+// entrada estruturalmente inválida (contexto não emitido, permissão malformada),
 // que são erros de programação, não decisões de autorização. Nunca retorna
 // `true` por omissão/fallback — usuário INACTIVE sempre resulta em `false`.
 function hasPermission(context, permission) {
@@ -108,8 +69,9 @@ function requirePermission(context, permission) {
   return context;
 }
 
+// Este módulo só exporta VERIFICAÇÕES. O antigo createAuthorizationContext deixou
+// de existir como construtor público: a emissão é do emissor interno.
 module.exports = {
-  createAuthorizationContext,
   assertIsAuthorizationContext,
   requireActiveUser,
   hasPermission,
