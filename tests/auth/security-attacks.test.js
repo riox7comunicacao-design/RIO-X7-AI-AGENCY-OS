@@ -24,13 +24,14 @@ const {
   requirePermission,
   createUserStore,
   resolveAuthorizationContext,
+  USER_NOT_FOUND,
   isSupabaseConfigured,
   createSupabaseAuthAdapter,
   toApprovalQueueIdentity,
 } = require('../../src/auth');
 // Fase C: createAuthorizationContext não é mais exportado por src/auth; os testes o
 // obtêm do helper de composição (o mesmo emissor interno que o userResolver usa).
-const { createAuthorizationContext } = require('../helpers/authFixtures');
+const { createAuthorizationContext, verifiedIdentityFor, verifiedIdentitiesFor } = require('../helpers/authFixtures');
 
 function buildAdmin(overrides = {}) {
   return defineUser({
@@ -461,45 +462,78 @@ test('[ATAQUE N] apenas o formato ACTION:DOMAIN em maiúsculas é aceito', () =>
 // ===========================================================================
 // ATAQUE O — Resolver
 // ===========================================================================
-test('[ATAQUE O-1] authUserId válido resolve para o USER correto', () => {
+// Fase D: o resolver só aceita uma VerifiedIdentity — nestes testes, REAIS
+// (verifyAccessToken contra um Supabase falso, sem rede).
+test('[ATAQUE O-1] authUserId válido (de uma VerifiedIdentity) resolve para o USER correto', async (t) => {
   const store = createUserStore([buildAdmin(), buildCloser()]);
-  const context = resolveAuthorizationContext(store, { authUserId: 'auth-closer-1' });
+  const identidade = await verifiedIdentityFor(t, { authUserId: 'auth-closer-1', email: 'closer@example.test' });
+  const context = resolveAuthorizationContext(store, identidade);
   assert.equal(context.userId, 'user-closer-1');
   assert.equal(context.role, ROLE.COMMERCIAL_CLOSER);
 });
 
-test('[ATAQUE O-2] email válido resolve para o USER correto (operação suportada, primeiro login)', () => {
+// ATUALIZADO NA FASE D: o e-mail NUNCA é identidade de runtime. Um e-mail que
+// pertence a um USER real, mas com authUserId desconhecido, não resolve nada —
+// não há fallback, nem vínculo, nem criação de USER. Resultado: USER_NOT_FOUND.
+test('[ATAQUE O-2] e-mail correto de um USER, mas authUserId desconhecido, NÃO resolve (USER_NOT_FOUND): o e-mail nunca é identidade', async (t) => {
   const store = createUserStore([buildAdmin(), buildCloser()]);
-  const context = resolveAuthorizationContext(store, { email: 'closer@example.test' });
-  assert.equal(context.userId, 'user-closer-1');
+  // Identidade VERIFICADA, com o e-mail CONFIRMADO de um USER real — porém com authUserId desconhecido.
+  const identidade = await verifiedIdentityFor(t, {
+    authUserId: 'auth-desconhecido',
+    email: 'closer@example.test',
+    emailConfirmed: true,
+  });
+  assert.throws(
+    () => resolveAuthorizationContext(store, identidade),
+    (erro) => {
+      assert.equal(erro.code, USER_NOT_FOUND);
+      return true;
+    }
+  );
+  assert.equal(store.all().length, 2, 'nenhum USER foi criado nem vinculado');
 });
 
-test('[ATAQUE O-3] usuário inexistente (authUserId e email desconhecidos) falha', () => {
+test('[ATAQUE O-3] usuário inexistente (authUserId e email desconhecidos) falha com USER_NOT_FOUND', async (t) => {
   const store = createUserStore([buildCloser()]);
+  const identidade = await verifiedIdentityFor(t, { authUserId: 'nao-existe', email: 'nao-existe@example.test' });
+  assert.throws(() => resolveAuthorizationContext(store, identidade), /não encontrado/);
   assert.throws(
-    () => resolveAuthorizationContext(store, { authUserId: 'nao-existe', email: 'nao-existe@example.test' }),
-    /não encontrado/
+    () => resolveAuthorizationContext(store, identidade),
+    (erro) => erro.code === USER_NOT_FOUND
   );
 });
 
-test('[ATAQUE O-4] resolver um usuário INACTIVE produz um contexto que nenhuma ação sensível aceita', () => {
+test('[ATAQUE O-4] resolver um usuário INACTIVE produz um contexto que nenhuma ação sensível aceita', async (t) => {
   const store = createUserStore([buildCloser({ userId: 'user-closer-inactive', authUserId: 'auth-closer-inactive', status: USER_STATUS.INACTIVE })]);
-  const context = resolveAuthorizationContext(store, { authUserId: 'auth-closer-inactive' });
+  const identidade = await verifiedIdentityFor(t, { authUserId: 'auth-closer-inactive', email: 'closer@example.test' });
+  const context = resolveAuthorizationContext(store, identidade);
   assert.throws(() => requirePermission(context, PERMISSION.APPROVE_LEAD_APPROVAL), /inativo/);
 });
 
-test('[ATAQUE O-5] o resolver não aceita nenhum parâmetro de role — não há como "pedir" ADMIN pela API do resolver', () => {
+test('[ATAQUE O-5] o resolver não aceita nenhum parâmetro de role — não há como "pedir" ADMIN pela API do resolver', async (t) => {
   const store = createUserStore([buildCloser()]);
-  // resolveAuthorizationContext só aceita { authUserId, email } — mesmo
-  // passando um campo "role" extra, ele é ignorado pela desestruturação.
-  const context = resolveAuthorizationContext(store, { authUserId: 'auth-closer-1', role: ROLE.ADMIN });
+  // Nem do lado do Supabase: um "role" ADMIN no corpo do usuário (ruído/metadata) nunca vira parte da identidade.
+  const identidade = await verifiedIdentityFor(t, {
+    authUserId: 'auth-closer-1',
+    email: 'closer@example.test',
+    extras: { role: ROLE.ADMIN, app_metadata: { role: ROLE.ADMIN } },
+  });
+  assert.equal(Object.prototype.hasOwnProperty.call(identidade, 'role'), false);
+
+  // resolveAuthorizationContext só tem 2 parâmetros — um "role" extra do chamador é ignorado.
+  assert.equal(resolveAuthorizationContext.length, 2);
+  const context = resolveAuthorizationContext(store, identidade, { role: ROLE.ADMIN });
   assert.equal(context.role, ROLE.COMMERCIAL_CLOSER, 'o role retornado é sempre o do registro armazenado, nunca o solicitado pelo chamador');
 });
 
-test('[ATAQUE O-6] authUserId de um usuário nunca resolve para o registro de outro usuário', () => {
+test('[ATAQUE O-6] authUserId de um usuário nunca resolve para o registro de outro usuário', async (t) => {
   const store = createUserStore([buildAdmin(), buildCloser()]);
-  const adminContext = resolveAuthorizationContext(store, { authUserId: 'auth-admin-1' });
-  const closerContext = resolveAuthorizationContext(store, { authUserId: 'auth-closer-1' });
+  const [identidadeAdmin, identidadeCloser] = await verifiedIdentitiesFor(t, [
+    { authUserId: 'auth-admin-1', email: 'admin@example.test' },
+    { authUserId: 'auth-closer-1', email: 'closer@example.test' },
+  ]);
+  const adminContext = resolveAuthorizationContext(store, identidadeAdmin);
+  const closerContext = resolveAuthorizationContext(store, identidadeCloser);
 
   assert.notEqual(adminContext.userId, closerContext.userId);
   assert.equal(adminContext.role, ROLE.ADMIN);

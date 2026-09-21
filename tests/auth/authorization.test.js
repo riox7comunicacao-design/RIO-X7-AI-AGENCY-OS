@@ -19,7 +19,7 @@ const {
 } = require('../../src/auth');
 // Fase C: createAuthorizationContext não é mais exportado por src/auth; os testes o
 // obtêm do helper de composição (o mesmo emissor interno que o userResolver usa).
-const { createAuthorizationContext } = require('../helpers/authFixtures');
+const { createAuthorizationContext, verifiedIdentitiesFor } = require('../helpers/authFixtures');
 
 function buildAdmin(overrides = {}) {
   return defineUser({
@@ -233,14 +233,19 @@ test('[N] authAdapter nunca finge uma sessão Supabase quando não configurado',
   await assert.rejects(() => adapter.resolveAuthenticatedIdentity(), /não configurado/);
 });
 
-test('userResolver: resolve AuthorizationContext a partir de authUserId, sem criar usuário novo', () => {
+test('userResolver: resolve AuthorizationContext a partir de authUserId, sem criar usuário novo', async (t) => {
   const store = createUserStore([buildCloser()]);
-  const context = resolveAuthorizationContext(store, { authUserId: 'auth-closer-1' });
+  // Fase D: o resolver só aceita uma VerifiedIdentity — aqui, REAIS (verifyAccessToken
+  // contra um Supabase falso, sem rede).
+  const [existente, inexistente] = await verifiedIdentitiesFor(t, [
+    { authUserId: 'auth-closer-1', email: 'closer@example.test' },
+    { authUserId: 'nao-existe', email: 'nao-existe@example.test' },
+  ]);
+
+  const context = resolveAuthorizationContext(store, existente);
   assert.equal(context.userId, 'user-closer-1');
-  assert.throws(
-    () => resolveAuthorizationContext(store, { authUserId: 'nao-existe', email: 'nao-existe@example.test' }),
-    /não encontrado/
-  );
+  assert.throws(() => resolveAuthorizationContext(store, inexistente), /não encontrado/);
+  assert.equal(store.all().length, 1, 'nenhum USER foi criado');
 });
 
 test('approvalQueueBridge: AuthorizationContext do CLOSER aprova um prospect real no Approval Queue, sem alterar approvalQueue.js', () => {

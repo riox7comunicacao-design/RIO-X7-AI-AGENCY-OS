@@ -6,7 +6,13 @@ const {
   hasPermission,
   requirePermission,
 } = require('./authorizationContext');
-const { createUserStore, resolveAuthorizationContext } = require('./userResolver');
+const {
+  createUserStore,
+  resolveAuthorizationContext,
+  UserResolutionError,
+  USER_RESOLUTION_ERROR,
+  USER_NOT_FOUND,
+} = require('./userResolver');
 const {
   SUPABASE_ENV_VARS,
   isSupabaseConfigured,
@@ -33,6 +39,9 @@ module.exports = {
   requirePermission,
   createUserStore,
   resolveAuthorizationContext,
+  UserResolutionError,
+  USER_RESOLUTION_ERROR,
+  USER_NOT_FOUND,
   SUPABASE_ENV_VARS,
   isSupabaseConfigured,
   createSupabaseAuthAdapter,

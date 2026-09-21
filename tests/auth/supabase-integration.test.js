@@ -25,11 +25,15 @@ const {
   defineUser,
   createUserStore,
   resolveAuthorizationContext,
+  USER_NOT_FOUND,
   isSupabaseConfigured,
   createSupabaseAuthAdapter,
   SupabaseAdapterError,
   CONNECTIVITY_ERROR,
 } = require('../../src/auth');
+// Fase D: o resolver só aceita uma VerifiedIdentity. Os testes do resolver abaixo usam
+// identidades REAIS (verifyAccessToken contra um Supabase falso, sem rede).
+const { verifiedIdentityFor, verifiedIdentitiesFor } = require('../helpers/authFixtures');
 
 const configurado = isSupabaseConfigured(process.env);
 
@@ -126,19 +130,25 @@ test('B — resolveAuthenticatedIdentity() rejeita explicitamente quando não h�
 // Supabase emitiria) nunca é transformado em usuário — userResolver
 // continua em memória, e uma identidade Supabase-shaped sem USER
 // correspondente é rejeitada explicitamente (equivalente a USER_NOT_FOUND).
-test('C — identidade autenticada (formato Supabase) sem USER correspondente é rejeitada, nunca inventada', () => {
+test('C — identidade autenticada (formato Supabase) sem USER correspondente é rejeitada, nunca inventada', async (t) => {
   const storeVazio = createUserStore([]);
+  const identidade = await verifiedIdentityFor(t, {
+    authUserId: '4b6f6a1e-9c2d-4a3b-8e7f-000000000000',
+    email: 'desconhecido@example.test',
+  });
+  assert.throws(() => resolveAuthorizationContext(storeVazio, identidade), /não encontrado/);
   assert.throws(
-    () => resolveAuthorizationContext(storeVazio, { authUserId: '4b6f6a1e-9c2d-4a3b-8e7f-000000000000', email: 'desconhecido@example.test' }),
-    /não encontrado/
+    () => resolveAuthorizationContext(storeVazio, identidade),
+    (erro) => erro.code === USER_NOT_FOUND
   );
+  assert.equal(storeVazio.all().length, 0, 'nenhum USER foi criado');
 });
 
 // D/E — authUserId de CLOSER/ADMIN resolve para o USER correto (já coberto
 // em profundidade por tests/auth/security-attacks.test.js, Ataques O-1/O-6;
 // repetido aqui no contexto específico de "identidade vinda do Supabase"
 // para deixar a ponte auth Adapter -> userResolver explicitamente coberta).
-test('D/E — authUserId simulando uma identidade real do Supabase resolve para o role correto (CLOSER e ADMIN)', () => {
+test('D/E — authUserId simulando uma identidade real do Supabase resolve para o role correto (CLOSER e ADMIN)', async (t) => {
   const admin = defineUser({
     userId: 'user-admin-supabase',
     authUserId: 'auth-admin-supabase-uuid',
@@ -159,8 +169,12 @@ test('D/E — authUserId simulando uma identidade real do Supabase resolve para 
   });
   const store = createUserStore([admin, closer]);
 
-  const contextoAdmin = resolveAuthorizationContext(store, { authUserId: 'auth-admin-supabase-uuid' });
-  const contextoCloser = resolveAuthorizationContext(store, { authUserId: 'auth-closer-supabase-uuid' });
+  const [identidadeAdmin, identidadeCloser] = await verifiedIdentitiesFor(t, [
+    { authUserId: 'auth-admin-supabase-uuid', email: 'admin-real@example.test' },
+    { authUserId: 'auth-closer-supabase-uuid', email: 'closer-real@example.test' },
+  ]);
+  const contextoAdmin = resolveAuthorizationContext(store, identidadeAdmin);
+  const contextoCloser = resolveAuthorizationContext(store, identidadeCloser);
 
   assert.equal(contextoAdmin.role, ROLE.ADMIN);
   assert.equal(contextoCloser.role, ROLE.COMMERCIAL_CLOSER);
@@ -171,7 +185,7 @@ test('D/E — authUserId simulando uma identidade real do Supabase resolve para 
 // continua bloqueado (mesmo comportamento já garantido por
 // requireActiveUser — repetido aqui no contexto de identidade vinda do
 // Supabase, não de um objeto montado à mão).
-test('F — USER INACTIVE vindo de uma identidade Supabase-shaped continua bloqueado em ações sensíveis', () => {
+test('F — USER INACTIVE vindo de uma identidade Supabase-shaped continua bloqueado em ações sensíveis', async (t) => {
   const { requirePermission } = require('../../src/auth');
   const inactive = defineUser({
     userId: 'user-closer-supabase-inactive',
@@ -183,16 +197,20 @@ test('F — USER INACTIVE vindo de uma identidade Supabase-shaped continua bloqu
     status: USER_STATUS.INACTIVE,
   });
   const store = createUserStore([inactive]);
-  const contexto = resolveAuthorizationContext(store, { authUserId: 'auth-closer-supabase-inactive-uuid' });
+  const identidade = await verifiedIdentityFor(t, {
+    authUserId: 'auth-closer-supabase-inactive-uuid',
+    email: 'closer-inativo@example.test',
+  });
+  const contexto = resolveAuthorizationContext(store, identidade);
   assert.throws(() => requirePermission(contexto, PERMISSION.APPROVE_LEAD_APPROVAL), /inativo/);
 });
 
 // G — "frontend" tentando enviar um role diferente ao resolver —
-// resolveAuthorizationContext só aceita { authUserId, email }; um "role"
-// extra é ignorado pela desestruturação, nunca sobrepõe o role real do USER
-// armazenado (reforça Ataque O-5 de security-attacks.test.js, agora no
-// contexto explícito de "dado vindo do frontend").
-test('[G] resolveAuthorizationContext ignora um "role" fornecido pelo chamador — sempre usa o role do USER armazenado', () => {
+// resolveAuthorizationContext só tem 2 parâmetros (store e VerifiedIdentity);
+// um "role" extra do chamador (ou vindo do lado do Supabase) nunca sobrepõe o
+// role real do USER armazenado (reforça Ataque O-5 de security-attacks.test.js,
+// agora no contexto explícito de "dado vindo do frontend").
+test('[G] resolveAuthorizationContext ignora um "role" fornecido pelo chamador — sempre usa o role do USER armazenado', async (t) => {
   const closer = defineUser({
     userId: 'user-closer-frontend-g',
     authUserId: 'auth-closer-frontend-g',
@@ -204,9 +222,14 @@ test('[G] resolveAuthorizationContext ignora um "role" fornecido pelo chamador �
   });
   const store = createUserStore([closer]);
 
-  const context = resolveAuthorizationContext(store, {
+  const identidade = await verifiedIdentityFor(t, {
     authUserId: 'auth-closer-frontend-g',
-    role: ROLE.ADMIN, // tentativa de "se passar" por ADMIN via dado externo
+    email: 'closer-frontend-g@example.test',
+    extras: { app_metadata: { role: ROLE.ADMIN } }, // "role" ADMIN do lado do Supabase: nunca vira identidade
+  });
+
+  const context = resolveAuthorizationContext(store, identidade, {
+    role: ROLE.ADMIN, // tentativa de "se passar" por ADMIN via argumento extra do chamador
   });
 
   assert.equal(context.role, ROLE.COMMERCIAL_CLOSER);
@@ -214,7 +237,7 @@ test('[G] resolveAuthorizationContext ignora um "role" fornecido pelo chamador �
 
 // H — "frontend" tentando enviar permissions diferentes ao resolver — mesma
 // proteção estrutural: a assinatura da função não tem espaço para isso.
-test('[H] resolveAuthorizationContext ignora "permissions" fornecidas pelo chamador — sempre usa as permissions do USER armazenado', () => {
+test('[H] resolveAuthorizationContext ignora "permissions" fornecidas pelo chamador — sempre usa as permissions do USER armazenado', async (t) => {
   const closer = defineUser({
     userId: 'user-closer-frontend-h',
     authUserId: 'auth-closer-frontend-h',
@@ -226,9 +249,14 @@ test('[H] resolveAuthorizationContext ignora "permissions" fornecidas pelo chama
   });
   const store = createUserStore([closer]);
 
-  const context = resolveAuthorizationContext(store, {
+  const identidade = await verifiedIdentityFor(t, {
     authUserId: 'auth-closer-frontend-h',
-    permissions: [PERMISSION.MANAGE_USERS, 'APPROVE:FINANCIAL_APPROVAL'], // tentativa de injeção
+    email: 'closer-frontend-h@example.test',
+    extras: { app_metadata: { permissions: [PERMISSION.MANAGE_USERS] } }, // "permissions" do lado do Supabase: nunca viram identidade
+  });
+
+  const context = resolveAuthorizationContext(store, identidade, {
+    permissions: [PERMISSION.MANAGE_USERS, 'APPROVE:FINANCIAL_APPROVAL'], // tentativa de injeção via argumento extra
   });
 
   assert.deepEqual([...context.permissions].sort(), [...ROLE_PERMISSION_TEMPLATE[ROLE.COMMERCIAL_CLOSER]].sort());
