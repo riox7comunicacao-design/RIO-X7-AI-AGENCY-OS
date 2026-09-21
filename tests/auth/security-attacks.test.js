@@ -27,6 +27,7 @@ const {
   USER_NOT_FOUND,
   isSupabaseConfigured,
   createSupabaseAuthAdapter,
+  authorizeReviewerForApprovalQueue,
   toApprovalQueueIdentity,
 } = require('../../src/auth');
 // Fase C: createAuthorizationContext não é mais exportado por src/auth; os testes o
@@ -598,32 +599,35 @@ test('[BRIDGE-3] usuário INACTIVE nunca é convertido', () => {
   assert.throws(() => toApprovalQueueIdentity(inactive), /inativo/);
 });
 
-test('[BRIDGE-4] toApprovalQueueIdentity sozinho NÃO valida a permissão específica de negócio (isso é responsabilidade do approvalQueue.js)', () => {
-  // Documentação de comportamento real: a ponte só garante ATIVO + forma.
-  // Ela converte com sucesso a identidade mesmo quando as permissions que
-  // carrega não incluem APPROVE:LEAD_APPROVAL — a rejeição de fato acontece
-  // dentro de approveProspect(), que já checa isso desde 0009.2. Isso não é
-  // uma falha da ponte: é a divisão de responsabilidades pretendida (ver
-  // approvalQueueBridge.js).
-  //
+// ATUALIZADO NA FASE E: o Approval Queue não aceita mais uma identidade convertida
+// (a saída de toApprovalQueueIdentity) — só um autorizador injetado. O adaptador
+// LEGADO continua sem validar a permissão de negócio (só contexto emitido +
+// usuário ativo), mas isso deixou de ser uma brecha: a saída dele não autoriza
+// nada. Quem valida APPROVE:LEAD_APPROVAL é authorizeReviewerForApprovalQueue, e o
+// faz ANTES de o domínio tocar na fila. O texto antigo ("a rejeição de fato
+// acontece dentro de approveProspect") descrevia o domínio conferindo as
+// permissions de uma identidade que o próprio chamador apresentava — exatamente o
+// que a Fase E eliminou.
+test('[BRIDGE-4] toApprovalQueueIdentity (legado) NÃO valida a permissão de negócio e sua saída não autoriza nada; quem valida é o autorizador injetado', (t) => {
   // Fase A: as permissões efetivas vêm da role e nenhuma role atual carece de
-  // APPROVE:LEAD_APPROVAL, então um "Closer sem aprovação" deixou de ser
-  // construível via defineUser(). O mesmo cenário é reproduzido aqui editando
-  // a saída já convertida pela ponte (uma identidade simples).
-  const closerContext = createAuthorizationContext(
-    buildCloser({
-      userId: 'user-closer-sem-aprovacao',
-      authUserId: 'auth-closer-sem-aprovacao',
-      email: 'closer-sem-aprovacao@example.test',
-    })
-  );
+  // APPROVE:LEAD_APPROVAL, então um "Closer sem aprovação" não é construível via
+  // defineUser(). O cenário é reproduzido SEM forjar nada: um contexto REAL,
+  // emitido sob uma derivação role -> permissions reduzida, só neste teste.
+  const closer = buildCloser({
+    userId: 'user-closer-sem-aprovacao',
+    authUserId: 'auth-closer-sem-aprovacao',
+    email: 'closer-sem-aprovacao@example.test',
+  });
+  const constants = require('../../src/auth/constants');
+  t.mock.method(constants, 'getRolePermissions', () => Object.freeze([PERMISSION.READ_CRM]));
+  const closerContext = createAuthorizationContext(closer);
+  assert.equal(closerContext.permissions.includes(PERMISSION.APPROVE_LEAD_APPROVAL), false);
 
-  const convertida = toApprovalQueueIdentity(closerContext); // a ponte não lança nem olha a permissão de negócio
-  const identity = { ...convertida, permissions: [PERMISSION.READ_CRM] };
-  assert.equal(convertida.permissions.includes(PERMISSION.APPROVE_LEAD_APPROVAL), true);
-  assert.equal(identity.permissions.includes(PERMISSION.APPROVE_LEAD_APPROVAL), false);
+  // O adaptador legado converte mesmo assim: não olha a permissão de negócio.
+  const convertida = toApprovalQueueIdentity(closerContext);
+  assert.equal(convertida.permissions.includes(PERMISSION.APPROVE_LEAD_APPROVAL), false);
 
-  const { createEmptyQueue, addProspect, approveProspect } = require('../../src/research-prospector/approvalQueue');
+  const { createEmptyQueue, addProspect, createApprovalReviewActions } = require('../../src/research-prospector/approvalQueue');
   const { runDiscoveryPipeline, SOURCE_TYPE } = require('../../src/research-prospector/discovery');
   const briefing = { nicho: 'Psicologia', regiao: 'Petrópolis/RJ', exclusoes: [] };
   const achado = {
@@ -637,9 +641,15 @@ test('[BRIDGE-4] toApprovalQueueIdentity sozinho NÃO valida a permissão espec�
   const resultado = runDiscoveryPipeline({ briefing, rawFindings: [achado], crmRecords: [] }).resultados[0];
   const queue = createEmptyQueue();
   const item = addProspect(queue, resultado);
+  const antes = JSON.stringify(queue);
+  const acoes = createApprovalReviewActions({ authorizeReviewer: authorizeReviewerForApprovalQueue });
 
-  // A rejeição de fato acontece aqui — dentro do Approval Queue já existente.
-  assert.throws(() => approveProspect(queue, item.prospectId, identity, 'tentativa sem permissão'), /sem permissão necessária/);
+  // A recusa de fato acontece no autorizador injetado (a ponte), antes de o domínio tocar na fila.
+  assert.throws(() => authorizeReviewerForApprovalQueue(closerContext), /acesso negado/);
+  assert.throws(() => acoes.approveProspect(queue, item.prospectId, closerContext, 'tentativa sem permissão'), /acesso negado/);
+  // E a saída do adaptador legado, apresentada como se fosse o contexto, não autoriza nada.
+  assert.throws(() => acoes.approveProspect(queue, item.prospectId, convertida, 'tentativa com a identidade legada'), /AuthorizationContext inválido/);
+  assert.equal(JSON.stringify(queue), antes, 'a fila permanece inalterada');
 });
 
 test('[BRIDGE-5] contexto inválido nunca é convertido', () => {

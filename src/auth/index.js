@@ -20,7 +20,7 @@ const {
   SupabaseAdapterError,
   CONNECTIVITY_ERROR,
 } = require('./authAdapter');
-const { toApprovalQueueIdentity } = require('./approvalQueueBridge');
+const { authorizeReviewerForApprovalQueue, toApprovalQueueIdentity } = require('./approvalQueueBridge');
 
 // Fase C: createAuthorizationContext e o emissor de contexto NÃO são exportados.
 // O emissor é interno (internal/contextIssuer.js) e só o userResolver o usa; o
@@ -47,5 +47,6 @@ module.exports = {
   createSupabaseAuthAdapter,
   SupabaseAdapterError,
   CONNECTIVITY_ERROR,
+  authorizeReviewerForApprovalQueue,
   toApprovalQueueIdentity,
 };

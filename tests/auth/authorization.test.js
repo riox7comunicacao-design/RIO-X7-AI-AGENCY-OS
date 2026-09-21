@@ -15,7 +15,7 @@ const {
   resolveAuthorizationContext,
   isSupabaseConfigured,
   createSupabaseAuthAdapter,
-  toApprovalQueueIdentity,
+  authorizeReviewerForApprovalQueue,
 } = require('../../src/auth');
 // Fase C: createAuthorizationContext não é mais exportado por src/auth; os testes o
 // obtêm do helper de composição (o mesmo emissor interno que o userResolver usa).
@@ -248,8 +248,10 @@ test('userResolver: resolve AuthorizationContext a partir de authUserId, sem cri
   assert.equal(store.all().length, 1, 'nenhum USER foi criado');
 });
 
-test('approvalQueueBridge: AuthorizationContext do CLOSER aprova um prospect real no Approval Queue, sem alterar approvalQueue.js', () => {
-  const { createEmptyQueue, addProspect, approveProspect } = require('../../src/research-prospector/approvalQueue');
+// Fase E: o Approval Queue não recebe mais uma identidade convertida — recebe o
+// AuthorizationContext e um autorizador INJETADO (a ponte), e quem compõe os dois é o chamador.
+test('approvalQueueBridge: AuthorizationContext do CLOSER aprova um prospect real no Approval Queue por um autorizador injetado', () => {
+  const { createEmptyQueue, addProspect, createApprovalReviewActions } = require('../../src/research-prospector/approvalQueue');
   const { runDiscoveryPipeline, SOURCE_TYPE } = require('../../src/research-prospector/discovery');
 
   const briefing = { nicho: 'Psicologia', regiao: 'Petrópolis/RJ', exclusoes: [] };
@@ -268,9 +270,9 @@ test('approvalQueueBridge: AuthorizationContext do CLOSER aprova um prospect rea
   const queue = createEmptyQueue();
   const item = addProspect(queue, resultado);
 
+  const { approveProspect } = createApprovalReviewActions({ authorizeReviewer: authorizeReviewerForApprovalQueue });
   const context = createAuthorizationContext(buildCloser());
-  const identity = toApprovalQueueIdentity(context);
-  const aprovado = approveProspect(queue, item.prospectId, identity, 'Bom fit — aprovado via bridge de teste');
+  const aprovado = approveProspect(queue, item.prospectId, context, 'Bom fit — aprovado via bridge de teste');
 
   assert.equal(aprovado.estado, 'APROVADO_PARA_CRM');
   assert.equal(aprovado.historico[aprovado.historico.length - 1].reviewedBy.userId, 'user-closer-1');

@@ -10,15 +10,30 @@
 // Nenhuma função deste módulo escreve no CRM, envia mensagem ou realiza
 // contato — estruturalmente, nem existe código de rede/escrita externa aqui.
 //
-// Passo 0009.2: o antigo parâmetro `reviewer` (texto livre) foi substituído
-// por um contexto de identidade estruturado `{ userId, name, role,
-// permissions }`, seguindo o modelo USER de
-// docs/decisions/0009-identity-roles-and-authorization-model.md. Isto NÃO é
-// autenticação real — não há sessão, login, senha, token ou banco de
-// usuários aqui; é só a validação da FORMA exigida e da presença da
-// permissão necessária no contexto que o chamador apresenta. Resolver essa
-// identidade a partir de um usuário de fato autenticado continua sendo
-// decisão futura, fora do escopo deste módulo.
+// Passo 0009.2 trocou o antigo parâmetro `reviewer` (texto livre) por uma
+// identidade estruturada. A Fase E do fechamento da fronteira de identidade e
+// autorização (R1) foi além: aprovar/rejeitar deixou de depender de um objeto
+// de identidade que o chamador apresenta e que este módulo só conferia pela
+// FORMA. Este módulo não decide mais quem pode revisar — recebe essa decisão
+// de uma PORTA injetada (inversão de dependência):
+//
+//   createApprovalReviewActions({ authorizeReviewer })
+//   authorizeReviewer(context, requiredPermission) -> { userId, name, role }
+//
+// O domínio não importa src/auth e não conhece AuthorizationContext, USER,
+// sessão nem token: `context` é opaco para ele — só é repassado ao
+// autorizador, que recusa lançando erro. Do autorizador o domínio aceita de
+// volta somente uma identidade MÍNIMA { userId, name, role }, e a registra em
+// `reviewedBy`. Sem autorizador injetado não existe caminho de aprovação nem de
+// rejeição: as funções soltas approveProspect/rejectProspect exportadas aqui
+// só existem para falhar fechado. Quem liga o autorizador real
+// (src/auth/approvalQueueBridge.js) a este módulo é o chamador — hoje, os
+// testes; depois, a camada de Services.
+//
+// Limite honesto: o domínio CONFIA no autorizador que recebe. Isso é uma
+// fronteira arquitetural interna confiável (trusted internal architectural
+// boundary), não criptografia — código que controle o mesmo processo pode
+// injetar um autorizador que sempre autoriza; esta fronteira não o impede.
 
 const fs = require('fs');
 const path = require('path');
@@ -36,10 +51,12 @@ const QUEUE_STATE = Object.freeze({
 
 const ACTOR = Object.freeze({ HUMAN: 'HUMAN', SYSTEM: 'SYSTEM' });
 
-// Permissões reconhecidas por este módulo, no formato conceitual
-// {AÇÃO}:{DOMÍNIO} definido em 0009. Este módulo só conhece (e só precisa
-// conhecer) a permissão do seu próprio domínio — Lead Approval. Nenhuma
-// outra permissão é criada aqui.
+// Permissão que este módulo exige para revisar (aprovar/rejeitar), no formato
+// conceitual {AÇÃO}:{DOMÍNIO} definido em 0009. É só um VALOR repassado à porta
+// authorizeReviewer — quem a verifica é o autorizador injetado, não este
+// módulo. Duplica de propósito o literal de src/auth/constants (o domínio não
+// importa src/auth); um teste vigia que os dois não divirjam. Nenhuma outra
+// permissão é criada aqui.
 const PERMISSION = Object.freeze({
   APPROVE_LEAD_APPROVAL: 'APPROVE:LEAD_APPROVAL',
 });
@@ -154,42 +171,45 @@ function transitionState(item, to, actor, motivo, timestamp, extra = {}) {
   return item;
 }
 
-// Camada mínima de autorização (Passo 0009.2). Recebe o contexto de
-// identidade apresentado pelo chamador e valida só duas coisas: (1) a FORMA
-// exigida pelo modelo conceitual USER de 0009 — userId, name e role não
-// vazios, permissions uma lista; (2) que a permissão necessária para a ação
-// (escopada por domínio, formato {AÇÃO}:{DOMÍNIO}) está presente nessa
-// lista. Isso não é autenticação: nada aqui prova que o userId informado
-// corresponde a um usuário real, ativo, autenticado — não existe base de
-// usuários, sessão, login ou token neste módulo, e não é este módulo que
-// deveria criar isso. Uma string simples (o antigo `reviewer`) nunca passa
-// nesta checagem, porque não é um objeto com esses campos.
-function assertValidIdentity(identity, requiredPermission) {
+const REVIEWER_IDENTITY_FIELDS = Object.freeze(['userId', 'name', 'role']);
+
+// Valida o que o AUTORIZADOR devolveu (a porta authorizeReviewer). O domínio só
+// aceita de volta uma identidade MÍNIMA: exatamente { userId, name, role }, com
+// textos não vazios, e nada além disso. Em especial nenhuma lista de
+// permissions: o domínio nunca deve receber nem registrar permissões, e a
+// antiga identidade { userId, name, role, permissions } NÃO é aceita como
+// resposta de um autorizador (é o que impede que um adaptador legado, que
+// ignora a permissão exigida, seja injetado como autorizador).
+//
+// A role SYSTEM (o actor de IA deste módulo, ACTOR.SYSTEM) nunca é um revisor:
+// aprovar/rejeitar é sempre um ato humano. Antes, quem garantia que a role
+// vinha de um USER definido era o contexto apresentado ao próprio domínio;
+// agora essa garantia é do autorizador — e o domínio mantém a sua parte.
+//
+// Devolve uma cópia NOVA só com os três campos: é ela que vira `reviewedBy`.
+function assertReviewerIdentity(identity) {
   if (!identity || typeof identity !== 'object' || Array.isArray(identity)) {
+    throw new Error('autorizador devolveu uma identidade inválida: esperava um objeto { userId, name, role }');
+  }
+  if (typeof identity.then === 'function') {
+    throw new Error('autorizador devolveu uma Promise: a porta authorizeReviewer é síncrona');
+  }
+  const { userId, name, role } = identity;
+  for (const [field, value] of [['userId', userId], ['name', name], ['role', role]]) {
+    if (typeof value !== 'string' || !value.trim()) {
+      throw new Error(`autorizador devolveu uma identidade inválida: ${field} é obrigatório`);
+    }
+  }
+  const extras = Object.keys(identity).filter((key) => !REVIEWER_IDENTITY_FIELDS.includes(key));
+  if (extras.length > 0) {
     throw new Error(
-      'identidade inválida: esta ação exige um contexto estruturado { userId, name, role, permissions } — texto livre não é mais aceito'
+      `autorizador devolveu uma identidade inválida: só { userId, name, role } é aceito (campos não permitidos: ${extras.join(', ')})`
     );
   }
-  if (!identity.userId || typeof identity.userId !== 'string' || !identity.userId.trim()) {
-    throw new Error('identidade inválida: userId é obrigatório');
+  if (role.trim().toUpperCase() === ACTOR.SYSTEM) {
+    throw new Error('autorizador devolveu uma identidade inválida: SYSTEM não é um revisor — aprovação e rejeição são sempre atos humanos');
   }
-  if (!identity.name || typeof identity.name !== 'string' || !identity.name.trim()) {
-    throw new Error('identidade inválida: name é obrigatório');
-  }
-  if (!identity.role || typeof identity.role !== 'string' || !identity.role.trim()) {
-    throw new Error('identidade inválida: role é obrigatório');
-  }
-  if (!Array.isArray(identity.permissions)) {
-    throw new Error('identidade inválida: permissions deve ser uma lista de permissões concedidas');
-  }
-  if (!identity.permissions.includes(requiredPermission)) {
-    throw new Error(`identidade sem permissão necessária: ${requiredPermission}`);
-  }
-  return {
-    userId: String(identity.userId).trim(),
-    name: String(identity.name).trim(),
-    role: String(identity.role).trim(),
-  };
+  return { userId: userId.trim(), name: name.trim(), role: role.trim() };
 }
 
 // ID estável por entidade, reaproveitando identityKeys() já existente em
@@ -333,28 +353,73 @@ function addProspect(queue, discoveryResult) {
   return item;
 }
 
-// Aprovação: sempre um ato humano explícito. Nunca cria/edita nada no CRM —
-// só marca que este prospect PODE, futuramente, ser encaminhado para lá.
-// `identity` substitui o antigo `reviewer` de texto livre (Passo 0009.2).
-function approveProspect(queue, id, identity, reason) {
-  const reviewedBy = assertValidIdentity(identity, PERMISSION.APPROVE_LEAD_APPROVAL);
-  const item = requireItem(queue, id);
-  const now = new Date().toISOString();
-  transitionState(item, QUEUE_STATE.APROVADO_PARA_CRM, ACTOR.HUMAN, reason || null, now, { reviewedBy });
-  return item;
+// Ações de revisão humana (aprovar/rejeitar). Só existem através desta fábrica:
+// sem um `authorizeReviewer` (função) injetado nada é criado — a falha fechada
+// acontece na criação, não na primeira chamada. O autorizador é capturado aqui:
+// trocar `options.authorizeReviewer` depois não altera as ações já criadas.
+//
+// A ordem é sempre (1) autorizar, (2) só então olhar a fila. Uma chamada não
+// autorizada lança antes de tocar em qualquer item — nem sequer revela se o
+// prospect existe — e a fila permanece exatamente como estava.
+//
+// `context` é opaco para o domínio (ver o cabeçalho): quem o interpreta é o
+// autorizador. Substitui o antigo `identity`/`reviewer` (Passos 0009.2 e 0009.6).
+function createApprovalReviewActions(options) {
+  const authorizeReviewer = options && options.authorizeReviewer;
+  if (typeof authorizeReviewer !== 'function') {
+    throw new Error(
+      'createApprovalReviewActions exige { authorizeReviewer } (função): sem autorizador injetado não existe caminho de aprovação/rejeição'
+    );
+  }
+
+  function authorize(context) {
+    return assertReviewerIdentity(authorizeReviewer(context, PERMISSION.APPROVE_LEAD_APPROVAL));
+  }
+
+  // Aprovação: sempre um ato humano explícito. Nunca cria/edita nada no CRM —
+  // só marca que este prospect PODE, futuramente, ser encaminhado para lá.
+  function approve(queue, id, context, reason) {
+    const reviewedBy = authorize(context);
+    const item = requireItem(queue, id);
+    const now = new Date().toISOString();
+    transitionState(item, QUEUE_STATE.APROVADO_PARA_CRM, ACTOR.HUMAN, reason || null, now, { reviewedBy });
+    return item;
+  }
+
+  // Rejeição: também sempre um ato humano explícito, sempre com motivo. A
+  // exigência de motivo vem DEPOIS da autorização: quem não está autorizado
+  // recebe a recusa de autorização, nunca detalhes de validação.
+  function reject(queue, id, context, reason) {
+    const reviewedBy = authorize(context);
+    if (!reason || !String(reason).trim()) {
+      throw new Error('rejeição exige um motivo');
+    }
+    const item = requireItem(queue, id);
+    const now = new Date().toISOString();
+    transitionState(item, QUEUE_STATE.REJEITADO, ACTOR.HUMAN, reason, now, { reviewedBy });
+    return item;
+  }
+
+  return Object.freeze({ approveProspect: approve, rejectProspect: reject });
 }
 
-// Rejeição: também sempre um ato humano explícito, sempre com motivo.
-// `identity` substitui o antigo `reviewer` de texto livre (Passo 0009.2).
-function rejectProspect(queue, id, identity, reason) {
-  const reviewedBy = assertValidIdentity(identity, PERMISSION.APPROVE_LEAD_APPROVAL);
-  if (!reason || !String(reason).trim()) {
-    throw new Error('rejeição exige um motivo');
-  }
-  const item = requireItem(queue, id);
-  const now = new Date().toISOString();
-  transitionState(item, QUEUE_STATE.REJEITADO, ACTOR.HUMAN, reason, now, { reviewedBy });
-  return item;
+// approveProspect/rejectProspect SOLTOS: existem só para falhar fechado. Antes
+// da Fase E aprovavam a partir de um objeto de identidade que o próprio chamador
+// apresentava; agora não há caminho de aprovação/rejeição sem um autorizador
+// injetado. Não leem nenhum argumento e nunca tocam na fila.
+function failClosedWithoutAuthorizer(actionName) {
+  throw new Error(
+    `${actionName} solto está desativado (falha fechada): aprovar/rejeitar exige um autorizador injetado — ` +
+      `use createApprovalReviewActions({ authorizeReviewer }).${actionName}`
+  );
+}
+
+function approveProspect() {
+  return failClosedWithoutAuthorizer('approveProspect');
+}
+
+function rejectProspect() {
+  return failClosedWithoutAuthorizer('rejectProspect');
 }
 
 // Transições de sistema explícitas (uso típico: um recheck posterior de
@@ -405,6 +470,7 @@ module.exports = {
   saveQueueToDisk,
   buildStableId,
   addProspect,
+  createApprovalReviewActions,
   approveProspect,
   rejectProspect,
   markDuplicado,
