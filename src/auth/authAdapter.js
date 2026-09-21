@@ -40,6 +40,26 @@ class SupabaseAdapterError extends Error {
   }
 }
 
+function isNonEmptyString(value) {
+  return typeof value === 'string' && value.trim().length > 0;
+}
+
+// Nunca deixa o access token aparecer em mensagens de erro/logs, mesmo que o
+// Supabase o repita na própria mensagem.
+function scrubToken(message, token) {
+  return String(message == null ? '' : message).split(token).join('[token omitido]');
+}
+
+// Classifica um erro DEVOLVIDO pelo SDK ao verificar um access token.
+// Token rejeitado/inválido/expirado (qualquer rejeição 4xx do Auth) => AUTH;
+// falha de rede (o SDK a devolve como AuthRetryableFetchError) => NETWORK;
+// erro 5xx do servidor de Auth => UNKNOWN (não é veredito sobre o token).
+function classifyVerificationError(error) {
+  if (error && error.name === 'AuthRetryableFetchError') return CONNECTIVITY_ERROR.NETWORK;
+  if (error && typeof error.status === 'number' && error.status >= 500) return CONNECTIVITY_ERROR.UNKNOWN;
+  return CONNECTIVITY_ERROR.AUTH;
+}
+
 function createSupabaseAuthAdapter(env = process.env) {
   let cachedClient = null;
 
@@ -129,7 +149,81 @@ function createSupabaseAuthAdapter(env = process.env) {
     return { status: CONNECTIVITY_ERROR.UNKNOWN, detail: `HTTP ${response.status}` };
   }
 
-  // Devolve { authUserId, email } de uma sessão já autenticada. Lança um
+  // Verifica um ACCESS TOKEN REAL emitido pelo Supabase Auth e devolve a
+  // identidade verificada NO SERVIDOR do Supabase: { authUserId, email,
+  // emailConfirmed }. Este é o caminho de identidade verificada — getSession()
+  // NÃO é prova de identidade (lê estado local, sem validar nada no servidor).
+  //
+  // - Usa auth.getUser(accessToken): o SDK chama GET /auth/v1/user com o token
+  //   explícito e NÃO lê nem grava a sessão do cliente (nada é "logado" neste
+  //   cliente em cache — não há contaminação entre requisições).
+  // - authUserId vem SÓ de user.id; email SÓ de user.email; emailConfirmed SÓ
+  //   de user.email_confirmed_at (estado de confirmação do próprio Supabase).
+  // - A única entrada é o token. Nenhum authUserId/email/role/permissions/status
+  //   fornecido pelo chamador participa da identidade, e nenhum objeto USER é
+  //   consultado. Nada aqui cria AuthorizationContext — isso é etapa futura.
+  // - Só leitura (GET). Nenhuma escrita no Supabase.
+  async function verifyAccessToken(accessToken) {
+    if (typeof accessToken !== 'string' || accessToken.trim().length === 0) {
+      throw new SupabaseAdapterError(
+        CONNECTIVITY_ERROR.AUTH,
+        'accessToken ausente, vazio ou não é uma string: nenhuma identidade pode ser verificada.'
+      );
+    }
+    const token = accessToken.trim();
+    const client = getClient(); // lança CONFIGURACAO se SUPABASE_URL/ANON_KEY estiverem ausentes
+
+    let result;
+    try {
+      result = await client.auth.getUser(token);
+    } catch (err) {
+      const category = err && err.name === 'AuthRetryableFetchError' ? CONNECTIVITY_ERROR.NETWORK : CONNECTIVITY_ERROR.SDK;
+      throw new SupabaseAdapterError(
+        category,
+        `Falha ao verificar o access token no Supabase Auth: ${scrubToken(err && err.message, token)}`
+      );
+    }
+
+    const { data, error } = result || {};
+    if (error) {
+      const detalhe = [
+        typeof error.status === 'number' && error.status > 0 ? `HTTP ${error.status}` : null,
+        typeof error.code === 'string' ? error.code : null,
+      ]
+        .filter(Boolean)
+        .join(', ');
+      throw new SupabaseAdapterError(
+        classifyVerificationError(error),
+        `Supabase Auth não verificou o access token${detalhe ? ` (${detalhe})` : ''}: ${scrubToken(error.message, token)}`
+      );
+    }
+
+    const user = data && data.user;
+    if (!user || typeof user !== 'object') {
+      throw new SupabaseAdapterError(
+        CONNECTIVITY_ERROR.AUTH,
+        'Supabase Auth não devolveu nenhum usuário para este access token: identidade não verificada.'
+      );
+    }
+    if (!isNonEmptyString(user.id)) {
+      throw new SupabaseAdapterError(
+        CONNECTIVITY_ERROR.AUTH,
+        'Resposta do Supabase Auth sem user.id válido: identidade não verificada.'
+      );
+    }
+
+    const email = isNonEmptyString(user.email) ? user.email : null;
+    // Sem e-mail não há e-mail a confirmar. Com e-mail, só vale o timestamp de
+    // confirmação do próprio Supabase; qualquer coisa que não seja uma data
+    // válida conta como NÃO confirmado (falha fechada).
+    const emailConfirmed =
+      email !== null && isNonEmptyString(user.email_confirmed_at) && Number.isFinite(Date.parse(user.email_confirmed_at));
+
+    return Object.freeze({ authUserId: user.id, email, emailConfirmed });
+  }
+
+  // Devolve { authUserId, email } de uma sessão já autenticada NESTE cliente.
+  // NÃO é prova de identidade (ver verifyAccessToken). Lança um
   // erro simples (não uma SupabaseAdapterError categorizada) quando não há
   // sessão — isso não é uma falha de conectividade, é só a ausência de
   // login, esperada enquanto nenhum Dashboard/fluxo de login existe.
@@ -149,6 +243,7 @@ function createSupabaseAuthAdapter(env = process.env) {
     getClient,
     getSessionStatus,
     checkConnectivity,
+    verifyAccessToken,
     resolveAuthenticatedIdentity,
   };
 }
