@@ -4,7 +4,7 @@
   "private": true,
   "description": "RIO X7 AI Agency OS — camada local de execução técnica (Claude Code). Notion continua sendo a fonte de verdade do CRM e das Skills.",
   "scripts": {
-    "test": "node --env-file-if-exists=.env --test tests/research-prospector/*.test.js tests/auth/*.test.js"
+    "test": "node --env-file-if-exists=.env --test tests/research-prospector/*.test.js tests/auth/*.test.js tests/services/*.test.js"
   },
   "dependencies": {
     "@supabase/supabase-js": "^2.116.0"
