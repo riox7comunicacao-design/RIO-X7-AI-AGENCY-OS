@@ -40,6 +40,32 @@ class SupabaseAdapterError extends Error {
   }
 }
 
+// Registro interno das identidades devolvidas por verifyAccessToken.
+//
+// Uma VerifiedIdentity é EXATAMENTE um objeto que verifyAccessToken devolveu ao
+// fim do caminho validado (o Supabase Auth confirmou o token e devolveu um
+// user.id). A marca é por IDENTIDADE DE OBJETO, não por conteúdo: um literal,
+// uma cópia, um clone ou um Proxy com os mesmos campos NÃO é reconhecido.
+//
+// Isto é uma fronteira arquitetural interna confiável (trusted internal
+// architectural boundary), e NÃO um mecanismo criptográfico: serve para que o
+// código de negócio não trate por engano — nem por ingenuidade — um objeto
+// qualquer como identidade verificada, e para que essa violação apareça em
+// teste. Não protege contra código malicioso que já tenha controle do mesmo
+// processo: esse código pode importar este módulo, substituir funções ou
+// fabricar o próprio registro. A prova real da identidade continua sendo a
+// verificação feita pelo servidor do Supabase (getUser).
+//
+// Nenhuma função exportada permite marcar um objeto: só verifyAccessToken
+// registra, e só no fim do caminho validado.
+const VERIFIED_IDENTITIES = new WeakSet();
+
+// true somente para um objeto que verifyAccessToken efetivamente devolveu.
+// Nunca lança, seja qual for o valor recebido.
+function isVerifiedIdentity(value) {
+  return typeof value === 'object' && value !== null && VERIFIED_IDENTITIES.has(value);
+}
+
 function isNonEmptyString(value) {
   return typeof value === 'string' && value.trim().length > 0;
 }
@@ -162,6 +188,11 @@ function createSupabaseAuthAdapter(env = process.env) {
   // - A única entrada é o token. Nenhum authUserId/email/role/permissions/status
   //   fornecido pelo chamador participa da identidade, e nenhum objeto USER é
   //   consultado. Nada aqui cria AuthorizationContext — isso é etapa futura.
+  // - O objeto devolvido é registrado em VERIFIED_IDENTITIES (ver
+  //   isVerifiedIdentity): só um objeto efetivamente devolvido por este caminho
+  //   é reconhecido como identidade verificada — nunca uma cópia, um clone ou
+  //   um literal equivalente. Isso NÃO é criptografia (ver o comentário do
+  //   registro) e não altera a lógica de verificação abaixo.
   // - Só leitura (GET). Nenhuma escrita no Supabase.
   async function verifyAccessToken(accessToken) {
     if (typeof accessToken !== 'string' || accessToken.trim().length === 0) {
@@ -219,7 +250,11 @@ function createSupabaseAuthAdapter(env = process.env) {
     const emailConfirmed =
       email !== null && isNonEmptyString(user.email_confirmed_at) && Number.isFinite(Date.parse(user.email_confirmed_at));
 
-    return Object.freeze({ authUserId: user.id, email, emailConfirmed });
+    // Único ponto que registra uma identidade: o fim do caminho validado. Toda
+    // falha acima lança antes de chegar aqui.
+    const identity = Object.freeze({ authUserId: user.id, email, emailConfirmed });
+    VERIFIED_IDENTITIES.add(identity);
+    return identity;
   }
 
   // Devolve { authUserId, email } de uma sessão já autenticada NESTE cliente.
@@ -254,4 +289,5 @@ module.exports = {
   createSupabaseAuthAdapter,
   SupabaseAdapterError,
   CONNECTIVITY_ERROR,
+  isVerifiedIdentity,
 };
