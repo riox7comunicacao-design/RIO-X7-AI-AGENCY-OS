@@ -12,6 +12,11 @@
 //    própria. Sem USER para o authUserId: USER_NOT_FOUND.
 //  - O store só aceita USERs definidos por defineUser() e operacionais (com
 //    authUserId), com userId e authUserId únicos.
+//  - O resolver NÃO confia às cegas no store que recebe: depois da busca, confere
+//    o vínculo — o USER devolvido precisa ter exatamente o authUserId da
+//    identidade. Um store falso ou defeituoso (qualquer objeto com
+//    findByAuthUserId) que devolva o USER de outra pessoa, inclusive um ADMIN,
+//    nunca vira o contexto de quem se autenticou: USER_NOT_FOUND (falha fechada).
 //  - A marca de VerifiedIdentity é uma fronteira arquitetural interna
 //    confiável, não criptografia (ver authAdapter.js).
 //
@@ -99,8 +104,9 @@ function createUserStore(initialUsers = []) {
 
 // Resolve o USER EXCLUSIVAMENTE pelo authUserId de uma VerifiedIdentity:
 //
-//   VerifiedIdentity -> authUserId -> USER encontrado  -> AuthorizationContext
-//                                  -> USER não encontrado -> USER_NOT_FOUND
+//   VerifiedIdentity -> authUserId -> USER encontrado, com esse authUserId -> AuthorizationContext
+//                                  -> USER não encontrado                 -> USER_NOT_FOUND
+//                                  -> USER de OUTRO authUserId            -> USER_NOT_FOUND
 //
 // Não há fallback por e-mail, nem vínculo por e-mail, e nenhum USER é criado por
 // conta própria. Cadastro de usuário é administração (MANAGE:USERS), fora do
@@ -119,6 +125,18 @@ function resolveAuthorizationContext(userStore, verifiedIdentity) {
     throw new UserResolutionError(
       USER_NOT_FOUND,
       'usuário não encontrado: nenhum USER Rio X7 corresponde ao authUserId desta identidade verificada'
+    );
+  }
+
+  // O vínculo é CONFERIDO, o store não é confiado às cegas: o store real só devolve o USER do
+  // authUserId pedido, mas qualquer outro objeto com findByAuthUserId (um stub, ou um store futuro
+  // com uma consulta errada) poderia devolver o USER de outra pessoa. Comparação exata: uma
+  // diferença de caixa, prefixo ou sufixo também é "outro" authUserId. Reusa USER_NOT_FOUND (nenhum
+  // USER corresponde a esta identidade) e não revela nada do USER que o store devolveu.
+  if (user.authUserId !== verifiedIdentity.authUserId) {
+    throw new UserResolutionError(
+      USER_NOT_FOUND,
+      'usuário não encontrado: o USER devolvido pelo store não corresponde ao authUserId desta identidade verificada — recusado (falha fechada)'
     );
   }
 
