@@ -64,6 +64,11 @@ const RULES = {
   R6: 'Todo carregamento de módulo em src/ precisa ser estaticamente analisável (um carregamento que a análise não enxerga escapa de todas as fronteiras).',
   R7: 'Somente src/auth/authAdapter.js importa @supabase/supabase-js, e o adapter não importa outros módulos de src/ (ele só responde "quem está autenticado?").',
   R8: 'O catálogo PERMISSION não pode ser enumerado nem passado como valor em src/: as permissões de uma role são listas literais e explícitas.',
+  // R9-R11 (Dashboard MVP / Fase G, decisão D7): a camada de aplicação (Services, o servidor HTTP e o Dashboard)
+  // se soma às fronteiras já existentes, sem afrouxar nenhuma delas.
+  R9: 'src/auth/ e src/research-prospector/ não podem importar src/services/ nem src/server/ (a camada de domínio/auth não conhece a camada de aplicação).',
+  R10: 'src/server/ não pode importar src/research-prospector/ diretamente — só através de src/services/.',
+  R11: 'dashboard/ (o navegador) não pode importar nada de src/ — só conversa com o servidor por HTTP.',
 };
 
 // Detalhe de uma aresta (arquivo -> alvo) que viola uma regra; usado no grafo estático e no de execução.
@@ -72,6 +77,9 @@ const EDGE_DETAIL = {
   R2: 'src/ não pode depender de tests/ nem de nada fora de src/',
   R3: 'o domínio research-prospector não pode importar src/auth',
   R4: 'src/auth não pode importar o domínio research-prospector',
+  R9: 'src/auth ou src/research-prospector não pode importar src/services nem src/server',
+  R10: 'src/server não pode importar o domínio research-prospector diretamente — só através de src/services',
+  R11: 'dashboard/ não pode importar nada de src/',
 };
 
 const lc = (value) => value.toLowerCase();
@@ -88,7 +96,30 @@ function edgeRules(fromRel, toRel) {
   if (!insideSrc(to)) rules.push('R2');
   if (from.startsWith('src/research-prospector/') && to.startsWith('src/auth/')) rules.push('R3');
   if (from.startsWith('src/auth/') && to.startsWith('src/research-prospector/')) rules.push('R4');
+  if ((from.startsWith('src/auth/') || from.startsWith('src/research-prospector/')) && (to.startsWith('src/services/') || to.startsWith('src/server/'))) rules.push('R9');
+  if (from.startsWith('src/server/') && to.startsWith('src/research-prospector/')) rules.push('R10');
   return rules;
+}
+
+// R11 é uma árvore DIFERENTE (dashboard/, não src/): o navegador não deve importar nada de src/. Reaproveita o
+// mesmo tokenizer/resolvedor (analyzeSource/resolveSpecifier) usado para src/ — a mesma falha fechada vale aqui:
+// um arquivo de dashboard/ que a análise não consiga ler faz analyzeSource lançar, e a avaliação inteira falha.
+function evaluateDashboardBoundary(repoRoot) {
+  const dashboardDir = path.join(repoRoot, 'dashboard');
+  if (!fs.existsSync(dashboardDir)) return [];
+  const violations = [];
+  for (const file of listSourceFiles(dashboardDir)) {
+    const rel = toPosix(path.relative(repoRoot, file));
+    const analysis = analyzeSource(fs.readFileSync(file, 'utf8'), rel);
+    for (const ref of analysis.refs) {
+      const resolution = resolveSpecifier(file, ref.specifier, repoRoot);
+      const target = resolution.kind === 'relative' ? resolution.targetRel : resolution.kind === 'absolute' ? ref.specifier : null;
+      if (target !== null && (resolution.kind === 'absolute' || insideSrc(target))) {
+        violations.push({ rule: 'R11', file: rel, line: ref.line, dependency: target, detail: `${ref.kind}('${ref.specifier}'): ${EDGE_DETAIL.R11}` });
+      }
+    }
+  }
+  return violations;
 }
 
 // Linhas onde o CATÁLOGO PERMISSION é usado como valor — enumerado, espalhado ou repassado —
@@ -414,6 +445,23 @@ test('[ARCH-10] a análise não é vazia: enxerga os importadores reais do emiss
   assert.ok(modules.every((mod) => mod.issues.length === 0), 'nenhum arquivo real de src/ tem carregamento não analisável');
 });
 
+test('[ARCH-11] R9: src/auth e src/research-prospector não importam src/services nem src/server (a camada de aplicação é nova, a fronteira de domínio não se abre para ela)', () => {
+  const violations = only('R9');
+  assert.equal(violations.length, 0, report('R9', violations));
+});
+
+test('[ARCH-12] R10: src/server não importa o domínio research-prospector diretamente — só através de src/services', () => {
+  const violations = only('R10');
+  assert.equal(violations.length, 0, report('R10', violations));
+});
+
+test('[ARCH-13] R11: dashboard/ não importa nada de src/ — o navegador só fala HTTP com o servidor', () => {
+  const violations = evaluateDashboardBoundary(REPO_ROOT);
+  assert.equal(violations.length, 0, report('R11', violations));
+  // A regra não passa em branco por não ter o que examinar: dashboard/ existe e tem módulos ES reais.
+  assert.ok(fs.existsSync(path.join(REPO_ROOT, 'dashboard', 'app.mjs')), 'dashboard/app.mjs deveria existir para esta checagem valer algo');
+});
+
 // ===========================================================================
 // Auto-testes do SCANNER: o que ele enxerga e o que ele ignora
 // ===========================================================================
@@ -634,6 +682,41 @@ test('[ARCH-S9] R3 e R4: nenhuma dependência entre research-prospector e auth, 
   ]);
 });
 
+test('[ARCH-S9b] R9: um NOVO arquivo em src/auth ou src/research-prospector importando src/services ou src/server é detectado (em qualquer sentido de arquivo alvo), e o sentido oposto (services/server importando o domínio) continua LIVRE', (t) => {
+  const violacoes = evaluateBoundaries(
+    makeTree(t, {
+      'src/auth/vazamentoServico.js': "require('../services/approvalQueueService');\n",
+      'src/auth/vazamentoServidor.js': "require('../server/app');\n",
+      'src/research-prospector/vazamentoServico.js': "require('../services/approvalQueueService');\n",
+      'src/research-prospector/vazamentoServidor.js': "require('../server');\n",
+      'src/services/approvalQueueService.js': "const dominio = require('../research-prospector/approvalQueue');\nmodule.exports = { dominio };\n",
+      'src/server/app.js': "const auth = require('../auth');\nmodule.exports = { auth };\n",
+      'src/server/index.js': "module.exports = {};\n",
+    })
+  );
+  assert.deepEqual(pairs(violacoes.filter((v) => v.rule === 'R9')), [
+    'R9@src/auth/vazamentoServico.js',
+    'R9@src/auth/vazamentoServidor.js',
+    'R9@src/research-prospector/vazamentoServico.js',
+    'R9@src/research-prospector/vazamentoServidor.js',
+  ]);
+  // src/services chamando o domínio, e src/server chamando src/auth, são exatamente o caminho pretendido — não violam R9.
+  assert.deepEqual(violacoes.filter((v) => v.file === 'src/services/approvalQueueService.js' || v.file === 'src/server/app.js'), []);
+});
+
+test('[ARCH-S9c] R10: src/server importando o domínio research-prospector DIRETAMENTE é detectado; pelo Service (src/services) continua permitido', (t) => {
+  const violacoes = evaluateBoundaries(
+    makeTree(t, {
+      'src/server/direto.js': "require('../research-prospector/approvalQueue');\n",
+      'src/server/peloServico.js': "require('../services/approvalQueueService');\n",
+      'src/research-prospector/approvalQueue.js': "module.exports = {};\n",
+      'src/services/approvalQueueService.js': "module.exports = {};\n",
+    })
+  );
+  assert.deepEqual(pairs(violacoes.filter((v) => v.rule === 'R10')), ['R10@src/server/direto.js']);
+  assert.deepEqual(violacoes.filter((v) => v.file === 'src/server/peloServico.js'), []);
+});
+
 test('[ARCH-S10] R5: um ciclo de importação é detectado e descrito pelo caminho completo', (t) => {
   const violacoes = evaluateBoundaries(
     makeTree(t, {
@@ -761,4 +844,45 @@ test('[ARCH-S15] o grafo de execução acusa um desvio dinâmico do emissor e o 
 test('[ARCH-S16] o grafo de execução da árvore sintética limpa não tem violação, ponto cego nem arquivo que falhe ao carregar', (t) => {
   const { violations, blindSpots, failures } = evaluateRuntimeGraph(makeTree(t, SEM_SDK));
   assert.deepEqual({ violations, blindSpots, failures }, { violations: [], blindSpots: [], failures: [] });
+});
+
+// ===========================================================================
+// Auto-testes de R11 (dashboard/ ↛ src/) — árvore própria, fora de src/
+// ===========================================================================
+function makeDashboardFixture(t, files) {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'arch-tree-'));
+  t.after(() => fs.rmSync(root, { recursive: true, force: true }));
+  for (const [rel, content] of Object.entries(files)) {
+    const full = path.join(root, ...rel.split('/'));
+    fs.mkdirSync(path.dirname(full), { recursive: true });
+    fs.writeFileSync(full, content);
+  }
+  return root;
+}
+
+test('[ARCH-S17] R11: dashboard/ importando algo de src/ é detectado, por import ES, por require ou por caminho absoluto — em qualquer profundidade', (t) => {
+  const root = makeDashboardFixture(t, {
+    'dashboard/inofensivo.mjs': "export const x = 1;\n",
+    'dashboard/importEs.mjs': "import { PERMISSION } from '../src/auth/constants.js';\nexport { PERMISSION };\n",
+    'dashboard/views/profundo.mjs': "import '../../src/services/approvalQueueService.js';\n",
+    'dashboard/comRequire.mjs': "const auth = require('../src/auth');\nexport { auth };\n",
+  });
+  const violacoes = evaluateDashboardBoundary(root);
+  const arquivos = new Set(violacoes.map((v) => v.file));
+  for (const esperado of ['dashboard/importEs.mjs', 'dashboard/views/profundo.mjs', 'dashboard/comRequire.mjs']) {
+    assert.ok(arquivos.has(esperado), `${esperado} deveria violar R11`);
+  }
+  assert.deepEqual(violacoes.filter((v) => v.file === 'dashboard/inofensivo.mjs'), []);
+  assert.ok(violacoes.every((v) => v.rule === 'R11'));
+});
+
+test('[ARCH-S18] R11: sem a pasta dashboard/ a checagem não acusa nada (nunca lança) — e comentários/strings que citam src/ não geram violação', (t) => {
+  const semDashboard = fs.mkdtempSync(path.join(os.tmpdir(), 'arch-tree-'));
+  t.after(() => fs.rmSync(semDashboard, { recursive: true, force: true }));
+  assert.deepEqual(evaluateDashboardBoundary(semDashboard), []);
+
+  const root = makeDashboardFixture(t, {
+    'dashboard/textoInofensivo.mjs': ["// import x from '../src/auth';", "const s = \"require('../src/auth')\";", 'export { s };', ''].join('\n'),
+  });
+  assert.deepEqual(evaluateDashboardBoundary(root), []);
 });
