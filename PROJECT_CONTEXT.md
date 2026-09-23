@@ -111,7 +111,9 @@ Hipótese nunca deve ser apresentada como fato.
 
 ## CRM
 
-O CRM central atualmente está no Notion. Não será criado um segundo CRM local neste passo.
+**Histórico (SUPERADO em 2026-09-23 — ver [decisão 0012](./docs/decisions/0012-crm-operational-source-of-truth.md)):** até esta data, o texto desta seção era *"O CRM central atualmente está no Notion. Não será criado um segundo CRM local neste passo."* Essa decisão foi revogada explicitamente pelo proprietário do projeto.
+
+**Estado atual:** o Rio X7 AI Agency OS passa a ter um CRM operacional próprio, acessível pelo Dashboard (Breno/Rafael), como nova fonte de verdade do Pipeline Comercial — substituindo o Notion nesse papel. O Notion continua como base de conhecimento, documentação e repositório das Skills nativas; uma eventual sincronização entre os dois é decisão futura, não implementada. Ver a decisão 0012 para o racional completo, o princípio de persistência desacoplada e o que ainda não foi implementado.
 
 ## Skills
 

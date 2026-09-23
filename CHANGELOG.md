@@ -1,5 +1,16 @@
 # Changelog
 
+## 2026-09-23 — Decisão arquitetural: CRM operacional próprio (revoga Notion como fonte de verdade)
+
+Registrado [decisão 0012](./docs/decisions/0012-crm-operational-source-of-truth.md), autorizada pelo proprietário do projeto.
+
+- O Notion deixa de ser a fonte de verdade do Pipeline Comercial. O Rio X7 AI Agency OS passa a ter um CRM operacional próprio, acessível pelo Dashboard, seguindo a mesma arquitetura em camadas já validada para a Approval Queue (`Dashboard → HTTP/API → CRM Service → CRM Domain → Persistência`).
+- O Notion continua como base de conhecimento, documentação e repositório das Skills — não é desligado, só muda de papel. Nenhuma sincronização entre os dois foi criada.
+- Persistência do CRM Domain é desenhada como camada substituível (repositório/porta), nunca acoplada diretamente a JSON — um adapter de desenvolvimento/teste vem primeiro; o Supabase já usado para autenticação é registrado como candidato futuro para persistência multi-dispositivo, **sem decisão de adoção nem implementação nesta etapa**.
+- Permissões inalteradas: `ADMIN` mantém `WRITE:CRM`; `COMMERCIAL_CLOSER` continua sem `WRITE:CRM`.
+- `PROJECT_CONTEXT.md` e `docs/architecture/data-domains.md` foram atualizados para refletir a nova decisão, preservando o texto anterior marcado como superado (não apagado).
+- Nenhum código de CRM foi implementado por esta etapa (só a decisão e a documentação). Implementação segue em etapas próprias: CRM-DOMAIN, CRM-SERVICE, CRM-INTEGRATION, CRM-API, CRM-DASHBOARD.
+
 ## 2026-09-16 — Fundação inicial
 
 Fundação inicial do RIO X7 AI AGENCY OS criada no Claude Code.
