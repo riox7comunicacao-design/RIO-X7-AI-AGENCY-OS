@@ -409,3 +409,144 @@ test('[CRM-JSON-3] DO_NOT_CONTACT continua terminal sobre o arquivo JSON, mesmo 
   crmDomain.markDoNotContact(repo, record.id);
   assert.throws(() => crmDomain.moveStatus(repo, record.id, CRM_STATUS.PROSPECT), /transição não permitida/);
 });
+
+// ===========================================================================
+// 11) REGRESSÃO DE SEGURANÇA (auditoria da etapa CRM-SERVICE) — cada teste abaixo reproduz uma brecha que existia
+//     no domínio antes desta etapa (comprovada por experimento) e agora fica travada.
+// ===========================================================================
+
+// --- a) EDITAR a identidade é entrar no CRM: DNC e duplicidade valem também na atualização ---------------------
+test('[CRM-SEC-1] updateRecord NÃO permite dar a um registro ATIVO a identidade de um registro DO_NOT_CONTACT (site, telefone, whatsapp, instagram e nome+cidade)', () => {
+  const casos = [
+    ['site', { site: 'bloqueado.example.test' }, { site: 'https://www.BLOQUEADO.example.test/pagina' }],
+    ['telefone', { telefone: '24933334444' }, { telefone: '+55 (24) 93333-4444' }],
+    ['whatsapp', { whatsapp: '24955556666' }, { whatsapp: '24955556666' }],
+    ['instagram', { instagram: 'perfil.bloqueado' }, { instagram: '@Perfil.Bloqueado' }],
+  ];
+  for (const [campo, identidadeDoBloqueado, edicao] of casos) {
+    const repo = memRepo();
+    const { record: bloqueado } = crmDomain.createRecord(repo, { empresa: 'Bloqueada', ...identidadeDoBloqueado });
+    crmDomain.markDoNotContact(repo, bloqueado.id);
+    const { record: ativo } = crmDomain.createRecord(repo, { empresa: 'Ativa' });
+    assert.throws(() => crmDomain.updateRecord(repo, ativo.id, edicao), /bloqueado como DO_NOT_CONTACT/, campo);
+    assert.equal(crmDomain.getRecord(repo, ativo.id)[campo], null, `${campo}: o registro ativo não foi alterado`);
+  }
+  // nome + cidade, o mesmo critério que checkDoNotContact já usa na criação.
+  const repo = memRepo();
+  const { record: bloqueado } = crmDomain.createRecord(repo, { empresa: 'Nome Igual', cidade: 'Petrópolis' });
+  crmDomain.markDoNotContact(repo, bloqueado.id);
+  const { record: ativo } = crmDomain.createRecord(repo, { empresa: 'Outro Nome', cidade: 'Niterói' });
+  assert.throws(() => crmDomain.updateRecord(repo, ativo.id, { empresa: 'Nome Igual', cidade: 'Petrópolis' }), /bloqueado como DO_NOT_CONTACT/);
+});
+
+test('[CRM-SEC-2] updateRecord NÃO permite virar DUPLICADO forte de OUTRO registro (site, telefone e instagram), e a mesma identidade continua livre para o próprio registro', () => {
+  for (const [campo, valorDoOutro] of [['site', 'outro.example.test'], ['telefone', '24911112222'], ['instagram', 'outro.perfil']]) {
+    const repo = memRepo();
+    crmDomain.createRecord(repo, { empresa: 'Outro', [campo]: valorDoOutro });
+    const { record: eu } = crmDomain.createRecord(repo, { empresa: 'Eu', [campo]: 'proprio-valor-livre' });
+    assert.throws(() => crmDomain.updateRecord(repo, eu.id, { [campo]: valorDoOutro }), /coincide com a de outro registro/, campo);
+    assert.equal(crmDomain.getRecord(repo, eu.id)[campo], 'proprio-valor-livre', `${campo}: nada foi gravado`);
+  }
+  const repo = memRepo();
+  const { record } = crmDomain.createRecord(repo, { empresa: 'Sozinho', site: 'sozinho.example.test' });
+  assert.equal(crmDomain.updateRecord(repo, record.id, { site: 'sozinho.example.test', observacoes: 'reenviar o próprio site nunca conflita com ele mesmo' }).site, 'sozinho.example.test');
+});
+
+test('[CRM-SEC-3] updateRecord: nome+cidade em comum com outro registro NÃO bloqueia (POSSIVEL_DUPLICADO, como na criação — preferir falso negativo), e uma edição que não toca a identidade nunca reverifica', () => {
+  const repo = memRepo();
+  crmDomain.createRecord(repo, { empresa: 'Consultório Igual', cidade: 'Petrópolis' });
+  const { record } = crmDomain.createRecord(repo, { empresa: 'Consultório Outro', cidade: 'Petrópolis' });
+  const atualizado = crmDomain.updateRecord(repo, record.id, { empresa: 'Consultório Igual' });
+  assert.equal(atualizado.empresa, 'Consultório Igual');
+  // Editar um campo que NÃO é de identidade não passa pela checagem de identidade.
+  assert.equal(crmDomain.updateRecord(repo, record.id, { observacoes: 'nota' }).observacoes, 'nota');
+});
+
+test('[CRM-SEC-4] updateRecord nunca deixa "empresa" vazia (null, "" ou só espaços) — o invariante de criação vale também na edição', () => {
+  const repo = memRepo();
+  const { record } = crmDomain.createRecord(repo, { empresa: 'Empresa Obrigatória' });
+  for (const vazio of [null, '', '   ']) {
+    assert.throws(() => crmDomain.updateRecord(repo, record.id, { empresa: vazio }), /"empresa" vazia/, String(vazio));
+  }
+  assert.equal(crmDomain.getRecord(repo, record.id).empresa, 'Empresa Obrigatória');
+});
+
+// --- b) Espaços nas pontas: nunca contornam deduplicação nem DNC -------------------------------------------------
+test('[CRM-SEC-5] espaços nas pontas de um texto são removidos ao gravar, e um texto só de espaços vira null (campo limpo)', () => {
+  const repo = memRepo();
+  const { record } = crmDomain.createRecord(repo, { empresa: '  Empresa Com Espaços  ', site: '  espacos.example.test  ', observacoes: '   ', contato: '\t Pessoa \n' });
+  assert.equal(record.empresa, 'Empresa Com Espaços');
+  assert.equal(record.site, 'espacos.example.test');
+  assert.equal(record.observacoes, null);
+  assert.equal(record.contato, 'Pessoa');
+  const atualizado = crmDomain.updateRecord(repo, record.id, { site: '   ' });
+  assert.equal(atualizado.site, null, 'enviar só espaços limpa o campo');
+});
+
+test('[CRM-SEC-6] um site com espaços NÃO contorna a deduplicação forte nem o DO_NOT_CONTACT na CRIAÇÃO', () => {
+  const repo = memRepo();
+  crmDomain.createRecord(repo, { empresa: 'Original', site: 'original.example.test' });
+  assert.throws(() => crmDomain.createRecord(repo, { empresa: 'Cópia', site: '  original.example.test  ' }), /mesma identidade/);
+  assert.throws(() => crmDomain.createRecord(repo, { empresa: 'Cópia 2', site: '\toriginal.example.test\n' }), /mesma identidade/);
+
+  const { record: bloqueado } = crmDomain.createRecord(repo, { empresa: 'Bloqueada', site: 'bloqueada.example.test' });
+  crmDomain.markDoNotContact(repo, bloqueado.id);
+  assert.throws(() => crmDomain.createRecord(repo, { empresa: 'Reentrada', site: '  bloqueada.example.test  ' }), /bloqueada como DO_NOT_CONTACT/);
+});
+
+test('[CRM-SEC-7] um site com espaços NÃO contorna a identidade na ATUALIZAÇÃO', () => {
+  const repo = memRepo();
+  crmDomain.createRecord(repo, { empresa: 'Original', site: 'original.example.test' });
+  const { record } = crmDomain.createRecord(repo, { empresa: 'Outra' });
+  assert.throws(() => crmDomain.updateRecord(repo, record.id, { site: '  original.example.test  ' }), /coincide com a de outro registro/);
+});
+
+// --- c) O mesmo número guardado em telefone OU whatsapp é a mesma identidade ---------------------------------------
+test('[CRM-SEC-8] o número guardado como whatsapp de um registro bloqueado NÃO permite reentrada como telefone de um novo registro (e vice-versa) — trocar de campo/canal nunca contorna o DNC', () => {
+  const repo = memRepo();
+  const { record } = crmDomain.createRecord(repo, { empresa: 'Dois Números', telefone: '24911110000', whatsapp: '24922220000' });
+  crmDomain.markDoNotContact(repo, record.id);
+  assert.throws(() => crmDomain.createRecord(repo, { empresa: 'Reentrada A', telefone: '24922220000' }), /bloqueada como DO_NOT_CONTACT/);
+  assert.throws(() => crmDomain.createRecord(repo, { empresa: 'Reentrada B', whatsapp: '24911110000' }), /bloqueada como DO_NOT_CONTACT/);
+  assert.throws(() => crmDomain.createRecord(repo, { empresa: 'Reentrada C', telefone: '24999990000', whatsapp: '24922220000' }), /bloqueada como DO_NOT_CONTACT/);
+  // Um número que não é de nenhum dos dois continua livre.
+  assert.doesNotThrow(() => crmDomain.createRecord(repo, { empresa: 'Sem relação', telefone: '24977778888' }));
+});
+
+test('[CRM-SEC-9] a deduplicação forte também cruza telefone e whatsapp: o mesmo número em campos diferentes de dois registros ATIVOS é a mesma identidade', () => {
+  const repo = memRepo();
+  crmDomain.createRecord(repo, { empresa: 'A', telefone: '24911110000', whatsapp: '24922220000' });
+  assert.throws(() => crmDomain.createRecord(repo, { empresa: 'B', telefone: '24922220000' }), /mesma identidade/);
+  assert.throws(() => crmDomain.createRecord(repo, { empresa: 'C', whatsapp: '24911110000' }), /mesma identidade/);
+  const { record } = crmDomain.createRecord(repo, { empresa: 'D', telefone: '24933330000' });
+  assert.throws(() => crmDomain.updateRecord(repo, record.id, { whatsapp: '24922220000' }), /coincide com a de outro registro/, 'e na atualização');
+});
+
+// --- d) Objetos herdados / registros adulterados no armazenamento -----------------------------------------------
+test('[CRM-SEC-10] um status herdado do protótipo do Object num registro ADULTERADO ("constructor", "__proto__", "toString") é só uma transição não permitida — nunca um erro opaco (TypeError)', () => {
+  for (const herdado of ['constructor', '__proto__', 'toString', 'hasOwnProperty', 'valueOf']) {
+    const repo = createInMemoryCrmRepository([{ id: 'crm:adulterado', empresa: 'x', status: herdado, historico: [] }]);
+    assert.throws(() => crmDomain.moveStatus(repo, 'crm:adulterado', CRM_STATUS.RESEARCH), /transição não permitida/, herdado);
+    assert.throws(() => crmDomain.markDoNotContact(repo, 'crm:adulterado'), /transição não permitida/, `${herdado} -> DNC`);
+  }
+});
+
+test('[CRM-SEC-11] um registro sem histórico (armazenamento adulterado) nunca é "consertado" em silêncio — apagaria a auditoria: falha fechada', () => {
+  for (const historicoRuim of [undefined, null, 'texto', {}, 42]) {
+    const registro = { id: 'crm:semhistorico', empresa: 'x', status: CRM_STATUS.PROSPECT };
+    if (historicoRuim !== undefined) registro.historico = historicoRuim;
+    const repo = createInMemoryCrmRepository([registro]);
+    assert.throws(() => crmDomain.moveStatus(repo, 'crm:semhistorico', CRM_STATUS.RESEARCH), /histórico ausente ou inválido/, String(historicoRuim));
+    assert.throws(() => crmDomain.updateRecord(repo, 'crm:semhistorico', { observacoes: 'x' }), /histórico ausente ou inválido/, String(historicoRuim));
+  }
+});
+
+test('[CRM-SEC-12] entradas com chaves perigosas ("__proto__", "constructor") são recusadas como campos desconhecidos e nunca poluem o protótipo global', () => {
+  const repo = memRepo();
+  const maliciosoComoJson = JSON.parse('{"empresa":"x","__proto__":{"polluted":true},"constructor":{"prototype":{"polluted":true}}}');
+  assert.throws(() => crmDomain.createRecord(repo, maliciosoComoJson), /campos desconhecidos/);
+  const { record } = crmDomain.createRecord(repo, { empresa: 'ok' });
+  assert.throws(() => crmDomain.updateRecord(repo, record.id, JSON.parse('{"__proto__":{"polluted":true}}')), /campos desconhecidos/);
+  assert.equal({}.polluted, undefined, 'Object.prototype não foi poluído');
+  assert.equal(Object.prototype.polluted, undefined);
+});

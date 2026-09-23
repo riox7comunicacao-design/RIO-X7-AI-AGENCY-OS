@@ -1,5 +1,15 @@
 # Changelog
 
+## 2026-09-23 — CRM Domain: correções de segurança encontradas na auditoria do CRM-SERVICE
+
+Correções no `src/crm/` (detalhes em [decisão 0013](./docs/decisions/0013-crm-domain.md), seção "Atualização"). Cada brecha foi reproduzida por experimento antes de ser corrigida e tem teste de regressão (`CRM-SEC-1` a `CRM-SEC-12`; 10 deles falham contra o código anterior).
+
+- **`updateRecord` contornava DNC e deduplicação:** editar o `site`/telefone/Instagram de um registro ativo para os de um registro `DO_NOT_CONTACT` (ou de outro registro) criava um lead ativo com identidade bloqueada. Agora a edição de campos de identidade passa pelas mesmas regras da criação. `empresa` nunca pode ficar vazia.
+- **Espaços nas pontas** de um texto (ex.: `"  x.example.test  "`) contornavam a deduplicação e o DNC; agora são removidos ao gravar.
+- **Telefone × WhatsApp:** o mesmo número guardado no campo "errado" não era reconhecido (limitação do `identityKeys` compartilhado, **não alterado**); o domínio agora compara cada número separadamente.
+- **Registros adulterados no armazenamento:** status herdado do protótipo do Object vira "transição não permitida" (antes, `TypeError`); registro sem histórico falha fechado em vez de ter a auditoria recriada.
+- Nenhuma permissão, nenhuma regra de transição e nenhum arquivo de `research-prospector` foram alterados.
+
 ## 2026-09-23 — CRM Domain: modelo de dados, máquina de estados, DNC, deduplicação, repositório
 
 Registrado [decisão 0013](./docs/decisions/0013-crm-domain.md), etapa CRM-DOMAIN.

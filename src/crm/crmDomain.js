@@ -47,6 +47,11 @@ function assertRecordShape(record, context) {
   if (!isPlainObject(record) || !isNonEmptyString(record.id)) {
     throw new Error(`CRM: registro inválido em ${context} — esperava um objeto com id`);
   }
+  // Um registro sem histórico (armazenamento adulterado) nunca é "consertado" em silêncio com um histórico novo:
+  // isso apagaria a auditoria. Falha fechada.
+  if (!Array.isArray(record.historico)) {
+    throw new Error(`CRM: registro corrompido em ${context} — histórico ausente ou inválido`);
+  }
 }
 
 function requireRepository(repository) {
@@ -101,10 +106,62 @@ function sanitizeWritableInput(input, { context }) {
         const esperado = NUMERIC_FIELDS.includes(field) ? 'um número (>= 0) ou null' : 'um texto ou null';
         throw new Error(`CRM: ${context} — campo "${field}" deve ser ${esperado}`);
       }
-      sanitized[field] = value === undefined ? null : value;
+      sanitized[field] = typeof value === 'string' ? trimmedOrNull(value) : value;
     }
   }
   return sanitized;
+}
+
+// Espaços nas pontas de um texto nunca são dado: "  site.example.test  " guardado assim NÃO seria reconhecido
+// como o mesmo site (a normalização de domínio falha com espaços) e contornaria deduplicação e DO NOT CONTACT.
+// Só as pontas são removidas — o conteúdo do texto não é alterado — e um texto que fica vazio vira null, o mesmo
+// valor de "campo ausente" (é assim que se limpa um campo).
+function trimmedOrNull(value) {
+  const trimmed = value.trim();
+  return trimmed.length === 0 ? null : trimmed;
+}
+
+// Os campos que entram nas chaves de identidade (research-prospector/normalize.js, identityKeys): mudar qualquer
+// um deles muda QUEM o registro é, para efeito de duplicidade e de DO NOT CONTACT.
+const IDENTITY_FIELDS = Object.freeze(['empresa', 'site', 'telefone', 'whatsapp', 'instagram', 'cidade']);
+
+// Um registro pode ter DOIS números (telefone e whatsapp), mas identityKeys() considera só um deles
+// (`telefone || whatsapp`): o mesmo número guardado no campo "errado" passaria despercebido — inclusive num DO NOT
+// CONTACT ("trocar de canal" nunca pode contornar o bloqueio). Aqui cada número vira uma "visão" própria do
+// registro, e as funções compartilhadas (checkDuplicate/checkDoNotContact) comparam cada visão. A lógica de
+// COMPARAÇÃO continua sendo a delas, sem cópia: este módulo só decide o que apresentar a elas.
+function identityViews(record) {
+  const base = { empresa: record.empresa, site: record.site, instagram: record.instagram, cidade: record.cidade };
+  const numeros = [...new Set([record.telefone, record.whatsapp].filter((numero) => typeof numero === 'string' && numero.trim() !== ''))];
+  if (numeros.length === 0) return [{ ...base, telefone: null, whatsapp: null }];
+  return numeros.map((numero) => ({ ...base, telefone: numero, whatsapp: null }));
+}
+
+// Compara a identidade de `candidate` com a de cada registro de `others`. Devolve
+//   { dnc: <registro bloqueado que casa> | null, duplicidade: { status, matchedOn, matchedRecord } | null }
+// onde `duplicidade` é DUPLICADO (identidade forte idêntica), POSSIVEL_DUPLICADO (só nome+cidade) ou null.
+// matchedRecord é sempre o registro ORIGINAL de `others`, nunca uma visão.
+function checkIdentity(candidate, others) {
+  const views = others.flatMap((record) =>
+    identityViews(record).map((view) => ({ ...view, id: record.id, doNotContact: record.status === CRM_STATUS.DO_NOT_CONTACT }))
+  );
+  const originalOf = (view) => others.find((record) => record.id === view.id);
+
+  for (const candidateView of identityViews(candidate)) {
+    const dnc = checkDoNotContact(candidateView, views);
+    if (dnc.doNotContact) return { dnc: originalOf(dnc.matchedRecord), duplicidade: null };
+  }
+  let possivel = null;
+  for (const candidateView of identityViews(candidate)) {
+    const found = checkDuplicate(candidateView, views);
+    if (found.status === DUPLICATE_STATUS.DUPLICADO) {
+      return { dnc: null, duplicidade: { status: found.status, matchedOn: found.matchedOn, matchedRecord: originalOf(found.matchedRecord) } };
+    }
+    if (found.status === DUPLICATE_STATUS.POSSIVEL_DUPLICADO && possivel === null) {
+      possivel = { status: found.status, matchedOn: found.matchedOn, matchedRecord: originalOf(found.matchedRecord) };
+    }
+  }
+  return { dnc: null, duplicidade: possivel };
 }
 
 // ID estável por identidade, na mesma ordem de prioridade oficial (domínio → telefone →
@@ -136,16 +193,11 @@ function createRecord(repository, input, options = {}) {
     throw new Error(`CRM: status desconhecido: ${status}`);
   }
 
-  const existentes = repository.list();
-  const candidato = { empresa: fields.empresa, site: fields.site, telefone: fields.telefone, whatsapp: fields.whatsapp, instagram: fields.instagram, cidade: fields.cidade };
-
-  const dnc = checkDoNotContact(candidato, existentes.map((r) => ({ ...r, doNotContact: r.status === CRM_STATUS.DO_NOT_CONTACT })));
-  if (dnc.doNotContact) {
-    throw new Error(`CRM: não é possível criar — identidade já bloqueada como DO_NOT_CONTACT (registro existente: ${dnc.matchedRecord.id})`);
+  const { dnc, duplicidade } = checkIdentity(fields, repository.list());
+  if (dnc) {
+    throw new Error(`CRM: não é possível criar — identidade já bloqueada como DO_NOT_CONTACT (registro existente: ${dnc.id})`);
   }
-
-  const duplicidade = checkDuplicate(candidato, existentes);
-  if (duplicidade.status === DUPLICATE_STATUS.DUPLICADO) {
+  if (duplicidade && duplicidade.status === DUPLICATE_STATUS.DUPLICADO) {
     throw new Error(
       `CRM: não é possível criar — já existe um registro com a mesma identidade (${duplicidade.matchedOn.join(', ')}): ${duplicidade.matchedRecord.id}`
     );
@@ -160,7 +212,7 @@ function createRecord(repository, input, options = {}) {
     historico: [{ timestamp: now, from: null, to: status, actor: requireActor(options.actor), reviewedBy: options.reviewedBy || null, motivo: options.motivo || null }],
   };
   repository.save(record);
-  return { record: structuredClone(record), duplicidade: duplicidade.status === DUPLICATE_STATUS.POSSIVEL_DUPLICADO ? duplicidade : null };
+  return { record: structuredClone(record), duplicidade: duplicidade && duplicidade.status === DUPLICATE_STATUS.POSSIVEL_DUPLICADO ? duplicidade : null };
 }
 
 function getRecord(repository, id) {
@@ -177,6 +229,12 @@ function listRecords(repository) {
 // Atualiza campos comuns (nunca status/id/historico/dataDeEntrada — esses têm suas próprias
 // operações). DO_NOT_CONTACT é terminal também para edição de campos: um registro bloqueado não
 // deve ser "atualizado" como se o contato comercial continuasse ativo.
+//
+// EDITAR A IDENTIDADE também é entrar no CRM: se a atualização muda um campo de identidade (empresa, site,
+// telefone, whatsapp, instagram, cidade), as MESMAS regras da criação valem — a nova identidade não pode coincidir
+// com a de um registro bloqueado (DO_NOT_CONTACT) nem com a de outro registro (identidade forte idêntica). Sem isso,
+// bastaria editar o site de um lead ativo para o de um bloqueado para contornar a barreira. Um match só por
+// nome+cidade (POSSIVEL_DUPLICADO) não bloqueia, como na criação. `empresa` nunca fica vazia.
 function updateRecord(repository, id, patch) {
   requireRepository(repository);
   const record = requireRecord(repository, id);
@@ -185,12 +243,30 @@ function updateRecord(repository, id, patch) {
   }
   const fields = sanitizeWritableInput(patch, { context: 'updateRecord' });
   const updated = { ...record, ...fields };
+  if (!isNonEmptyString(updated.empresa)) {
+    throw new Error('CRM: updateRecord não pode deixar "empresa" vazia');
+  }
+  const identityChanged = IDENTITY_FIELDS.some((field) => Object.prototype.hasOwnProperty.call(fields, field) && fields[field] !== record[field]);
+  if (identityChanged) {
+    const { dnc, duplicidade } = checkIdentity(updated, repository.list().filter((other) => other.id !== record.id));
+    if (dnc) {
+      throw new Error(`CRM: não é possível atualizar — a nova identidade coincide com a de um registro bloqueado como DO_NOT_CONTACT (registro existente: ${dnc.id})`);
+    }
+    if (duplicidade && duplicidade.status === DUPLICATE_STATUS.DUPLICADO) {
+      throw new Error(
+        `CRM: não é possível atualizar — a nova identidade coincide com a de outro registro (${duplicidade.matchedOn.join(', ')}): ${duplicidade.matchedRecord.id}`
+      );
+    }
+  }
   repository.save(updated);
   return structuredClone(updated);
 }
 
+// Só uma transição que a tabela de fato lista, para um status que é PROPRIEDADE PRÓPRIA dela: um status herdado do
+// protótipo do Object ("constructor", "__proto__", "toString"), vindo de um registro adulterado no armazenamento,
+// nunca é tratado como uma entrada da tabela — é só uma transição não permitida, com a mensagem de sempre.
 function assertTransitionAllowed(from, to) {
-  const allowed = ALLOWED_TRANSITIONS[from] || [];
+  const allowed = Object.prototype.hasOwnProperty.call(ALLOWED_TRANSITIONS, from) ? ALLOWED_TRANSITIONS[from] : [];
   if (!allowed.includes(to)) {
     throw new Error(`CRM: transição não permitida: ${from} -> ${to}`);
   }
