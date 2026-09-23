@@ -2,7 +2,10 @@
   "name": "rio-x7-ai-agency-os",
   "version": "0.0.0",
   "private": true,
-  "description": "RIO X7 AI Agency OS — camada local de execução técnica (Claude Code). Notion continua sendo a fonte de verdade do CRM e das Skills.",
+  "description": "RIO X7 AI Agency OS — Dashboard, Auth, Approval Queue e CRM operacional próprio (decisão 0012; ver docs/decisions/). O Notion continua como base de conhecimento e repositório das Skills.",
+  "engines": {
+    "node": ">=22.0.0"
+  },
   "scripts": {
     "start": "node --env-file-if-exists=.env src/server/index.js",
     "dev": "node --watch --env-file-if-exists=.env src/server/index.js",

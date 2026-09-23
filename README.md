@@ -31,6 +31,17 @@ Nenhuma etapa avança para a próxima sem passar pelo ciclo completo.
 
 Nenhuma automação crítica deve entrar em produção sem teste. Sistemas externos (Notion, Google Calendar, contas de anúncios, WhatsApp, sistemas financeiros e de clientes) não são alterados sem autorização explícita.
 
+## Como rodar localmente
+
+Node.js 22 ou mais recente (ver `engines` em `package.json`; testado em produção com 24.x).
+
+```bash
+npm install
+npm test
+```
+
+O Dashboard exige configuração local que nunca é versionada — `.env` (Supabase) e `data/users.json` (usuários operacionais). O passo a passo completo, do zero até `npm start`, está em [docs/operations/MULTICOMPUTER-HANDOFF.md](./docs/operations/MULTICOMPUTER-HANDOFF.md).
+
 ## Documentação relacionada
 
 - [PROJECT_CONTEXT.md](./PROJECT_CONTEXT.md) — contexto de negócio validado
@@ -38,5 +49,7 @@ Nenhuma automação crítica deve entrar em produção sem teste. Sistemas exter
 - [CHANGELOG.md](./CHANGELOG.md) — histórico de mudanças
 - [docs/architecture/](./docs/architecture/) — arquitetura incremental
 - [docs/decisions/](./docs/decisions/) — decisões arquiteturais
+- [docs/operations/CONTINUE-HERE.md](./docs/operations/CONTINUE-HERE.md) — ponto de partida para retomar o projeto (inclusive em outro computador)
+- [docs/operations/MULTICOMPUTER-HANDOFF.md](./docs/operations/MULTICOMPUTER-HANDOFF.md) — como clonar, instalar, configurar e rodar do zero
 - [skills/README.md](./skills/README.md) — referência às Skills existentes no Notion
 - [tests/README.md](./tests/README.md) — filosofia de testes
