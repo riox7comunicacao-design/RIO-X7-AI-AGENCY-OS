@@ -31,6 +31,11 @@ const { CRM_STATUS, ALLOWED_TRANSITIONS, ACTOR, CRM_WRITABLE_FIELDS, CRM_MANAGED
 const isNonEmptyString = (value) => typeof value === 'string' && value.trim().length > 0;
 const isPlainObject = (value) => typeof value === 'object' && value !== null && !Array.isArray(value);
 
+// Lê uma opção/meta SÓ se for propriedade PRÓPRIA do objeto. Ler `options.status` direto também lê o que estiver
+// no protótipo: com um Object.prototype poluído (por um bug em qualquer outra parte do processo), status inicial,
+// actor, reviewedBy e motivo — a trilha de AUDITORIA — seriam escolhidos por quem poluiu. Aqui nada herdado conta.
+const ownOption = (options, key) => (isPlainObject(options) && Object.prototype.hasOwnProperty.call(options, key) ? options[key] : undefined);
+
 // Únicos campos com tipo numérico (valores monetários) — todos os demais campos graváveis são
 // texto ou null. Nenhum outro campo numérico foi inventado; se um dia precisar de mais, a lista
 // muda aqui, de forma explícita.
@@ -98,7 +103,9 @@ function sanitizeWritableInput(input, { context }) {
   if (unknown.length > 0) {
     throw new Error(`CRM: ${context} tem campos desconhecidos: ${unknown.join(', ')}`);
   }
-  const sanitized = {};
+  // SEM protótipo: ler um campo que o chamador não enviou (`fields.telefone`) devolve undefined, nunca o que um
+  // Object.prototype poluído tenha definido com esse nome.
+  const sanitized = Object.create(null);
   for (const field of CRM_WRITABLE_FIELDS) {
     if (Object.prototype.hasOwnProperty.call(input, field)) {
       const value = input[field];
@@ -188,7 +195,8 @@ function createRecord(repository, input, options = {}) {
     throw new Error('CRM: createRecord exige "empresa" (texto não vazio)');
   }
 
-  const status = options.status === undefined ? CRM_STATUS.PROSPECT : options.status;
+  const requestedStatus = ownOption(options, 'status');
+  const status = requestedStatus === undefined ? CRM_STATUS.PROSPECT : requestedStatus;
   if (!Object.values(CRM_STATUS).includes(status)) {
     throw new Error(`CRM: status desconhecido: ${status}`);
   }
@@ -209,7 +217,7 @@ function createRecord(repository, input, options = {}) {
     ...Object.fromEntries(CRM_WRITABLE_FIELDS.map((field) => [field, fields[field] ?? null])),
     status,
     dataDeEntrada: now,
-    historico: [{ timestamp: now, from: null, to: status, actor: requireActor(options.actor), reviewedBy: options.reviewedBy || null, motivo: options.motivo || null }],
+    historico: [{ timestamp: now, from: null, to: status, actor: requireActor(ownOption(options, 'actor')), reviewedBy: ownOption(options, 'reviewedBy') || null, motivo: ownOption(options, 'motivo') || null }],
   };
   repository.save(record);
   return { record: structuredClone(record), duplicidade: duplicidade && duplicidade.status === DUPLICATE_STATUS.POSSIVEL_DUPLICADO ? duplicidade : null };
@@ -288,7 +296,7 @@ function moveStatus(repository, id, to, meta = {}) {
   const updated = {
     ...record,
     status: to,
-    historico: [...record.historico, { timestamp, from: record.status, to, actor: requireActor(meta.actor), reviewedBy: meta.reviewedBy || null, motivo: meta.motivo || null }],
+    historico: [...record.historico, { timestamp, from: record.status, to, actor: requireActor(ownOption(meta, 'actor')), reviewedBy: ownOption(meta, 'reviewedBy') || null, motivo: ownOption(meta, 'motivo') || null }],
   };
   repository.save(updated);
   return structuredClone(updated);

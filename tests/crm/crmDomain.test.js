@@ -550,3 +550,66 @@ test('[CRM-SEC-12] entradas com chaves perigosas ("__proto__", "constructor") s�
   assert.equal({}.polluted, undefined, 'Object.prototype não foi poluído');
   assert.equal(Object.prototype.polluted, undefined);
 });
+
+// --- e) Poluição do protótipo (Object.prototype): nada HERDADO pode escolher dado nem forjar a auditoria ---------------
+// Um Object.prototype poluído (por um bug em qualquer outra parte do processo) fazia o domínio gravar campos que
+// ninguém enviou, escolher o status inicial e FORJAR a trilha de auditoria (actor/reviewedBy/motivo). Reproduzido por
+// experimento antes da correção; o domínio agora lê opções só como propriedade PRÓPRIA e monta os campos sem protótipo.
+function comPrototipoPoluido(propriedades, fn) {
+  for (const [chave, valor] of Object.entries(propriedades)) Object.prototype[chave] = valor;
+  try {
+    return fn();
+  } finally {
+    for (const chave of Object.keys(propriedades)) delete Object.prototype[chave];
+  }
+}
+
+test('[CRM-SEC-13] com o Object.prototype POLUÍDO, createRecord não grava campos que o chamador não enviou, não escolhe o status inicial e não forja a auditoria (actor/reviewedBy/motivo)', () => {
+  const polui = {
+    telefone: '24999990000',
+    site: 'poluido.example.test',
+    instagram: 'poluido',
+    whatsapp: '24988880000',
+    observacoes: 'observação herdada',
+    status: CRM_STATUS.WON,
+    actor: ACTOR.SYSTEM,
+    motivo: 'motivo herdado',
+    reviewedBy: { userId: 'atacante', name: 'Atacante', role: 'ADMIN' },
+  };
+  comPrototipoPoluido(polui, () => {
+    const repo = memRepo();
+    const { record } = crmDomain.createRecord(repo, { empresa: 'Só o Nome' });
+    for (const campo of ['telefone', 'site', 'instagram', 'whatsapp', 'observacoes']) assert.equal(record[campo], null, `${campo} nunca vem do protótipo`);
+    assert.equal(record.status, CRM_STATUS.PROSPECT, 'o status inicial nunca vem do protótipo');
+    assert.deepEqual(record.historico[0], { timestamp: record.dataDeEntrada, from: null, to: CRM_STATUS.PROSPECT, actor: ACTOR.HUMAN, reviewedBy: null, motivo: null });
+    // A identidade herdada também não vaza para a deduplicação: dois registros sem nada em comum coexistem.
+    assert.doesNotThrow(() => crmDomain.createRecord(repo, { empresa: 'Outra Sem Nada' }));
+    assert.equal(crmDomain.listRecords(repo).length, 2);
+  });
+  assert.equal({}.telefone, undefined, 'sanidade: a poluição de teste foi removida');
+});
+
+test('[CRM-SEC-14] com o Object.prototype POLUÍDO, moveStatus e markDoNotContact também não herdam actor/reviewedBy/motivo — e o que o chamador informa como PRÓPRIO continua valendo', () => {
+  const repo = memRepo();
+  const { record } = crmDomain.createRecord(repo, { empresa: 'Auditada' });
+  comPrototipoPoluido({ actor: ACTOR.SYSTEM, motivo: 'motivo herdado', reviewedBy: { userId: 'atacante', name: 'Atacante', role: 'ADMIN' } }, () => {
+    const movido = crmDomain.moveStatus(repo, record.id, CRM_STATUS.RESEARCH);
+    assert.deepEqual(movido.historico.at(-1), { timestamp: movido.historico.at(-1).timestamp, from: 'PROSPECT', to: 'RESEARCH', actor: ACTOR.HUMAN, reviewedBy: null, motivo: null });
+    const proprio = { userId: 'user-1', name: 'Alguém', role: 'ADMIN' };
+    const bloqueado = crmDomain.markDoNotContact(repo, record.id, { reviewedBy: proprio, motivo: 'pediu para sair' });
+    assert.deepEqual(bloqueado.historico.at(-1).reviewedBy, proprio);
+    assert.equal(bloqueado.historico.at(-1).motivo, 'pediu para sair');
+    assert.equal(bloqueado.historico.at(-1).actor, ACTOR.HUMAN);
+  });
+});
+
+// --- f) A identidade só é reverificada quando MUDA -------------------------------------------------------------
+test('[CRM-SEC-15] a identidade só é reverificada quando MUDA: reenviar o formulário inteiro (identidade igual) nunca trava por um conflito LEGADO — mas mudar para a identidade de outro registro continua recusado', () => {
+  // Estado herdado de antes das correções: dois registros ATIVOS com a MESMA identidade forte (a API não os cria mais).
+  const legado = (id) => ({ id, empresa: `Legado ${id}`, site: 'legado.example.test', status: CRM_STATUS.PROSPECT, historico: [] });
+  const repo = createInMemoryCrmRepository([legado('crm:a'), legado('crm:b')]);
+  const reenviado = crmDomain.updateRecord(repo, 'crm:b', { site: 'legado.example.test', observacoes: 'nota' });
+  assert.equal(reenviado.observacoes, 'nota', 'o site reenviado, igual, não é uma mudança de identidade');
+  crmDomain.updateRecord(repo, 'crm:b', { site: 'livre.example.test' });
+  assert.throws(() => crmDomain.updateRecord(repo, 'crm:b', { site: 'legado.example.test' }), /coincide com a de outro registro/, 'mudar PARA a identidade de outro registro é recusado');
+});
