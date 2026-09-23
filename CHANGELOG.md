@@ -1,5 +1,16 @@
 # Changelog
 
+## 2026-09-23 — CRM Domain: modelo de dados, máquina de estados, DNC, deduplicação, repositório
+
+Registrado [decisão 0013](./docs/decisions/0013-crm-domain.md), etapa CRM-DOMAIN.
+
+- Novo domínio `src/crm/`: os 13 status oficiais do CRM, máquina de estados (funil livre entre si; WON/LOST fecham e só saem para DO_NOT_CONTACT; DO_NOT_CONTACT é terminal, alcançável de qualquer status), o modelo de dados (31 campos graváveis já aprovados, sem inventar nenhum novo), deduplicação e DNC reaproveitando `duplicateCheck.js`/`doNotContact.js` sem alterá-los.
+- Persistência desacoplada por um repositório (`{ list, getById, save }`): um adapter em memória (testes) e um adapter de arquivo JSON local (desenvolvimento) — nenhum dos dois é a persistência de produção; Supabase segue como candidato futuro, não decidido.
+- Achado de segurança corrigido nesta etapa: um id de registro `__proto__`/`constructor`/`prototype` poderia corromper o objeto de armazenamento do adapter de arquivo — corrigido com um objeto sem protótipo e checagem explícita.
+- Domínio "puro": não importa `src/auth`, `src/server`, `dashboard` nem qualquer SDK externo — sem autorização embutida (fica para a etapa CRM-SERVICE, ainda não implementada).
+- 56 testes novos (`tests/crm/`). Nenhuma permissão foi alterada; `ADMIN` continua com `WRITE:CRM`, `COMMERCIAL_CLOSER` continua sem.
+- Nenhum código de Service, API ou Dashboard foi implementado por esta etapa.
+
 ## 2026-09-23 — Decisão arquitetural: CRM operacional próprio (revoga Notion como fonte de verdade)
 
 Registrado [decisão 0012](./docs/decisions/0012-crm-operational-source-of-truth.md), autorizada pelo proprietário do projeto.

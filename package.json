@@ -6,7 +6,7 @@
   "scripts": {
     "start": "node --env-file-if-exists=.env src/server/index.js",
     "dev": "node --watch --env-file-if-exists=.env src/server/index.js",
-    "test": "node --env-file-if-exists=.env --test tests/research-prospector/*.test.js tests/auth/*.test.js tests/services/*.test.js tests/server/*.test.js"
+    "test": "node --env-file-if-exists=.env --test tests/research-prospector/*.test.js tests/auth/*.test.js tests/services/*.test.js tests/server/*.test.js tests/crm/*.test.js"
   },
   "dependencies": {
     "@supabase/supabase-js": "^2.116.0"
