@@ -1,18 +1,12 @@
-// Repositório do CRM — a PORTA de persistência (decisão 0012, seção "princípio de persistência
-// desacoplada"). O domínio (crmDomain.js) nunca importa `fs` nem qualquer SDK de banco: ele só
-// chama estes três métodos, em QUALQUER repositório que os implemente:
+// Adapters do repositório do CRM — as implementações de DESENVOLVIMENTO/TESTE da PORTA de persistência (decisão 0012,
+// seção "princípio de persistência desacoplada"). O contrato — { list, getById, save } e a checagem
+// assertValidRepository — vive em crmRepositoryPort.js, sem `fs` e sem nenhum adapter; este arquivo o reexporta
+// para quem já importa daqui. O domínio (crmDomain.js) nunca importa `fs` nem qualquer SDK de banco: ele só chama
+// os três métodos, em QUALQUER repositório que os implemente. Uma implementação futura sobre Supabase/Postgres (NÃO
+// decidida, NÃO implementada — ver decisões 0012 e 0014) precisa satisfazer o mesmo contrato, que é síncrono nesta
+// versão (ver o cabeçalho de crmRepositoryPort.js).
 //
-//   list()          -> array de registros (cópias; nunca o objeto interno do repositório)
-//   getById(id)      -> um registro (cópia) ou null
-//   save(record)     -> grava (insere ou substitui, por `record.id`); não devolve nada
-//
-// Isto é o contrato inteiro. Uma implementação futura sobre Supabase/Postgres (NÃO decidida,
-// NÃO implementada nesta etapa — ver decisão 0012) só precisa satisfazer estes três métodos; o
-// domínio não muda uma linha. `assertValidRepository` é a checagem defensiva desse contrato,
-// para falhar cedo (na composição) se um repositório incompleto for injetado — mesmo princípio
-// já usado em approvalQueueService.js para a dependência `approvalQueue`.
-//
-// As duas implementações abaixo são as ÚNICAS desta etapa, ambas de desenvolvimento/teste:
+// As duas implementações abaixo são as ÚNICAS, ambas de desenvolvimento/teste:
 //   - createInMemoryCrmRepository(): só memória, para testes — nunca toca em disco.
 //   - createJsonFileCrmRepository(filePath): um arquivo JSON local, mesmo padrão de escrita
 //     atômica de approvalQueue.js (arquivo temporário no mesmo diretório + fsync + rename), para
@@ -22,21 +16,7 @@
 const fs = require('node:fs');
 const path = require('node:path');
 
-const REQUIRED_REPOSITORY_METHODS = Object.freeze(['list', 'getById', 'save']);
-
-// Falha cedo e com uma mensagem clara se o objeto injetado não for um repositório válido —
-// nunca falha no meio de uma operação de domínio por um método faltando.
-function assertValidRepository(repository) {
-  if (!repository || typeof repository !== 'object') {
-    throw new Error('CRM: repositório inválido — esperava um objeto com { list, getById, save }');
-  }
-  for (const method of REQUIRED_REPOSITORY_METHODS) {
-    if (typeof repository[method] !== 'function') {
-      throw new Error(`CRM: repositório inválido — falta o método ${method}()`);
-    }
-  }
-  return repository;
-}
+const { REQUIRED_REPOSITORY_METHODS, assertValidRepository } = require('./crmRepositoryPort');
 
 const clone = (value) => (value === undefined ? value : structuredClone(value));
 

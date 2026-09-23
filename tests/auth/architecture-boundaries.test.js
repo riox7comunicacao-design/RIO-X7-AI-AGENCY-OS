@@ -58,7 +58,7 @@ const LOADER_BUILTINS = new Set(['module', 'vm']);
 const RULES = {
   R1: 'Somente src/auth/userResolver.js e src/auth/authorizationContext.js podem importar o emissor interno src/auth/internal/contextIssuer.js.',
   R2: 'src/ não pode depender de tests/ (nem de qualquer arquivo fora de src/).',
-  R3: 'src/research-prospector/ não pode importar src/auth/ (o domínio recebe a autorização por injeção).',
+  R3: 'src/research-prospector/ e src/crm/ não podem importar src/auth/ (o domínio recebe a autorização por injeção).',
   R4: 'src/auth/ não pode importar src/research-prospector/ (AUTH != PROSPECTOR; a integração é da camada de serviço).',
   R5: 'src/ não pode ter dependências circulares.',
   R6: 'Todo carregamento de módulo em src/ precisa ser estaticamente analisável (um carregamento que a análise não enxerga escapa de todas as fronteiras).',
@@ -66,20 +66,25 @@ const RULES = {
   R8: 'O catálogo PERMISSION não pode ser enumerado nem passado como valor em src/: as permissões de uma role são listas literais e explícitas.',
   // R9-R11 (Dashboard MVP / Fase G, decisão D7): a camada de aplicação (Services, o servidor HTTP e o Dashboard)
   // se soma às fronteiras já existentes, sem afrouxar nenhuma delas.
-  R9: 'src/auth/ e src/research-prospector/ não podem importar src/services/ nem src/server/ (a camada de domínio/auth não conhece a camada de aplicação).',
+  R9: 'src/auth/, src/research-prospector/ e src/crm/ não podem importar src/services/ nem src/server/ (a camada de domínio/auth não conhece a camada de aplicação).',
   R10: 'src/server/ não pode importar src/research-prospector/ diretamente — só através de src/services/.',
   R11: 'dashboard/ (o navegador) não pode importar nada de src/ — só conversa com o servidor por HTTP.',
+  // R12 (CRM-SERVICE, decisão 0014): o domínio do CRM NÃO tem autorização própria — o CRM Service é a ÚNICA camada que
+  // autoriza. Por isso o domínio só pode ser alcançado por src/services: qualquer outro caminho até ele contornaria a
+  // autorização do CRM (escrita sem WRITE:CRM, reviewedBy vindo de fora).
+  R12: 'src/crm/ só pode ser importado por src/services/ (e por si mesmo): o domínio do CRM não autoriza sozinho, então qualquer outro caminho até ele contorna o CRM Service.',
 };
 
 // Detalhe de uma aresta (arquivo -> alvo) que viola uma regra; usado no grafo estático e no de execução.
 const EDGE_DETAIL = {
   R1: 'importa diretamente o emissor interno de AuthorizationContext, reservado a userResolver.js e authorizationContext.js',
   R2: 'src/ não pode depender de tests/ nem de nada fora de src/',
-  R3: 'o domínio research-prospector não pode importar src/auth',
+  R3: 'os domínios research-prospector e crm não podem importar src/auth',
   R4: 'src/auth não pode importar o domínio research-prospector',
-  R9: 'src/auth ou src/research-prospector não pode importar src/services nem src/server',
+  R9: 'src/auth, src/research-prospector ou src/crm não pode importar src/services nem src/server',
   R10: 'src/server não pode importar o domínio research-prospector diretamente — só através de src/services',
   R11: 'dashboard/ não pode importar nada de src/',
+  R12: 'o domínio src/crm só pode ser importado por src/services (e por si mesmo) — qualquer outro caminho contorna a autorização do CRM Service',
 };
 
 const lc = (value) => value.toLowerCase();
@@ -94,10 +99,11 @@ function edgeRules(fromRel, toRel) {
   const rules = [];
   if (stripExtension(to) === ISSUER_MODULE && !ISSUER_IMPORTERS_LC.includes(from)) rules.push('R1');
   if (!insideSrc(to)) rules.push('R2');
-  if (from.startsWith('src/research-prospector/') && to.startsWith('src/auth/')) rules.push('R3');
+  if ((from.startsWith('src/research-prospector/') || from.startsWith('src/crm/')) && to.startsWith('src/auth/')) rules.push('R3');
   if (from.startsWith('src/auth/') && to.startsWith('src/research-prospector/')) rules.push('R4');
-  if ((from.startsWith('src/auth/') || from.startsWith('src/research-prospector/')) && (to.startsWith('src/services/') || to.startsWith('src/server/'))) rules.push('R9');
+  if ((from.startsWith('src/auth/') || from.startsWith('src/research-prospector/') || from.startsWith('src/crm/')) && (to.startsWith('src/services/') || to.startsWith('src/server/'))) rules.push('R9');
   if (from.startsWith('src/server/') && to.startsWith('src/research-prospector/')) rules.push('R10');
+  if (to.startsWith('src/crm/') && !from.startsWith('src/crm/') && !from.startsWith('src/services/')) rules.push('R12');
   return rules;
 }
 
@@ -462,6 +468,15 @@ test('[ARCH-13] R11: dashboard/ não importa nada de src/ — o navegador só fa
   assert.ok(fs.existsSync(path.join(REPO_ROOT, 'dashboard', 'app.mjs')), 'dashboard/app.mjs deveria existir para esta checagem valer algo');
 });
 
+test('[ARCH-14] R12: só src/services importa o domínio do CRM (src/crm) — nenhum outro caminho contorna a autorização do CRM Service', () => {
+  const violations = only('R12');
+  assert.equal(violations.length, 0, report('R12', violations));
+  // A regra não passa em branco: o domínio e o Service existem, e o Service de fato importa o domínio.
+  assert.ok(fs.existsSync(path.join(REPO_ROOT, 'src', 'crm', 'crmDomain.js')), 'src/crm/crmDomain.js deveria existir');
+  assert.ok(fs.existsSync(path.join(REPO_ROOT, 'src', 'services', 'crmService.js')), 'src/services/crmService.js deveria existir');
+  assert.ok(fs.readFileSync(path.join(REPO_ROOT, 'src', 'services', 'crmService.js'), 'utf8').includes("require('../crm/crmDomain')"), 'o Service importa o domínio — o caminho permitido');
+});
+
 // ===========================================================================
 // Auto-testes do SCANNER: o que ele enxerga e o que ele ignora
 // ===========================================================================
@@ -715,6 +730,29 @@ test('[ARCH-S9c] R10: src/server importando o domínio research-prospector DIRET
   );
   assert.deepEqual(pairs(violacoes.filter((v) => v.rule === 'R10')), ['R10@src/server/direto.js']);
   assert.deepEqual(violacoes.filter((v) => v.file === 'src/server/peloServico.js'), []);
+});
+
+test('[ARCH-S9d] R3, R9 e R12 sobre o domínio do CRM: src/crm não importa src/auth (R3) nem a camada de aplicação (R9); e só src/services pode importar src/crm (R12) — auth, research-prospector e server (o Service é o único caminho) são detectados', (t) => {
+  const violacoes = evaluateBoundaries(
+    makeTree(t, {
+      'src/crm/crmDomain.js': 'module.exports = {};\n',
+      'src/crm/index.js': "module.exports = require('./crmDomain');\n",
+      'src/crm/interno.js': "require('./crmDomain');\n",
+      'src/crm/vazaAuth.js': "require('../auth');\n",
+      'src/crm/vazaServico.js': "require('../services/crmService');\n",
+      'src/crm/vazaServidor.js': "require('../server/app');\n",
+      'src/services/crmService.js': "const dominio = require('../crm/crmDomain');\nmodule.exports = { dominio };\n",
+      'src/server/app.js': "require('../crm/crmDomain');\n",
+      'src/server/pelaCamada.js': "require('../services/crmService');\n",
+      'src/auth/vazaCrm.js': "require('../crm/crmDomain');\n",
+      'src/research-prospector/vazaCrm.js': "require('../crm');\n",
+    })
+  );
+  assert.deepEqual(pairs(violacoes.filter((v) => v.rule === 'R3')), ['R3@src/crm/vazaAuth.js']);
+  assert.deepEqual(pairs(violacoes.filter((v) => v.rule === 'R9')), ['R9@src/crm/vazaServico.js', 'R9@src/crm/vazaServidor.js']);
+  assert.deepEqual(pairs(violacoes.filter((v) => v.rule === 'R12')), ['R12@src/auth/vazaCrm.js', 'R12@src/research-prospector/vazaCrm.js', 'R12@src/server/app.js']);
+  // O caminho pretendido é livre: o Service importa o domínio, o servidor importa o Service, e o domínio se importa a si mesmo.
+  assert.deepEqual(violacoes.filter((v) => ['src/services/crmService.js', 'src/server/pelaCamada.js', 'src/crm/interno.js'].includes(v.file)), []);
 });
 
 test('[ARCH-S10] R5: um ciclo de importação é detectado e descrito pelo caminho completo', (t) => {

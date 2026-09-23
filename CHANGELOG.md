@@ -1,5 +1,18 @@
 # Changelog
 
+## 2026-09-23 — CRM Service: autorização por operação, camada única e fronteira arquitetural
+
+Registrado [decisão 0014](./docs/decisions/0014-crm-service.md), etapa CRM-SERVICE.
+
+- Novo `src/services/crmService.js` (`createCrmService({ authorizeOperation, repository })`): `listRecords`, `getRecord`, `getHistory` exigem `READ:CRM`; `createRecord`, `updateRecord`, `moveStatus`, `markDoNotContact` exigem `WRITE:CRM`. **Nenhuma permissão nova, matriz inalterada:** o `COMMERCIAL_CLOSER` lê e continua sem escrever (inclusive sem marcar DO_NOT_CONTACT — decisão de produto pendente, registrada). O Service não duplica regra do domínio.
+- Nova ponte `src/auth/crmBridge.js` (`authorizeCrmOperation`): autoriza só `READ:CRM`/`WRITE:CRM`, sem permissão padrão, e devolve só `{ userId, name, role }`.
+- O Service é a **única** camada de autorização; a regra **R12** (`tests/auth/architecture-boundaries.test.js`) só deixa `src/services` importar `src/crm`, e R3/R9 passaram a cobrir `src/crm`.
+- `reviewedBy`/`actor` do histórico vêm só do autorizador (validado e copiado); o Service devolve projeções por lista explícita de campos, nunca campos que o domínio não declarou nem dado de identidade.
+- A porta de persistência foi separada dos adapters (`src/crm/crmRepositoryPort.js`) e agora recusa, na composição, um repositório `async` (a porta é **síncrona** nesta versão — ressalva à promessa de troca de adapter registrada em 0013/0014).
+- **Segurança:** além das brechas já corrigidas no commit anterior, a auditoria achou e corrigiu no domínio uma **poluição de protótipo** (com `Object.prototype` poluído, o domínio gravava campos não enviados, escolhia o status inicial e forjava `actor`/`reviewedBy`/`motivo`). Achado aberto e fora do escopo, só reportado: `identityKeys` (research-prospector) considera um único número por registro.
+- Checagem de mutação: 80 mutantes de segurança, 79 detectados, 1 equivalente documentado. Uma duplicata de validação de id foi removida do Service.
+- Nenhum código de rota, Dashboard ou promoção Approval Queue → CRM; nenhuma alteração em `research-prospector`.
+
 ## 2026-09-23 — CRM Domain: correções de segurança encontradas na auditoria do CRM-SERVICE
 
 Correções no `src/crm/` (detalhes em [decisão 0013](./docs/decisions/0013-crm-domain.md), seção "Atualização"). Cada brecha foi reproduzida por experimento antes de ser corrigida e tem teste de regressão (`CRM-SEC-1` a `CRM-SEC-12`; 10 deles falham contra o código anterior).

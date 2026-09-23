@@ -10,23 +10,21 @@ Rio X7 AI Agency OS
 
 ## Última etapa concluída
 
-CRM-DOMAIN (depois de CRM-ARCH). Ver [docs/decisions/0013-crm-domain.md](../decisions/0013-crm-domain.md) e [docs/decisions/0012-crm-operational-source-of-truth.md](../decisions/0012-crm-operational-source-of-truth.md).
+CRM-SERVICE (depois de CRM-ARCH e CRM-DOMAIN). Ver [docs/decisions/0014-crm-service.md](../decisions/0014-crm-service.md), [0013](../decisions/0013-crm-domain.md) e [0012](../decisions/0012-crm-operational-source-of-truth.md).
 
 ## Último commit (de código)
 
-`a5ed905` — `feat(crm): implement CRM domain and persistence port`
-
-Este documento e `MULTICOMPUTER-HANDOFF.md` foram publicados num commit de documentação logo em seguida — **não confie neste número sozinho**, confirme com `git log -1 --oneline` antes de continuar.
+Os commits da etapa CRM-SERVICE (o mais recente de código: `feat(services): add CRM service ...`, precedido por `fix(crm): block identity bypasses ...`) — **não confie em nenhum número de commit escrito aqui**: confirme com `git log -5 --oneline` antes de continuar.
 
 ## Estado
 
 - `main` local deve estar igual a `origin/main` (confirme com `git status`, `git rev-parse HEAD`, `git rev-parse origin/main`).
-- 491 testes automatizados, 0 falhas, no máximo 2 pulados (exigem `.env`/token real).
+- 573 testes automatizados, 0 falhas, no máximo 2 pulados (exigem `.env`/token real).
 - Nenhum dado real de cliente/prospect está no Git. `.env` e `data/users.json` nunca foram versionados.
 
 ## Próxima etapa
 
-**CRM-SERVICE** — a fronteira de autorização sobre o CRM Domain (padrão de `src/services/approvalQueueService.js`): decidir `WRITE:CRM`/`READ:CRM`/`ANALYZE:CRM` para cada operação, e como o `AuthorizationContext` (nunca o consumidor) preenche `reviewedBy`/`actor`. **Não implementar sem autorização explícita do proprietário do projeto.**
+**CRM-API** — as rotas HTTP sobre o CRM Service (`src/server`, no padrão das rotas da Approval Queue: Bearer, projeção segura, erros mapeados por mensagem, nunca `userId/role/permissions/reviewedBy` do navegador), compondo `createCrmService({ authorizeOperation: authorizeCrmOperation, repository })` no `src/server/index.js`. Depois: CRM-DASHBOARD; a promoção Approval Queue → CRM (CRM-INTEGRATION) segue pendente. **Não implementar sem autorização explícita do proprietário do projeto.** Decisões pendentes que a API/Dashboard vão encontrar (ver 0014): o closer não pode marcar DO_NOT_CONTACT (não tem `WRITE:CRM`); editar campos não gera histórico.
 
 ## Comando inicial
 

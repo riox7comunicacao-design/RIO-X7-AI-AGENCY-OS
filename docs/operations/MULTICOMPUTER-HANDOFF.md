@@ -5,10 +5,10 @@ Este documento existe para que o projeto **nunca dependa de uma máquina especí
 ## Estado atual (na data deste documento)
 
 - **branch:** `main`
-- **último commit de código:** `a5ed905` — `feat(crm): implement CRM domain and persistence port`
+- **últimos commits de código:** etapa CRM-SERVICE — `feat(services): add CRM service ...`, precedido por `fix(crm): block identity bypasses ...` (confira `git log -5 --oneline`; não confie em nenhum hash escrito aqui)
 - **origin/main:** sincronizado com o commit acima (confirmado por push + `git fetch` antes de escrever este documento)
-- **etapa concluída:** CRM-DOMAIN (modelo de dados, os 13 status, máquina de estados, DNC, deduplicação, repositório de persistência — ver [docs/decisions/0013-crm-domain.md](../decisions/0013-crm-domain.md))
-- **próxima etapa:** CRM-SERVICE (a fronteira de autorização sobre o CRM Domain, no padrão de `src/services/approvalQueueService.js`)
+- **etapa concluída:** CRM-SERVICE, sobre CRM-DOMAIN (modelo de dados, os 13 status, máquina de estados, DNC, deduplicação, repositório) — ver [0013](../decisions/0013-crm-domain.md) e [0014](../decisions/0014-crm-service.md)
+- **próxima etapa:** CRM-API (as rotas HTTP sobre o CRM Service)
 
 Este próprio documento, e o `CONTINUE-HERE.md` ao lado, são publicados num commit **seguinte** ao de cima (documentação, sem mudança de código) — confira `git log --oneline -5` para o HEAD exato agora.
 
@@ -45,7 +45,7 @@ Node.js **22 ou mais recente** é exigido (`engines.node` em `package.json`; est
 npm test
 ```
 
-Sem nenhuma configuração local, a suíte roda quase inteira (só os testes que exigem `.env`/um token real do Supabase ficam `PENDENTE`, nunca falham). No retrato desta data: **491 testes, 489 passam, 0 falham, 2 pulados** sem `.env`/token real presentes.
+Sem nenhuma configuração local, a suíte roda quase inteira (só os testes que exigem `.env`/um token real do Supabase ficam `PENDENTE`, nunca falham). No retrato desta data: **573 testes, 571 passam, 0 falham, 2 pulados** sem `.env`/token real presentes.
 
 ## Verificação estrutural (preflight)
 
@@ -129,4 +129,4 @@ Nenhuma integração de acesso remoto foi criada ou é necessária além do pró
 
 ## Próxima etapa
 
-**CRM-SERVICE** — ver [docs/decisions/0013-crm-domain.md](../decisions/0013-crm-domain.md), seção "Próximo passo recomendado". Não implementado ainda; aguardando autorização.
+**CRM-API** — ver [docs/decisions/0014-crm-service.md](../decisions/0014-crm-service.md), seção "Próximo passo". Não implementado ainda; aguardando autorização.

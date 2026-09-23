@@ -21,6 +21,7 @@ const {
   CONNECTIVITY_ERROR,
 } = require('./authAdapter');
 const { authorizeReviewerForApprovalQueue, toApprovalQueueIdentity } = require('./approvalQueueBridge');
+const { authorizeCrmOperation } = require('./crmBridge');
 
 // Fase C: createAuthorizationContext e o emissor de contexto NÃO são exportados.
 // O emissor é interno (internal/contextIssuer.js) e só o userResolver o usa; o
@@ -49,4 +50,5 @@ module.exports = {
   CONNECTIVITY_ERROR,
   authorizeReviewerForApprovalQueue,
   toApprovalQueueIdentity,
+  authorizeCrmOperation,
 };
