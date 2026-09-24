@@ -1,5 +1,16 @@
 # Changelog
 
+## 2026-09-23 — CRM API: rotas HTTP finas sobre o CRM Service
+
+Registrado [decisão 0015](./docs/decisions/0015-crm-api.md), etapa CRM-API.
+
+- Sete rotas em `src/server/app.js`: `GET`/`POST /api/crm`, `GET`/`PATCH /api/crm/:id`, `GET /api/crm/:id/history`, `POST /api/crm/:id/status` e `POST /api/crm/:id/dnc` — só as operações que o CRM Service já tem (sem exclusão, filtros nem busca). Bearer, o mesmo pipeline da fila, `Cache-Control: no-store`, sem CORS; as rotas só existem quando o Service é injetado.
+- A API é **fina** e **não autoriza**: entrega ao CRM Service o `AuthorizationContext` emitido a partir do token e traduz o resultado em HTTP. `userId`/`authUserId`/`role`/`permissions`/`reviewedBy`/`actor` vindos do navegador nunca são lidos (400); o `reviewedBy` do histórico vem só do autorizador. Nenhuma importação de `src/crm` (a R12 continua igual) e nenhuma permissão nova — `ADMIN` lê e escreve, `COMMERCIAL_CLOSER` só lê.
+- Erros com mensagem **fixa** (sem stack, caminho, id, token nem `authUserId`); novos códigos `DUPLICATE_RECORD`, `DNC_BLOCKED`, `RECORD_LOCKED` e `INVALID_TRANSITION` (409); o que não é reconhecido é 500 genérico. Um teste varre o código-fonte e exige que toda mensagem `CRM: ...` do domínio/repositório/Service esteja mapeada ou declarada interna.
+- **Conflito código × documentação, resolvido sem mudar nenhuma regra:** 0014 mandava compor o adapter de arquivo no `src/server/index.js`, mas a R12 impede o servidor de importar `src/crm`. Nova fábrica `createFileBackedCrmService` em `src/services/crmFileService.js` (o servidor passa só um caminho, como faz com a fila) e nova variável `RIO_X7_CRM_PATH` (padrão `data/crm.json`, fora do Git). O "Próximo passo" de 0014 foi corrigido.
+- 65 testes novos (autenticação, autorização, identidade forjada, escalada de privilégio, prototype pollution, ids perigosos, payloads, métodos, CORS/cabeçalhos, vazamento de token/`authUserId`/stack, mapeamento de erros, composição real com `createServer`, socket real, fronteiras arquiteturais); checagem de mutação: 57 mutantes, 57 detectados.
+- Nenhum Dashboard/UI, Kanban, SDR, outbound, WhatsApp, prospecção, persistência Supabase/Postgres, permissão nova ou IA; o domínio e o Service não foram alterados.
+
 ## 2026-09-23 — CRM Service: autorização por operação, camada única e fronteira arquitetural
 
 Registrado [decisão 0014](./docs/decisions/0014-crm-service.md), etapa CRM-SERVICE.

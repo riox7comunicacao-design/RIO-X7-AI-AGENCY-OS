@@ -13,7 +13,8 @@ const path = require('node:path');
 const domain = require('../../src/research-prospector/approvalQueue');
 const { runDiscoveryPipeline, SOURCE_TYPE } = require('../../src/research-prospector/discovery');
 const { createApprovalQueueService } = require('../../src/services/approvalQueueService');
-const { defineUser, createUserStore, ROLE, USER_STATUS, authorizeReviewerForApprovalQueue, createSupabaseAuthAdapter } = require('../../src/auth');
+const { createFileBackedCrmService } = require('../../src/services/crmFileService');
+const { defineUser, createUserStore, ROLE, USER_STATUS, authorizeReviewerForApprovalQueue, authorizeCrmOperation, createSupabaseAuthAdapter } = require('../../src/auth');
 const { createApp } = require('../../src/server/app');
 const { FAKE_ENV, fakeAccessToken, installFakeSupabaseAuth, supabaseUserBody } = require('../helpers/authFixtures');
 
@@ -69,10 +70,20 @@ function novaFila(t) {
   return { filePath, ids: { alfa: alfa.prospectId, beta: beta.prospectId, bloqueado: bloqueado.prospectId } };
 }
 
+// Um caminho de arquivo do CRM em diretório temporário (o arquivo só passa a existir na primeira escrita).
+function novoArquivoCrm(t) {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'server-crm-'));
+  t.after(() => fs.rmSync(dir, { recursive: true, force: true }));
+  return path.join(dir, 'crm.json');
+}
+
 // Monta { app, ids, filePath, tokenFor, logs }. `usuarios`: specs de defineUser() (padrão: Breno e Rafael ativos).
 // `queue`: reaproveita uma fila já criada (senão cria uma nova). `staticFiles`: por padrão, inclui o bundle real do
 // supabase-js em /lib/supabase.js, como faz src/server/index.js.
-function montarAmbiente(t, { usuarios = [BRENO, RAFAEL], queue, authTimeoutMs, staticFiles, log } = {}) {
+// CRM (opcional — por padrão o app NÃO tem rotas /api/crm, como antes): `crm: true` liga o CRM Service REAL (a mesma
+// fábrica que a composição usa, com a ponte de autorização real) sobre um arquivo temporário, devolvido em
+// `crmFilePath`; `crmService` injeta um Service já pronto (um double), no lugar.
+function montarAmbiente(t, { usuarios = [BRENO, RAFAEL], queue, authTimeoutMs, staticFiles, log, crm = false, crmFilePath, crmService: crmServiceInjetado } = {}) {
   const { filePath, ids } = queue || novaFila(t);
   const tokensPorUsuario = {};
   const corposSupabase = {};
@@ -81,10 +92,12 @@ function montarAmbiente(t, { usuarios = [BRENO, RAFAEL], queue, authTimeoutMs, s
     tokensPorUsuario[usuario.userId] = token;
     corposSupabase[token] = supabaseUserBody({ authUserId: usuario.authUserId, email: usuario.email });
   });
-  installFakeSupabaseAuth(t, corposSupabase);
+  const fakeAuth = installFakeSupabaseAuth(t, corposSupabase);
   const authAdapter = createSupabaseAuthAdapter({ ...FAKE_ENV });
   const userStore = createUserStore(usuarios.map((usuario) => defineUser(usuario)));
   const approvalQueueService = createApprovalQueueService({ authorizeReviewer: authorizeReviewerForApprovalQueue, queuePath: filePath });
+  const arquivoCrm = crm ? crmFilePath || novoArquivoCrm(t) : undefined;
+  const crmService = crmServiceInjetado || (crm ? createFileBackedCrmService({ authorizeOperation: authorizeCrmOperation, filePath: arquivoCrm }) : undefined);
   const logs = [];
   const publicConfig = { supabaseUrl: FAKE_ENV.SUPABASE_URL, supabaseAnonKey: FAKE_ENV.SUPABASE_ANON_KEY };
   const resolvedStaticFiles = staticFiles === undefined ? (fs.existsSync(SUPABASE_BUNDLE) ? { '/lib/supabase.js': SUPABASE_BUNDLE } : {}) : staticFiles;
@@ -92,6 +105,7 @@ function montarAmbiente(t, { usuarios = [BRENO, RAFAEL], queue, authTimeoutMs, s
     verifyAccessToken: authAdapter.verifyAccessToken,
     userStore,
     approvalQueueService,
+    crmService,
     publicConfig,
     staticRoot: DASHBOARD_ROOT,
     staticFiles: resolvedStaticFiles,
@@ -106,6 +120,9 @@ function montarAmbiente(t, { usuarios = [BRENO, RAFAEL], queue, authTimeoutMs, s
     logs,
     userStore,
     approvalQueueService,
+    crmService,
+    crmFilePath: arquivoCrm,
+    fakeAuth,
     // Expostos para testes que montam uma VARIANTE do app (ex.: trocando só o Service por um double, para
     // provar o mapeamento de erro) reaproveitando a MESMA autenticação real já configurada aqui.
     verifyAccessToken: authAdapter.verifyAccessToken,
@@ -115,4 +132,4 @@ function montarAmbiente(t, { usuarios = [BRENO, RAFAEL], queue, authTimeoutMs, s
   };
 }
 
-module.exports = { montarAmbiente, novaFila, achado, descoberta, BRENO, RAFAEL, EX_COLABORADOR, DASHBOARD_ROOT, SUPABASE_BUNDLE };
+module.exports = { montarAmbiente, novaFila, novoArquivoCrm, achado, descoberta, BRENO, RAFAEL, EX_COLABORADOR, DASHBOARD_ROOT, SUPABASE_BUNDLE };

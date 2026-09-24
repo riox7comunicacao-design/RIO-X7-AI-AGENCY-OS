@@ -10,21 +10,21 @@ Rio X7 AI Agency OS
 
 ## Última etapa concluída
 
-CRM-SERVICE (depois de CRM-ARCH e CRM-DOMAIN). Ver [docs/decisions/0014-crm-service.md](../decisions/0014-crm-service.md), [0013](../decisions/0013-crm-domain.md) e [0012](../decisions/0012-crm-operational-source-of-truth.md).
+CRM-API (depois de CRM-ARCH, CRM-DOMAIN e CRM-SERVICE). Ver [docs/decisions/0015-crm-api.md](../decisions/0015-crm-api.md), [0014](../decisions/0014-crm-service.md), [0013](../decisions/0013-crm-domain.md) e [0012](../decisions/0012-crm-operational-source-of-truth.md).
 
 ## Último commit (de código)
 
-Os commits da etapa CRM-SERVICE (o mais recente de código: `feat(services): add CRM service ...`, precedido por `fix(crm): block identity bypasses ...`) — **não confie em nenhum número de commit escrito aqui**: confirme com `git log -5 --oneline` antes de continuar.
+Os commits da etapa CRM-API (o mais recente de código: `feat(server): add CRM API ...`, precedido pela etapa CRM-SERVICE, `feat(services): add CRM service ...`) — **não confie em nenhum número de commit escrito aqui**: confirme com `git log -5 --oneline` antes de continuar.
 
 ## Estado
 
 - `main` local deve estar igual a `origin/main` (confirme com `git status`, `git rev-parse HEAD`, `git rev-parse origin/main`).
-- 573 testes automatizados, 0 falhas, no máximo 2 pulados (exigem `.env`/token real).
+- 638 testes automatizados, 0 falhas, no máximo 2 pulados (exigem `.env`/token real).
 - Nenhum dado real de cliente/prospect está no Git. `.env` e `data/users.json` nunca foram versionados.
 
 ## Próxima etapa
 
-**CRM-API** — as rotas HTTP sobre o CRM Service (`src/server`, no padrão das rotas da Approval Queue: Bearer, projeção segura, erros mapeados por mensagem, nunca `userId/role/permissions/reviewedBy` do navegador), compondo `createCrmService({ authorizeOperation: authorizeCrmOperation, repository })` no `src/server/index.js`. Depois: CRM-DASHBOARD; a promoção Approval Queue → CRM (CRM-INTEGRATION) segue pendente. **Não implementar sem autorização explícita do proprietário do projeto.** Decisões pendentes que a API/Dashboard vão encontrar (ver 0014): o closer não pode marcar DO_NOT_CONTACT (não tem `WRITE:CRM`); editar campos não gera histórico.
+**CRM-DASHBOARD** — as telas do CRM sobre as rotas `/api/crm` (o Dashboard só fala HTTP, com `Authorization: Bearer`; nunca importa `src/`; contratos em [0015](../decisions/0015-crm-api.md)). A promoção Approval Queue → CRM (CRM-INTEGRATION) segue pendente. **Não implementar sem autorização explícita do proprietário do projeto.** Decisões pendentes que o Dashboard vai encontrar (ver 0014 e 0015): o closer não pode marcar DO_NOT_CONTACT (não tem `WRITE:CRM`); editar campos não gera histórico; a API não tem filtros, busca nem paginação, nem erro de validação por campo; as recusas de duplicidade/DNC não trazem o id do registro existente.
 
 ## Comando inicial
 

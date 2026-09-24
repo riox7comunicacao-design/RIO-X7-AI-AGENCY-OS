@@ -3,15 +3,18 @@
 //   npm start  |  npm run dev          (node --env-file-if-exists=.env src/server/index.js)
 //
 // É AQUI, e só aqui, que as peças são ligadas: o adapter de autenticação do Supabase (verifica o access token),
-// o store de USERs (data/users.json, via defineUser + createUserStore), o Approval Queue Service (com a ponte de
-// autorização de src/auth como autorizador injetado) e o adaptador HTTP (app.js). Este arquivo só importa os
-// pontos PÚBLICOS: o barrel de src/auth e o módulo do Service — nunca o domínio da fila nem arquivos internos de auth.
+// o store de USERs (data/users.json, via defineUser + createUserStore), o Approval Queue Service e o CRM Service (cada
+// um com a sua ponte de autorização de src/auth como autorizador injetado) e o adaptador HTTP (app.js). Este arquivo
+// só importa os pontos PÚBLICOS: o barrel de src/auth e os módulos dos Services — nunca um domínio (nem o da fila,
+// nem o do CRM: a regra R12 só deixa src/services importar src/crm) nem arquivos internos de auth. O CRM entra por
+// createFileBackedCrmService (src/services/crmFileService.js): o servidor passa só o CAMINHO do arquivo, como faz com a fila.
 //
 // CONFIGURAÇÃO — o servidor lê SÓ estas variáveis de ambiente, e nenhuma é segredo:
 //   SUPABASE_URL, SUPABASE_ANON_KEY   o projeto Supabase (a chave anon é pública por desenho)
 //   PORT (3000), HOST (127.0.0.1)     onde escutar
 //   RIO_X7_USERS_FILE                 o arquivo de usuários (padrão: data/users.json)
 //   RIO_X7_QUEUE_PATH                 o arquivo da fila (padrão: o do domínio, data/approval-queue.json)
+//   RIO_X7_CRM_PATH                   o arquivo do CRM (padrão: data/crm.json; criado no primeiro registro)
 // Nada além disso é lido do ambiente, e o adapter de auth recebe só as duas variáveis do Supabase — a service_role
 // nunca é lida nem repassada. Um valor que falte ou seja inválido derruba a subida com uma mensagem clara.
 //
@@ -31,8 +34,10 @@ const {
   createSupabaseAuthAdapter,
   isSupabaseConfigured,
   authorizeReviewerForApprovalQueue,
+  authorizeCrmOperation,
 } = require('../auth');
 const { createApprovalQueueService } = require('../services/approvalQueueService');
+const { createFileBackedCrmService } = require('../services/crmFileService');
 const { createApp } = require('./app');
 
 const ROOT = path.join(__dirname, '..', '..');
@@ -42,6 +47,8 @@ const DASHBOARD_ROOT = path.join(ROOT, 'dashboard');
 // módulo de src/ que importa o SDK).
 const SUPABASE_BUNDLE = path.join(ROOT, 'node_modules', '@supabase', 'supabase-js', 'dist', 'umd', 'supabase.js');
 const DEFAULT_USERS_FILE = path.join(ROOT, 'data', 'users.json');
+// Dados do CRM: um arquivo local em data/ (o .gitignore exclui data/*.json — são dados pessoais de prospects).
+const DEFAULT_CRM_FILE = path.join(ROOT, 'data', 'crm.json');
 
 const DEFAULT_HOST = '127.0.0.1';
 const DEFAULT_PORT = 3000;
@@ -129,11 +136,16 @@ function createServer(env = process.env, options = {}) {
     authorizeReviewer: authorizeReviewerForApprovalQueue,
     queuePath: resolveFile(env.RIO_X7_QUEUE_PATH, undefined),
   });
+  const crmService = createFileBackedCrmService({
+    authorizeOperation: authorizeCrmOperation,
+    filePath: resolveFile(env.RIO_X7_CRM_PATH, DEFAULT_CRM_FILE),
+  });
 
   const app = createApp({
     verifyAccessToken: authAdapter.verifyAccessToken,
     userStore,
     approvalQueueService,
+    crmService,
     publicConfig: { supabaseUrl, supabaseAnonKey },
     staticRoot: DASHBOARD_ROOT,
     staticFiles: { '/lib/supabase.js': SUPABASE_BUNDLE },

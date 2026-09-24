@@ -12,7 +12,8 @@
 //
 // Este módulo depende só de authorizationContext.js e constants.js — não importa nada de src/crm nem de
 // src/services, mantendo auth e domínio desacoplados e sem dependência circular. Quem liga as peças é a
-// composição (src/server/index.js): createCrmService({ authorizeOperation: authorizeCrmOperation, repository }).
+// composição (src/server/index.js), por createFileBackedCrmService({ authorizeOperation: authorizeCrmOperation, filePath }),
+// que chama createCrmService com o repositório (decisão 0015).
 //
 // Fronteira arquitetural interna confiável, não criptografia: a ponte decide sobre um AuthorizationContext emitido
 // pelo emissor interno; não protege contra código que controle o mesmo processo e injete outro autorizador.

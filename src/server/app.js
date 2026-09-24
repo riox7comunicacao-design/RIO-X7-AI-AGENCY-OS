@@ -1,16 +1,27 @@
-// Adaptador HTTP do Dashboard — a ÚNICA porta de entrada do navegador para o Approval Queue Service.
+// Adaptador HTTP do Dashboard — a ÚNICA porta de entrada do navegador para o Approval Queue Service e o CRM Service.
 //
-//   navegador (dashboard/) -> HTTP /api/* -> ESTE MÓDULO -> Auth -> AuthorizationContext -> Approval Queue Service
+//   navegador (dashboard/) -> HTTP /api/* -> ESTE MÓDULO -> Auth -> AuthorizationContext -> Approval Queue Service | CRM Service
 //
 // O navegador só fala HTTP. Este módulo não decide regra de negócio nem de permissão: ele autentica quem chama,
 // monta o AuthorizationContext pelo fluxo já existente de src/auth, valida a FORMA da requisição, chama o Service
-// e traduz o resultado (ou o erro) em HTTP. Quem autoriza é o Service — e, de novo, o domínio.
+// e traduz o resultado (ou o erro) em HTTP. Quem autoriza é o Service — na fila, e de novo o domínio; no CRM o Service
+// é a ÚNICA camada de autorização (decisão 0014), e por isso este módulo nunca chega ao domínio do CRM (regra R12):
+// recebe o Service pronto, por injeção, e só chama os métodos dele.
 //
 // ROTAS (só estas; qualquer outra rota de /api é 404):
 //   GET  /api/me                        a projeção segura do usuário autenticado
 //   GET  /api/approvals[?estado=]       a fila (por padrão, AGUARDANDO_REVISAO)
 //   POST /api/approvals/:id/approve     corpo { reason? }
 //   POST /api/approvals/:id/reject      corpo { reason }   (motivo obrigatório)
+// CRM (decisão 0015) — só existem quando o CRM Service é injetado; sem ele, /api/crm... é 404:
+//   GET   /api/crm                      os registros                                    -> 200 { items }
+//   POST  /api/crm                      cria; corpo = campos do registro + { status?, reason? } -> 201 { item, duplicidade }
+//   GET   /api/crm/:id                  um registro                                     -> 200 { item }
+//   PATCH /api/crm/:id                  edita campos; corpo = só os campos a mudar      -> 200 { item }
+//   GET   /api/crm/:id/history          o histórico do registro                         -> 200 { historico }
+//   POST  /api/crm/:id/status           muda o status; corpo { to, reason? }            -> 200 { item }
+//   POST  /api/crm/:id/dnc              marca DO_NOT_CONTACT; corpo { reason? }         -> 200 { item }
+// Não há exclusão, filtro nem busca: o Service não os tem, e a API não inventa operação.
 // Tudo fora de /api é arquivo estático (ver static.js).
 //
 // PIPELINE de toda rota de /api, sempre nesta ordem:
@@ -24,6 +35,13 @@
 // Nada do que vem do navegador — corpo, query, cabeçalho — participa da identidade ou da permissão: NENHUMA rota
 // lê userId, role, permissions, reviewedBy ou authUserId de lugar nenhum, e um campo desconhecido no corpo é 400.
 // O reviewedBy gravado na fila vem do contexto, que vem do token.
+//
+// CRM: o corpo de POST/PATCH /api/crm é o REGISTRO (campos). Este módulo não conhece os nomes dos campos — só o domínio
+// os conhece, e ele é inalcançável daqui (R12): o corpo vai ao Service, que o entrega ao domínio, e o domínio recusa (400)
+// qualquer nome desconhecido, inclusive userId, role, permissions, reviewedBy, actor e authUserId. Nas rotas de ação
+// (status, dnc) as chaves permitidas são fixas aqui (`to`, `reason`) e qualquer outra é 400 sem chegar ao Service. O
+// Service autoriza ANTES de validar: sem WRITE:CRM a resposta é 403 mesmo com um corpo forjado. Só propriedades PRÓPRIAS
+// do corpo contam, e o que vai ao Service nunca é lido do protótipo (um Object.prototype poluído não escolhe nada).
 //
 // LEITURA (provisório, decisão D6): as leituras usam a mesma autorização das ações — a que o Service aplica hoje.
 // Isso NÃO define a permissão definitiva de leitura da fila; será revisto antes de existir um usuário só-leitura.
@@ -58,6 +76,9 @@ const DEFAULT_AUTH_TIMEOUT_MS = 10000;
 // importa o domínio); um teste vigia que os dois não divirjam.
 const DEFAULT_ESTADO = 'AGUARDANDO_REVISAO';
 
+// As operações do CRM Service que a API usa (o contrato de src/services/crmService.js). Verificadas na criação do app.
+const CRM_OPERATIONS = Object.freeze(['listRecords', 'getRecord', 'getHistory', 'createRecord', 'updateRecord', 'moveStatus', 'markDoNotContact']);
+
 const NO_ACCESS_MESSAGE = 'Esta conta não possui acesso a esta área.';
 
 // O catálogo de respostas de erro: status + mensagem fixa.
@@ -70,6 +91,12 @@ const CATALOG = Object.freeze({
   NOT_FOUND: [404, 'Item não encontrado.'],
   METHOD_NOT_ALLOWED: [405, 'Método não permitido.'],
   ALREADY_DECIDED: [409, 'Este item já foi decidido.'],
+  // CRM (decisão 0015): conflitos com o estado do registro ou com outros registros. Mensagens FIXAS — nunca o id do
+  // outro registro nem o critério que casou (o dado de um registro não sai na recusa de outro).
+  DUPLICATE_RECORD: [409, 'Já existe um registro com esta identidade.'],
+  DNC_BLOCKED: [409, 'Esta identidade está bloqueada como "não contatar".'],
+  RECORD_LOCKED: [409, 'Este registro está bloqueado como "não contatar" e não pode ser alterado.'],
+  INVALID_TRANSITION: [409, 'Esta mudança de status não é permitida.'],
   PAYLOAD_TOO_LARGE: [413, 'Requisição grande demais.'],
   UNSUPPORTED_MEDIA_TYPE: [415, 'Envie o corpo como application/json.'],
   INVALID_REQUEST: [400, 'Requisição inválida.'],
@@ -102,12 +129,31 @@ const KNOWN_MESSAGES = Object.freeze([
   [/^as opções devem ser um objeto/, 'INVALID_REQUEST', 'Campos não permitidos na requisição.'],
   [/^estado desconhecido/, 'INVALID_REQUEST', 'Estado inválido.'],
   [/^prospectId deve ser um texto não vazio/, 'INVALID_REQUEST', 'Identificador inválido.'],
+  // CRM (decisão 0015). As mensagens do CRM Service e do domínio do CRM têm o prefixo "CRM: ", que as distingue das da
+  // fila; só entram aqui as que uma requisição HTTP consegue produzir — o resto (repositório defeituoso, registro
+  // corrompido, autorizador defeituoso, opções que este módulo nunca envia) é bug ou falha de armazenamento: 500.
+  // A ordem importa só entre padrões que possam casar a mesma mensagem, e estes não casam.
+  [/^CRM: registro não encontrado/, 'NOT_FOUND'],
+  [/^CRM: não é possível (?:criar — identidade já bloqueada|atualizar — a nova identidade coincide com a de um registro bloqueado)/, 'DNC_BLOCKED'],
+  [/^CRM: não é possível (?:criar — já existe um registro|atualizar — a nova identidade coincide com a de outro registro)/, 'DUPLICATE_RECORD'],
+  [/^CRM: registro bloqueado \(DO_NOT_CONTACT\) não pode ser atualizado/, 'RECORD_LOCKED'],
+  [/^CRM: transição não permitida/, 'INVALID_TRANSITION'],
+  [/^CRM: id deve ser um texto não vazio/, 'INVALID_REQUEST', 'Identificador inválido.'],
+  [/^CRM: (?:createRecord|updateRecord) (?:não aceita campos gerenciados|tem campos desconhecidos)/, 'INVALID_REQUEST', 'Campos não permitidos na requisição.'],
+  [/^CRM: (?:createRecord|updateRecord) — campo "/, 'INVALID_REQUEST', 'Valor inválido em um dos campos.'],
+  [/^CRM: createRecord exige "empresa"/, 'INVALID_REQUEST', 'Informe a empresa.'],
+  [/^CRM: updateRecord não pode deixar "empresa" vazia/, 'INVALID_REQUEST', 'A empresa não pode ficar vazia.'],
+  [/^CRM: status desconhecido/, 'INVALID_REQUEST', 'Status inválido.'],
+  [/^CRM: status deve ser um texto/, 'INVALID_REQUEST', 'Status inválido.'],
+  [/^CRM: o status de destino deve ser um texto/, 'INVALID_REQUEST', 'Status inválido.'],
+  [/^CRM: reason deve ser um texto/, 'INVALID_REQUEST', 'O motivo deve ser um texto.'],
 ]);
 
 // Dicas para o LOG de erros internos conhecidos — sem repetir a mensagem original, que pode trazer trechos de
 // dados (um JSON de fila corrompido cita um pedaço do conteúdo).
 const INTERNAL_HINTS = Object.freeze([
   [/^arquivo de fila corrompido/, 'a fila em disco está corrompida ou ilegível (confira RIO_X7_QUEUE_PATH e o arquivo)'],
+  [/^CRM: arquivo de dados corrompido/, 'o arquivo do CRM em disco está corrompido ou ilegível (confira RIO_X7_CRM_PATH e o arquivo)'],
 ]);
 
 // Traduz QUALQUER erro em { status, code, message, headers }. Nunca lança.
@@ -243,6 +289,34 @@ function readReason(body, { required }) {
   return reason.length > 0 ? reason : undefined;
 }
 
+const hasOwn = (object, key) => Object.prototype.hasOwnProperty.call(object, key);
+
+// O corpo de uma rota de AÇÃO do CRM (status, dnc): só as chaves listadas. Qualquer outra — userId, role, permissions,
+// reviewedBy, actor, authUserId... — é 400 e nunca chega ao Service. Devolve um objeto SEM protótipo só com as chaves que o
+// corpo tem como propriedade PRÓPRIA (nada herdado conta), com os valores como vieram: tipo e conteúdo são do Service.
+function readActionBody(body, allowedKeys) {
+  if (Object.keys(body).some((key) => !allowedKeys.includes(key))) throw new HttpError('INVALID_REQUEST', 'Campos não permitidos na requisição.');
+  const picked = Object.create(null);
+  for (const key of allowedKeys) {
+    if (hasOwn(body, key)) picked[key] = body[key];
+  }
+  return picked;
+}
+
+// Separa o corpo de POST /api/crm em CAMPOS do registro e OPÇÕES do Service. `status` (o status inicial) e `reason` (o
+// motivo da entrada) são as únicas opções de createRecord; todo o resto é campo, e quem sabe quais campos existem é o
+// domínio, que recusa os desconhecidos. Os campos vão para um objeto SEM protótipo: uma chave "__proto__" do JSON vira
+// uma propriedade comum (que o domínio recusa), nunca troca o protótipo de nada.
+function splitCreateBody(body) {
+  const fields = Object.create(null);
+  const options = {};
+  for (const key of Object.keys(body)) {
+    if (key === 'status' || key === 'reason') options[key] = body[key];
+    else fields[key] = body[key];
+  }
+  return { fields, options };
+}
+
 function parseTarget(req) {
   const target = req.url;
   if (typeof target !== 'string' || !target.startsWith('/') || target.startsWith('//') || target.includes('\\') || target.length > MAX_TARGET_LENGTH) {
@@ -255,11 +329,22 @@ function parseTarget(req) {
   }
 }
 
-function matchRoute(pathname) {
+// `crm`: as rotas do CRM só existem quando o CRM Service foi injetado; sem ele, /api/crm... é uma rota desconhecida (404).
+function matchRoute(pathname, { crm }) {
   if (pathname === '/api/me') return { name: 'me', label: '/api/me', methods: ['GET'] };
   if (pathname === '/api/approvals') return { name: 'list', label: '/api/approvals', methods: ['GET'] };
   const decision = /^\/api\/approvals\/([^/]+)\/(approve|reject)$/.exec(pathname);
   if (decision) return { name: decision[2], label: `/api/approvals/:id/${decision[2]}`, methods: ['POST'], rawId: decision[1] };
+  if (crm) {
+    if (pathname === '/api/crm') return { family: 'crm', name: 'crm-collection', label: '/api/crm', methods: ['GET', 'POST'] };
+    const item = /^\/api\/crm\/([^/]+)(?:\/(history|status|dnc))?$/.exec(pathname);
+    if (item) {
+      const [, rawId, action] = item;
+      if (action === undefined) return { family: 'crm', name: 'crm-item', label: '/api/crm/:id', methods: ['GET', 'PATCH'], rawId };
+      if (action === 'history') return { family: 'crm', name: 'crm-history', label: '/api/crm/:id/history', methods: ['GET'], rawId };
+      return { family: 'crm', name: `crm-${action}`, label: `/api/crm/:id/${action}`, methods: ['POST'], rawId };
+    }
+  }
   if (pathname === '/api' || pathname.startsWith('/api/')) return { name: 'unknown', label: '/api/*', methods: [] };
   return null;
 }
@@ -320,11 +405,13 @@ function requireFunction(value, name) {
 // verifyAccessToken: async (token) -> VerifiedIdentity (o adapter de src/auth).
 // userStore: o store de USERs (findByAuthUserId).
 // approvalQueueService: o Approval Queue Service (listQueue, approveProspect, rejectProspect).
+// crmService: o CRM Service (as 7 operações de CRM_OPERATIONS) — OPCIONAL: sem ele as rotas /api/crm não existem (404).
+//   Presente, é validado por inteiro na criação (falha fechada); `null` não é "ausente", é erro.
 // publicConfig: { supabaseUrl, supabaseAnonKey } — os valores PÚBLICOS que o navegador recebe.
 // staticRoot / staticFiles: os arquivos do Dashboard (ver static.js).
 // log: (texto) => void. authTimeoutMs: quanto esperar pela verificação do token.
 function createApp(dependencies) {
-  const { verifyAccessToken, userStore, approvalQueueService, publicConfig, staticRoot, staticFiles, log = () => {}, authTimeoutMs = DEFAULT_AUTH_TIMEOUT_MS } =
+  const { verifyAccessToken, userStore, approvalQueueService, crmService, publicConfig, staticRoot, staticFiles, log = () => {}, authTimeoutMs = DEFAULT_AUTH_TIMEOUT_MS } =
     dependencies || {};
   requireFunction(verifyAccessToken, 'verifyAccessToken');
   requireFunction(log, 'log');
@@ -332,6 +419,11 @@ function createApp(dependencies) {
   for (const operation of ['listQueue', 'approveProspect', 'rejectProspect']) {
     if (!approvalQueueService || typeof approvalQueueService[operation] !== 'function') {
       throw new Error(`createApp exige { approvalQueueService } com ${operation}()`);
+    }
+  }
+  if (crmService !== undefined) {
+    for (const operation of CRM_OPERATIONS) {
+      if (!crmService || typeof crmService[operation] !== 'function') throw new Error(`createApp exige { crmService } com ${operation}()`);
     }
   }
   if (!publicConfig || typeof publicConfig.supabaseUrl !== 'string' || typeof publicConfig.supabaseAnonKey !== 'string') {
@@ -367,9 +459,44 @@ function createApp(dependencies) {
     return staticHandler.serve(url.pathname);
   }
 
+  // As rotas do CRM (decisão 0015). Cada uma só traduz HTTP <-> uma chamada ao CRM Service, com o AuthorizationContext
+  // que veio do token; a permissão (READ:CRM / WRITE:CRM), as regras do domínio e a identidade gravada no histórico são
+  // do Service. Nada aqui importa o domínio, nem decide autorização, nem lê identidade do navegador.
+  async function dispatchCrm(req, url, route, context) {
+    readQuery(url, []); // sem filtros nem busca: o Service não os tem
+    if (route.name === 'crm-collection') {
+      if (req.method === 'GET') return respond(200, { items: crmService.listRecords(context) });
+      const { fields, options } = splitCreateBody(await readJsonBody(req));
+      const created = crmService.createRecord(context, fields, options);
+      return respond(201, { item: created.record, duplicidade: created.duplicidade });
+    }
+
+    const id = decodeId(route.rawId);
+    if (route.name === 'crm-history') return respond(200, { historico: crmService.getHistory(context, id) });
+    if (route.name === 'crm-item') {
+      if (req.method === 'GET') {
+        const item = crmService.getRecord(context, id);
+        if (item === null) throw new HttpError('NOT_FOUND');
+        return respond(200, { item });
+      }
+      return respond(200, { item: crmService.updateRecord(context, id, await readJsonBody(req)) });
+    }
+    if (route.name === 'crm-status') {
+      const picked = readActionBody(await readJsonBody(req), ['to', 'reason']);
+      const options = hasOwn(picked, 'reason') ? { reason: picked.reason } : {};
+      return respond(200, { item: crmService.moveStatus(context, id, picked.to, options) });
+    }
+    if (route.name === 'crm-dnc') {
+      return respond(200, { item: crmService.markDoNotContact(context, id, readActionBody(await readJsonBody(req), ['reason'])) });
+    }
+    // Inalcançável: matchRoute só produz as cinco rotas acima. Existe para que uma rota nova, ainda sem tratamento aqui,
+    // nunca caia por omissão numa operação de escrita (marcar DO_NOT_CONTACT).
+    throw new HttpError('ROUTE_NOT_FOUND');
+  }
+
   async function dispatch(req, trace) {
     const url = parseTarget(req);
-    const route = matchRoute(url.pathname);
+    const route = matchRoute(url.pathname, { crm: crmService !== undefined });
     if (route === null) {
       trace.label = 'static';
       return serveStatic(req, url);
@@ -379,6 +506,8 @@ function createApp(dependencies) {
     if (!route.methods.includes(req.method)) throw new HttpError('METHOD_NOT_ALLOWED', undefined, { Allow: route.methods.join(', ') });
 
     const context = await authenticate(req, trace);
+
+    if (route.family === 'crm') return dispatchCrm(req, url, route, context);
 
     if (route.name === 'me') {
       readQuery(url, []);

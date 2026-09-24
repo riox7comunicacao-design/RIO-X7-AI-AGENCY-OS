@@ -5,10 +5,10 @@ Este documento existe para que o projeto **nunca dependa de uma máquina especí
 ## Estado atual (na data deste documento)
 
 - **branch:** `main`
-- **últimos commits de código:** etapa CRM-SERVICE — `feat(services): add CRM service ...`, precedido por `fix(crm): block identity bypasses ...` (confira `git log -5 --oneline`; não confie em nenhum hash escrito aqui)
+- **últimos commits de código:** etapa CRM-API — `feat(server): add CRM API ...`, precedido pela etapa CRM-SERVICE (`feat(services): add CRM service ...`) (confira `git log -5 --oneline`; não confie em nenhum hash escrito aqui)
 - **origin/main:** sincronizado com o commit acima (confirmado por push + `git fetch` antes de escrever este documento)
-- **etapa concluída:** CRM-SERVICE, sobre CRM-DOMAIN (modelo de dados, os 13 status, máquina de estados, DNC, deduplicação, repositório) — ver [0013](../decisions/0013-crm-domain.md) e [0014](../decisions/0014-crm-service.md)
-- **próxima etapa:** CRM-API (as rotas HTTP sobre o CRM Service)
+- **etapa concluída:** CRM-API, sobre CRM-SERVICE e CRM-DOMAIN (modelo de dados, os 13 status, máquina de estados, DNC, deduplicação, repositório; autorização `READ:CRM`/`WRITE:CRM`; rotas `/api/crm`) — ver [0013](../decisions/0013-crm-domain.md), [0014](../decisions/0014-crm-service.md) e [0015](../decisions/0015-crm-api.md)
+- **próxima etapa:** CRM-DASHBOARD (as telas do CRM sobre as rotas `/api/crm`)
 
 Este próprio documento, e o `CONTINUE-HERE.md` ao lado, são publicados num commit **seguinte** ao de cima (documentação, sem mudança de código) — confira `git log --oneline -5` para o HEAD exato agora.
 
@@ -45,7 +45,7 @@ Node.js **22 ou mais recente** é exigido (`engines.node` em `package.json`; est
 npm test
 ```
 
-Sem nenhuma configuração local, a suíte roda quase inteira (só os testes que exigem `.env`/um token real do Supabase ficam `PENDENTE`, nunca falham). No retrato desta data: **573 testes, 571 passam, 0 falham, 2 pulados** sem `.env`/token real presentes.
+Sem nenhuma configuração local, a suíte roda quase inteira (só os testes que exigem `.env`/um token real do Supabase ficam `PENDENTE`, nunca falham). No retrato desta data: **638 testes, 636 passam, 0 falham, 2 pulados** sem `.env`/token real presentes.
 
 ## Verificação estrutural (preflight)
 
@@ -83,6 +83,7 @@ Nomes apenas — **nenhum valor secreto neste documento, nem em nenhum outro arq
 | `HOST` | Não (padrão 127.0.0.1) | Endereço em que o servidor escuta — nunca exponha além do localhost sem um proxy HTTPS na frente |
 | `RIO_X7_USERS_FILE` | Não (padrão `data/users.json`) | Caminho do arquivo de usuários operacionais |
 | `RIO_X7_QUEUE_PATH` | Não (padrão `data/approval-queue.json`) | Caminho da fila de aprovação |
+| `RIO_X7_CRM_PATH` | Não (padrão `data/crm.json`) | Caminho do arquivo do CRM (adapter local de desenvolvimento) |
 | `RIO_X7_TEST_ACCESS_TOKEN` | Não | Só para o teste `[REAL-2]` (opcional); nunca um usuário real |
 
 `SUPABASE_SERVICE_ROLE_KEY` **nunca** é uma variável deste projeto — nenhum código a lê, em nenhuma hipótese. Se ela existir no seu ambiente por outro motivo, não a copie para o `.env` deste projeto.
@@ -107,8 +108,9 @@ Nenhum destes é (ou deve ser) versionado — `.gitignore` já cobre todos.
 | `data/users.json` | Sim (para o Dashboard subir) | **Não sozinho** — precisa do `authUserId` real de cada pessoa (Supabase Auth → Users → User UID). Formato exato documentado em `.env.example` e em `src/server/index.js` (`USER_FIELDS`) | Sim — nome e e-mail reais de Breno/Rafael |
 | `data/approval-queue.json` | Não | Sim — ausente = fila vazia, um estado válido | Se existir com dado real: sim (prospects reais) |
 | `data/approval-queue.dev.json` / `data/approval-queue.manual-validation.json` | Não | Sim — só dados fictícios (`scripts/seed-dev-queue.js` recria) | Não (só `example.test`) |
+| `data/crm.json` | Não | Sim — ausente = CRM vazio, um estado válido (o arquivo é criado no primeiro registro) | Se existir com dado real: sim (prospects reais — o mesmo cuidado de `data/approval-queue.json`) |
 
-**Se `data/approval-queue.json` já tiver prospects reais nesta máquina e você quiser continuar com eles no computador novo:** **NÃO** copie o arquivo para o GitHub, nem para nenhum repositório público. Transfira por um canal que só você controla — um pen drive, um compartilhamento seguro de arquivo do seu gerenciador de senhas, ou um upload privado numa nuvem pessoal (Google Drive/iCloud) que só você acessa — e apague a cópia temporária depois. Este documento não faz essa transferência por você.
+**Se `data/approval-queue.json` ou `data/crm.json` já tiverem prospects reais nesta máquina e você quiser continuar com eles no computador novo:** **NÃO** copie o(s) arquivo(s) para o GitHub, nem para nenhum repositório público. Transfira por um canal que só você controla — um pen drive, um compartilhamento seguro de arquivo do seu gerenciador de senhas, ou um upload privado numa nuvem pessoal (Google Drive/iCloud) que só você acessa — e apague a cópia temporária depois. Este documento não faz essa transferência por você.
 
 ## Ordem de retomada
 
@@ -129,4 +131,4 @@ Nenhuma integração de acesso remoto foi criada ou é necessária além do pró
 
 ## Próxima etapa
 
-**CRM-API** — ver [docs/decisions/0014-crm-service.md](../decisions/0014-crm-service.md), seção "Próximo passo". Não implementado ainda; aguardando autorização.
+**CRM-DASHBOARD** — ver [docs/decisions/0015-crm-api.md](../decisions/0015-crm-api.md), seções "Rotas e contratos" e "Limites e decisões pendentes". Não implementado ainda; aguardando autorização.

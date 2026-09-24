@@ -105,7 +105,7 @@ function checkSupabaseEnvVars() {
 }
 
 function checkOptionalEnvVars() {
-  for (const nome of ['PORT', 'HOST', 'RIO_X7_USERS_FILE', 'RIO_X7_QUEUE_PATH']) {
+  for (const nome of ['PORT', 'HOST', 'RIO_X7_USERS_FILE', 'RIO_X7_QUEUE_PATH', 'RIO_X7_CRM_PATH']) {
     const presente = Boolean(process.env[nome] && String(process.env[nome]).trim());
     ok(`Variável ${nome} (opcional)`, presente ? 'PRESENTE (usando valor customizado)' : 'AUSENTE (usando o padrão)');
   }
