@@ -1016,3 +1016,28 @@ test('[DASH-CRM-34] uma resposta malformada da API (lista que não é lista, ite
   assert.doesNotMatch(textoDaTela(t.browser), /Outro Registro/, 'um registro com id diferente do pedido nunca é mostrado');
   assert.match(textoDaTela(t.browser), /Não foi possível concluir a operação agora/);
 });
+
+test('[DASH-CRM-35] as sugestões dos campos nunca reescrevem o que a pessoa digitou: com a lista chegando DEPOIS de o formulário abrir, com opções que só diferem por caixa e acento (clinica, rj, petropolis), os campos ficam como digitados e o corpo enviado é exatamente o digitado', async () => {
+  const { crmRecord } = await loadFixtures();
+  const t = await montar();
+  const lista = t.api.hold('listCrm');
+  t.view.show(NOVO); // a lista ainda não chegou: nenhuma sugestão
+  await lista.arrived;
+  t.browser.type(t.browser.by.label(t.root, 'Empresa (obrigatório)'), 'TESTE CRM Rio X7');
+  t.browser.type(t.browser.by.label(t.root, 'Nicho'), 'Clínica');
+  t.browser.type(t.browser.by.label(t.root, 'Cidade'), 'Petrópolis');
+  t.browser.type(t.browser.by.label(t.root, 'Estado (UF)'), 'RJ');
+  t.browser.type(t.browser.by.label(t.root, 'Nome do contato'), 'João Teste');
+
+  lista.release({ items: [crmRecord({ id: 'crm:min', empresa: 'Só minúsculas', nicho: 'clinica', cidade: 'petropolis', estado: 'rj' })] });
+  await t.browser.flush();
+  const opcoes = (id) => t.browser.by.tag(t.browser.find(t.root, (el) => el.localName === 'datalist' && el.getAttribute('id') === id), 'option').map((o) => o.getAttribute('value'));
+  assert.deepEqual(opcoes('crm-suggest-nicho'), ['clinica'], 'as sugestões chegaram');
+  assert.equal(t.browser.by.label(t.root, 'Nicho').value, 'Clínica', 'o campo continua como digitado');
+  assert.equal(t.browser.by.label(t.root, 'Cidade').value, 'Petrópolis');
+  assert.equal(t.browser.by.label(t.root, 'Estado (UF)').value, 'RJ');
+
+  t.browser.click(t.browser.by.button(t.root, 'Criar registro'));
+  await t.browser.flush();
+  assert.deepEqual(t.api.callsOf('createCrm')[0].args[0], { empresa: 'TESTE CRM Rio X7', contato: 'João Teste', nicho: 'Clínica', cidade: 'Petrópolis', estado: 'RJ' });
+});

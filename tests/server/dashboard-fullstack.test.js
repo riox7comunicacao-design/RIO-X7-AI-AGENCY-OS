@@ -11,6 +11,7 @@
 
 const test = require('node:test');
 const assert = require('node:assert/strict');
+const fs = require('node:fs');
 
 const { createJsonFileCrmRepository } = require('../../src/crm/crmRepository');
 const crm = require('../../src/crm');
@@ -310,4 +311,86 @@ test('[DASH-FULL-8] logout depois de usar o CRM: a página do login não guarda 
   const texto = textoDaTela(s.browser);
   for (const dado of ['Clínica Alfa', 'Clínica Beta', 'alfa.example.test', 'Petrópolis', 'Histórico', BRENO.name]) assert.ok(!texto.includes(dado), `"${dado}" sobrou depois do logout`);
   assert.ok(s.browser.by.label(s.browser.root, 'E-mail'));
+});
+
+// ===========================================================================
+// O QUE É DIGITADO É O QUE É GRAVADO (relato de validação manual: "Cidade —" e "Estado rj")
+// ===========================================================================
+// Relato: criando pelo Dashboard "TESTE CRM Rio X7" / "João Teste" / Nicho "Clínica" / Cidade "Petrópolis" / Estado "RJ", a ficha
+// mostrou Cidade "—" e Estado "rj" (e o arquivo tinha nicho "clinica"). Estes testes seguem o dado camada por camada, com esses
+// mesmos valores e um CRM VAZIO (sem nenhuma sugestão): o corpo enviado, a resposta, o arquivo lido CRU do disco, a leitura
+// GET e a ficha. Nenhuma camada muda caixa nem acento, e nenhuma perde a cidade.
+const CASO_RELATADO = Object.freeze({ empresa: 'TESTE CRM Rio X7', contato: 'João Teste', nicho: 'Clínica', cidade: 'Petrópolis', estado: 'RJ' });
+
+const doDisco = (t) => Object.values(JSON.parse(fs.readFileSync(t.env.crmFilePath, 'utf8')));
+
+function campoDaFicha(browser, rotulo) {
+  const dt = browser.find(browser.root, (el) => el.localName === 'dt' && el.textContent.trim() === rotulo);
+  assert.ok(dt, `campo "${rotulo}" não está na ficha`);
+  const irmaos = dt.parentNode.children;
+  return irmaos[irmaos.indexOf(dt) + 1].textContent.trim();
+}
+
+const CAMPOS_DO_CASO = ['empresa', 'contato', 'nicho', 'cidade', 'estado'];
+const soOsDoCaso = (registro) => Object.fromEntries(CAMPOS_DO_CASO.map((campo) => [campo, registro[campo]]));
+
+test('[DASH-FULL-9] o caso relatado, pela interface: Nicho "Clínica", Cidade "Petrópolis" e Estado "RJ" num CRM vazio chegam iguais ao corpo enviado, à resposta, ao ARQUIVO em disco, à leitura GET e à ficha — sem virar minúsculas, sem perder acento e sem perder a cidade', async (t) => {
+  const s = await subir(t, { hash: '#/crm/novo' }); // CRM vazio: nenhuma sugestão nos campos
+  assert.equal(gravados(s).length, 0);
+  await preencher(s, CASO_RELATADO);
+  await clicar(s, 'Criar registro');
+
+  // 1) o corpo que o navegador enviou
+  const envio = s.fetchImpl.calls.find((chamada) => chamada.method === 'POST' && chamada.path === '/api/crm');
+  assert.ok(envio, 'o navegador fez o POST');
+  assert.deepEqual(envio.body, { ...CASO_RELATADO, status: 'PROSPECT' }, 'corpo do POST: exatamente o que foi digitado (mais o status inicial)');
+
+  // 2) a resposta da API (201)
+  const resposta = s.fetchImpl.responses.find((r) => r.method === 'POST' && r.path === '/api/crm');
+  assert.equal(resposta.status, 201);
+  assert.deepEqual(soOsDoCaso(JSON.parse(resposta.text).item), CASO_RELATADO, 'resposta do POST');
+
+  // 3) o arquivo, lido CRU do disco (sem passar pelo repositório)
+  const gravadoEmDisco = doDisco(s);
+  assert.equal(gravadoEmDisco.length, 1);
+  assert.deepEqual(soOsDoCaso(gravadoEmDisco[0]), CASO_RELATADO, 'data/crm.json');
+  const id = gravadoEmDisco[0].id;
+
+  // 4) a leitura GET /api/crm/:id, pelo mesmo caminho do navegador
+  const leitura = await s.fetchImpl(`/api/crm/${encodeURIComponent(id)}`, { method: 'GET', headers: { authorization: `Bearer ${s.accessToken}`, accept: 'application/json' } });
+  assert.equal(leitura.status, 200);
+  assert.deepEqual(soOsDoCaso((await leitura.json()).item), CASO_RELATADO, 'GET /api/crm/:id');
+
+  // 5) a ficha que abriu depois de criar
+  assert.equal(s.browser.window.location.hash, `#/crm/registro/${encodeURIComponent(id)}`);
+  for (const [chave, rotulo] of [['nicho', 'Nicho'], ['cidade', 'Cidade'], ['estado', 'Estado (UF)'], ['contato', 'Nome do contato']]) {
+    assert.equal(campoDaFicha(s.browser, rotulo), CASO_RELATADO[chave], `ficha: ${rotulo}`);
+  }
+  assert.equal(s.browser.by.tag(s.browser.root, 'h2')[0].textContent, CASO_RELATADO.empresa);
+});
+
+test('[DASH-FULL-10] as camadas de baixo, SEM o Dashboard: o mesmo caso relatado enviado direto à API real (Service, domínio e arquivo reais) volta igual — se a interface estivesse certa e o dado errado, este teste falharia e diria que o problema é do servidor', async (t) => {
+  const s = await subir(t);
+  const resposta = await s.fetchImpl('/api/crm', {
+    method: 'POST',
+    headers: { authorization: `Bearer ${s.accessToken}`, 'content-type': 'application/json', accept: 'application/json' },
+    body: JSON.stringify(CASO_RELATADO),
+  });
+  assert.equal(resposta.status, 201);
+  const { item } = await resposta.json();
+  assert.deepEqual(soOsDoCaso(item), CASO_RELATADO, 'resposta');
+  const emDisco = doDisco(s);
+  assert.equal(emDisco.length, 1);
+  assert.deepEqual(soOsDoCaso(emDisco[0]), CASO_RELATADO, 'arquivo em disco');
+  const lista = await (await s.fetchImpl('/api/crm', { method: 'GET', headers: { authorization: `Bearer ${s.accessToken}`, accept: 'application/json' } })).json();
+  assert.deepEqual(lista.items.map(soOsDoCaso), [CASO_RELATADO], 'GET /api/crm');
+
+  // e uma edição pelo PATCH também guarda o que foi enviado, sem mexer no resto
+  const edicao = await s.fetchImpl(`/api/crm/${encodeURIComponent(item.id)}`, {
+    method: 'PATCH',
+    headers: { authorization: `Bearer ${s.accessToken}`, 'content-type': 'application/json', accept: 'application/json' },
+    body: JSON.stringify({ cidade: 'Teresópolis', estado: 'SP' }),
+  });
+  assert.equal(edicao.status, 200);
+  assert.deepEqual(soOsDoCaso(doDisco(s)[0]), { ...CASO_RELATADO, cidade: 'Teresópolis', estado: 'SP' });
 });

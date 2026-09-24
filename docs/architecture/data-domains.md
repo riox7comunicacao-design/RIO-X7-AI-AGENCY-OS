@@ -7,12 +7,14 @@ Este documento não altera nenhum schema real (Notion ou local) — apenas mapei
 A visão do projeto é que o Notion **não é obrigatoriamente a interface final**. O desenho-alvo é:
 
 ```
-Dashboard (futuro) → API/serviços → dados → especialistas
+Dashboard → API/serviços → dados → especialistas
 ```
 
 Ou seja: os especialistas devem ser escritos contra um **modelo de dados**, não contra "o Notion" como acoplamento direto — para que uma futura troca de interface (Dashboard próprio) ou de armazenamento não exija reescrever a lógica de cada especialista. Hoje, na prática, o Notion **é** a implementação desse modelo de dados (fonte de verdade operacional, conforme [0001](../decisions/0001-initial-architecture.md) e [0002](../decisions/0002-execution-architecture.md)) — isso não muda neste passo. O que muda é a intenção arquitetural: tratar o Notion como *um* backend possível do modelo de dados, não como *o* modelo em si.
 
 **Refinamento (0008.4):** entre "API/serviços" e "dados" existe uma camada de **Autorização**, explicitada em [0009-identity-roles-and-authorization-model.md](../decisions/0009-identity-roles-and-authorization-model.md) — `Dashboard → API/Services → Authorization → Data/Specialist`. A autorização (checar `USER`/`role`/`permission`/`approvalType`) nunca deve existir só na interface; mesmo uma chamada direta a um serviço, sem passar pelo Dashboard, deve continuar sendo barrada pela mesma camada. Nenhuma API/Authorization foi implementada.
+
+**Atualização (2026-09-24):** o desenho-alvo acima já existe para o CRM e para a fila de aprovação — Dashboard (`dashboard/`) → HTTP `/api/*` (`src/server`) → Services (`src/services`, onde a autorização acontece) → domínios (`src/crm`, `src/research-prospector`) → persistência local. Para o **CRM** o Notion já **não** é a implementação do modelo de dados (decisão [0012](../decisions/0012-crm-operational-source-of-truth.md)); o texto desta seção foi preservado como histórico. O parágrafo "Nenhuma API/Authorization foi implementada" acima descreve o estado de 2026-09-16.
 
 ## Dados de prospecção — comparação com o schema real do CRM
 
@@ -72,17 +74,17 @@ Formalização pedida na Consolidação 0008.2. Nenhum domínio foi inventado al
 
 **Atualização (2026-09-23, [decisão 0012](../decisions/0012-crm-operational-source-of-truth.md)):** as linhas **CRM**, **Empresas/Contatos** e **Clientes (Status = WON)** abaixo descreviam o Notion como fonte de verdade — isso foi **revogado**. O texto original destas três linhas é preservado (histórico de quando o Notion ainda era a fonte), marcado com †.
 
-**Atualização (2026-09-23, etapas CRM-DOMAIN, CRM-SERVICE e CRM-API, decisões [0013](../decisions/0013-crm-domain.md), [0014](../decisions/0014-crm-service.md) e [0015](../decisions/0015-crm-api.md)):** o domínio do CRM operacional (`src/crm/` — modelo de dados, os 13 status, máquina de estados, DNC, deduplicação, repositório de persistência), o **CRM Service** (`src/services/crmService.js` — autorização `READ:CRM`/`WRITE:CRM` por operação) e a **API HTTP** (`/api/crm` em `src/server/app.js`) **já existem em código**. Ainda **não** existem: Dashboard/Kanban do CRM, a promoção Approval Queue → CRM. Nenhum dado real foi migrado do Notion.
+**Atualização (2026-09-23, etapas CRM-DOMAIN, CRM-SERVICE e CRM-API, decisões [0013](../decisions/0013-crm-domain.md), [0014](../decisions/0014-crm-service.md) e [0015](../decisions/0015-crm-api.md)):** o domínio do CRM operacional (`src/crm/` — modelo de dados, os 13 status, máquina de estados, DNC, deduplicação, repositório de persistência), o **CRM Service** (`src/services/crmService.js` — autorização `READ:CRM`/`WRITE:CRM` por operação) e a **API HTTP** (`/api/crm` em `src/server/app.js`) **já existem em código**. O **Dashboard do CRM V1** também já existe (2026-09-23/24: lista com busca e filtros, ficha, histórico, criar, editar, mudar status e "Não contatar" — ver o [CHANGELOG](../../CHANGELOG.md)). Ainda **não** existem: Kanban do CRM e a promoção Approval Queue → CRM (etapa CRM-INTEGRATION). Nenhum dado real foi migrado do Notion, e a persistência do CRM é um arquivo local (`data/crm.json`, fora do Git, não sincronizado entre computadores).
 
 | Domínio | Fonte atual | Quem lê | Quem escreve | Quem aprova |
 |---|---|---|---|---|
 | **Prospects** (pré-CRM) | `discovery.js` + `approvalQueue.js` (JSON local, não versionado) | Researcher, Prospector, Breno/Closer | Researcher/Prospector (`addProspect`) | Breno/Closer (`approveProspect`/`rejectProspect`) |
-| **Empresas / Contatos** | **EM TRANSIÇÃO** — domínio CRM operacional (`src/crm/`) CRM Service e API HTTP já implementados; Dashboard ainda não. † fonte anterior: CRM Notion (`RIO X7 — Pipeline Comercial`) | SDR, Raio-X, CRM AI (quando existir) | Humano (ou sugestão de IA sob aprovação) | Breno/Closer |
+| **Empresas / Contatos** | **EM TRANSIÇÃO** — domínio CRM operacional (`src/crm/`) CRM Service e API HTTP já implementados; Dashboard V1 também já implementado (sem Kanban). † fonte anterior: CRM Notion (`RIO X7 — Pipeline Comercial`) | SDR, Raio-X, CRM AI (quando existir) | Humano (ou sugestão de IA sob aprovação) | Breno/Closer |
 | **Conversas** | **Nenhuma fonte estruturada hoje** — só texto livre em `Observações` | — | **DECISÃO ARQUITETURAL PENDENTE** (ver seção dedicada abaixo) | Humano, sempre, para qualquer envio |
-| **CRM** (estágio/Status/Temperatura) | **EM TRANSIÇÃO** — domínio CRM operacional (`src/crm/`, 13 status, máquina de estados, DNC, dedup) CRM Service (`READ:CRM`/`WRITE:CRM`) e API HTTP já implementados; Dashboard ainda não. † fonte anterior: Notion `Pipeline Comercial` | Quase todos os especialistas | Humano (testado uma vez sob autorização — Passo 1.7; escrita real no CRM operacional só pelo CRM Service, com `WRITE:CRM` — ADMIN sim, COMMERCIAL_CLOSER não) | Breno/Closer |
+| **CRM** (estágio/Status/Temperatura) | **EM TRANSIÇÃO** — domínio CRM operacional (`src/crm/`, 13 status, máquina de estados, DNC, dedup) CRM Service (`READ:CRM`/`WRITE:CRM`) e API HTTP já implementados; Dashboard V1 também já implementado (sem Kanban). † fonte anterior: Notion `Pipeline Comercial` | Quase todos os especialistas | Humano (testado uma vez sob autorização — Passo 1.7; escrita real no CRM operacional só pelo CRM Service, com `WRITE:CRM` — ADMIN sim, COMMERCIAL_CLOSER não) | Breno/Closer |
 | **Reuniões** | Google Calendar (leitura) + campos do CRM (`Data da Reunião`, `Link do Meet`) | SDR, Closer Assistant, Raio-X | Humano | Humano (criação/alteração de reunião está na lista fixa de sempre-aprovação) |
 | **Propostas** | **Nenhuma estruturada hoje** (só a Apresentação Comercial do Raio-X, como artifact) | Raio-X, Closer | Raio-X Digital (produz, como sugestão) | Breno/Closer, antes de qualquer envio ao cliente |
-| **Clientes** (Status = WON) | **EM TRANSIÇÃO** — subconjunto por Status do domínio CRM operacional (`src/crm/`) do CRM Service e da API HTTP, já implementados; Dashboard ainda não. † fonte anterior: mesmo CRM Notion | Onboarding/Customer Success (futuros) | Humano | Humano |
+| **Clientes** (Status = WON) | **EM TRANSIÇÃO** — subconjunto por Status do domínio CRM operacional (`src/crm/`) do CRM Service e da API HTTP, já implementados; Dashboard V1 também já implementado (sem Kanban). † fonte anterior: mesmo CRM Notion | Onboarding/Customer Success (futuros) | Humano | Humano |
 | **Conteúdo** | **Nenhuma hoje** — área "MARKETING" no Notion está reservada e vazia | Copywriter/Designer/Editor de Vídeo/Social Media (futuros) | Mesmos (rascunho/PROPOSE) | Humano sempre (publicação está na lista fixa) |
 | **Campanhas** (mídia paga) | **Nenhuma integração técnica hoje** (PLANEJADA) | Gestor de Tráfego (futuro) | Mesmo (proposta de alteração) | Humano sempre |
 | **Financeiro** | **Nenhuma hoje** | Financeiro (futuro) | Humano sempre | Humano sempre, sem exceção |
@@ -152,7 +154,7 @@ Nenhuma integração é presumida — cada uma é classificada pelo que foi real
 | Instagram (envio/DM) | **PLANEJADA** | Mesma situação do WhatsApp |
 | E-mail (envio) | **PLANEJADA** | Mesma situação |
 | Meta Ads / Google Ads / TikTok Ads | **PLANEJADA** | Nenhuma integração técnica existe; dependem do especialista Gestor de Tráfego (FUTURO) |
-| Dashboard próprio (API/serviços) | **DECISÃO PENDENTE** | Mencionado na visão do projeto; nenhuma arquitetura técnica de API foi definida ou proposta neste passo |
+| Dashboard próprio (API/serviços) | **IMPLEMENTADO** (atualizado em 2026-09-24; a classificação original era "DECISÃO PENDENTE") | Dashboard (`dashboard/`) → HTTP `/api/*` (`src/server`) → Services → domínios, com login Supabase, Approval Queue e CRM (decisões 0010, 0011, 0014, 0015 e CHANGELOG) |
 | Repositório de código / Git | **EXISTENTE/TESTADA** | Em uso desde o Passo 0.3 |
 
 Nenhuma API foi inventada, nenhum acesso foi presumido, e nenhuma capacidade de escrita além da já testada (Notion, um registro) foi assumida.

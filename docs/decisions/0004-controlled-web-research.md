@@ -1,5 +1,7 @@
 # 0004 — Pesquisa Web Controlada (Especificação)
 
+> **Nota de estado atual (2026-09-24):** este documento é um registro histórico, escrito quando o Notion era a fonte de verdade do CRM/Pipeline Comercial. Essa parte foi **revogada** pela [decisão 0012](./0012-crm-operational-source-of-truth.md) (2026-09-23): hoje o CRM operacional é o do próprio Rio X7 AI Agency OS (`src/crm` → CRM Service → API `/api/crm` → Dashboard) — o estado atual está em [CONTINUE-HERE](../operations/CONTINUE-HERE.md). O texto original abaixo foi preservado como histórico: onde ele disser que o CRM está no Notion, leia "estava". O Notion segue como base de conhecimento e repositório das Skills.
+
 ## Status
 
 Especificado (documentação conceitual). **Nenhuma pesquisa real na internet foi implementada ou executada.** Nenhuma empresa real foi pesquisada. Registrado em 2026-09-16, com base em [PROJECT_CONTEXT.md](../../PROJECT_CONTEXT.md), [RULES.md](../../RULES.md), [docs/architecture/README.md](../architecture/README.md), [0002-execution-architecture.md](./0002-execution-architecture.md), [0003-research-prospector-module.md](./0003-research-prospector-module.md), e no código já existente em `src/research-prospector/` e `tests/research-prospector/` (23 testes, todos passando, confirmados antes deste documento).

@@ -1,66 +1,86 @@
 # CONTINUE HERE
 
+Este é o primeiro documento a ler antes de mexer em qualquer coisa. Ele diz **onde o trabalho parou** e **qual é a próxima etapa** — e nunca é substituto de conferir o estado real com os comandos abaixo.
+
 ## Projeto
 
-Rio X7 AI Agency OS
+Rio X7 AI Agency OS — ver o [README.md](../../README.md) para o que é, a arquitetura e onde está cada parte.
 
 ## Repositório
 
 `origin` → `https://github.com/riox7comunicacao-design/RIO-X7-AI-AGENCY-OS.git` (branch `main`)
 
-## Última etapa concluída
+## Antes de alterar qualquer código
 
-CRM-DASHBOARD V1 (depois de CRM-ARCH, CRM-DOMAIN, CRM-SERVICE e CRM-API): a primeira interface operacional do CRM no Dashboard — lista com busca e filtros, ficha, histórico, criar, editar, mudar status e "Não contatar". O que foi feito e como está no [CHANGELOG.md](../../CHANGELOG.md) (entrada "CRM Dashboard V1"); os contratos da API estão em [docs/decisions/0015-crm-api.md](../decisions/0015-crm-api.md), e as camadas abaixo em [0014](../decisions/0014-crm-service.md), [0013](../decisions/0013-crm-domain.md) e [0012](../decisions/0012-crm-operational-source-of-truth.md). Nenhuma decisão arquitetural nova.
+1. Ler este documento, o [PROJECT_CONTEXT.md](../../PROJECT_CONTEXT.md) e o [RULES.md](../../RULES.md).
+2. Conferir que o clone está sincronizado (os dois hashes precisam coincidir):
 
-## Último commit (de código)
+   ```powershell
+   git fetch origin
+   git status
+   git rev-parse HEAD
+   git rev-parse origin/main
+   ```
 
-Os commits da etapa CRM-DASHBOARD (o mais recente de código: `feat(dashboard): add the CRM interface ...`, precedido pela etapa CRM-API, `feat(server): add CRM API routes ...`) — **não confie em nenhum número de commit escrito aqui**: confirme com `git log -5 --oneline` antes de continuar.
+3. Se `HEAD` e `origin/main` forem diferentes, `git pull` (ou decida deliberadamente qual lado prevalece — nunca resolva isso com `git reset --hard` sem entender a diferença).
+4. Rodar `npm test` e o preflight (abaixo) e comparar com o baseline desta página.
+5. Continuar **somente** a partir da próxima etapa aprovada (última seção) — nunca implementar uma etapa nova sem autorização explícita do proprietário do projeto, mesmo que pareça óbvia.
 
-## Estado
+**Não confie em nenhum número de commit escrito aqui**: confirme com `git log -5 --oneline`.
 
-- `main` local deve estar igual a `origin/main` (confirme com `git status`, `git rev-parse HEAD`, `git rev-parse origin/main`).
-- 752 testes automatizados, 0 falhas, no máximo 2 pulados (exigem `.env`/token real).
-- Nenhum dado real de cliente/prospect está no Git. `.env`, `data/users.json` e `data/crm.json` nunca foram versionados.
-- O Dashboard foi validado, nesta etapa, só com um serviço de autenticação **falso** (nenhuma credencial real foi usada). **Falta a validação com o login real** de Breno/Rafael — roteiro no passo 9 do [MULTICOMPUTER-HANDOFF.md](./MULTICOMPUTER-HANDOFF.md).
+## Computador novo (resumo)
 
-## Próxima etapa
+O passo a passo completo está em [MULTICOMPUTER-HANDOFF.md](./MULTICOMPUTER-HANDOFF.md). Em uma linha: clonar → `npm ci` → criar `.env` (a partir de `.env.example`) e `data/users.json` → `node --env-file-if-exists=.env scripts/preflight.js` → `npm test` → `npm start`. `.env` e `data/*.json` **não estão no Git** e são recriados à mão em cada computador.
 
-**CRM-INTEGRATION** — a promoção Approval Queue → CRM (um prospect aprovado vira um registro do CRM), que segue pendente. **Não implementar sem autorização explícita do proprietário do projeto.**
-
-Decisões pendentes que a interface tornou visíveis (nenhuma foi resolvida; ver 0014, 0015 e o CHANGELOG): a API não informa as transições permitidas (a tela oferece os outros status e o servidor recusa o que não vale); os rótulos dos status são os do domínio, em inglês; a API não tem filtro nem paginação no servidor, nem erro de validação por campo; as recusas de duplicidade/DNC não trazem o id do registro existente; o closer não pode marcar "Não contatar" (não tem `WRITE:CRM`); editar campos não gera histórico. Documentos com um pequeno atraso, fora do escopo da última etapa e ainda não atualizados: `docs/architecture/data-domains.md` (diz que o Dashboard do CRM não existe) e `data/README.md` (não menciona `data/crm.json`).
-
-## Comando inicial
+## Comandos
 
 ```powershell
-git pull
-npm install
+npm ci
 node --env-file-if-exists=.env scripts/preflight.js
-```
-
-## Teste inicial
-
-```powershell
 npm test
+npm start
 ```
 
-## Documentos essenciais
+## Baseline dos testes (2026-09-24)
 
-- [PROJECT_CONTEXT.md](../../PROJECT_CONTEXT.md)
-- [RULES.md](../../RULES.md)
-- [README.md](../../README.md)
-- [docs/operations/MULTICOMPUTER-HANDOFF.md](./MULTICOMPUTER-HANDOFF.md)
-- [docs/architecture/](../architecture/)
-- [docs/decisions/](../decisions/)
+| Onde | Total | Passam | Falham | Pulados |
+|---|---|---|---|---|
+| Neste computador, com `.env` | 755 | 753 | 0 | 2 |
+| Clone limpo, **sem** `.env` e sem `data/*.json` | 755 | 748 | 0 | 7 |
 
-## Regra
+Nenhuma falha. Os pulados são esperados: sem `.env` (5 testes de conectividade/autenticação contra o Supabase real), o `[REAL-2]` (só roda com `RIO_X7_TEST_ACCESS_TOKEN`, um token real de teste) e o `[SRV-SEC-24b]` (symlink, que o Windows sem privilégio não permite). O preflight sem `.env` **falha de propósito** (`.env` e `data/users.json` ausentes; conectividade pulada) — é o comportamento correto de um computador ainda não configurado.
 
-Antes de alterar código:
+## Investigação manual do CRM (cidade/estado) — resultado
 
-- ler este documento (`CONTINUE-HERE.md`);
-- ler `PROJECT_CONTEXT.md`;
-- ler `RULES.md`;
-- verificar `git status`;
-- verificar `HEAD` (`git rev-parse HEAD`);
-- verificar `origin/main` (`git rev-parse origin/main`) e confirmar que são iguais;
-- executar `npm test`;
-- continuar **somente** a partir da próxima etapa aprovada acima — nunca implementar uma etapa nova sem autorização explícita do proprietário do projeto, mesmo que pareça óbvia.
+Na primeira validação manual real, a ficha de "TESTE CRM Rio X7" mostrou a **cidade vazia** e o **estado como `rj`** (o arquivo tinha `nicho: "clinica"`, `estado: "rj"`, `cidade: null`). Investigação:
+
+- **Não foi reproduzida.** O caminho inteiro (formulário → corpo do POST → CRM-API → Service → domínio → arquivo em disco → GET → ficha) grava e devolve exatamente o que recebe: nenhuma camada muda caixa, tira acento ou descarta a cidade (há testes por camada, e mutações plantadas em cada camada são detectadas). Digitação real no navegador embutido e no Chrome, com o CRM vazio e com dados, também gravou `Clínica`/`Petrópolis`/`RJ` corretamente.
+- **Segunda validação manual real** ("TESTE REDE 02"), com o **Request Payload confirmado no Chrome**: `{ "empresa": "TESTE REDE 02", "nicho": "clinica", "cidade": "Petrópolis", "estado": "rj", "status": "PROSPECT" }` → `201 Created` → a ficha mostrou Cidade "Petrópolis" (e, segundo o relato do proprietário, Estado "RJ"). Ou seja: **a cidade chega à API, é persistida e é recuperada corretamente**.
+- **Conclusão do proprietário:** não há causa raiz reproduzível para o primeiro caso, e a diferença de caixa em nicho/estado vem dos **valores das opções de sugestão** (os campos Nicho, Cidade e Estado oferecem sugestões tiradas dos registros já existentes). **Nenhuma correção de produção foi feita** por causa daquele caso, e a normalização de UF/nicho **não foi alterada**. Se, numa nova conferência, a ficha mostrar uma caixa diferente da que foi enviada (payload no Chrome vs. resposta do `GET /api/crm/:id`), isso é um achado novo — capture os dois antes de mexer no código.
+- **Decisão pendente (não tomada):** padronizar UF (por exemplo, sempre maiúsculas) e nicho. Hoje o sistema **preserva o que foi digitado**, só removendo espaços nas pontas. Se o proprietário quiser padronizar, o lugar certo é uma regra única no domínio (`src/crm`), decidida e documentada — não maquiar só na tela.
+
+**Testes de regressão preservados** (todos passam, sem rede, sem credencial real, sem dado real; os valores são fictícios): `[DASH-FULL-9]` (o caso relatado pela interface, camada por camada, com o CRM vazio, incluindo o arquivo lido cru do disco), `[DASH-FULL-10]` (o mesmo caso direto na API, sem o Dashboard — localiza se um problema futuro é do servidor) e `[DASH-CRM-35]` (as sugestões dos campos nunca reescrevem o que foi digitado, mesmo chegando depois de a pessoa começar a digitar).
+
+## Decisões pendentes que a interface do CRM tornou visíveis (nenhuma resolvida)
+
+A API não informa as transições permitidas (a tela oferece os outros status e o servidor recusa o que não vale); os rótulos dos status são os do domínio, em inglês; a API não tem filtro nem paginação no servidor, nem erro de validação por campo; as recusas de duplicidade/DNC não trazem o id do registro existente; o closer não pode marcar "Não contatar" (não tem `WRITE:CRM`); editar campos não gera histórico; padronização de UF/nicho (acima). Detalhes em [0014](../decisions/0014-crm-service.md), [0015](../decisions/0015-crm-api.md) e no [CHANGELOG.md](../../CHANGELOG.md). **Persistência centralizada** (compartilhar o CRM entre computadores) é uma necessidade futura, ainda não decidida nem implementada: hoje `data/crm.json` é local a cada máquina.
+
+---
+
+## ESTADO ATUAL (2026-09-24)
+
+- CRM-DOMAIN: concluído
+- CRM-SERVICE: concluído
+- CRM-API: concluído
+- CRM-DASHBOARD V1: concluído
+- investigação manual da cidade: **não reproduzida** (sem correção de produção)
+- testes de regressão: concluídos (`DASH-FULL-9`, `DASH-FULL-10`, `DASH-CRM-35`)
+- documentação e handoff para outro computador: concluídos e ensaiados com um clone limpo do `origin/main`
+- **CRM-INTEGRATION: NÃO IMPLEMENTADO**
+- persistência centralizada / sincronização entre computadores: NÃO implementada (necessidade futura)
+
+## PRÓXIMA ETAPA
+
+**CRM-INTEGRATION** — a promoção Approval Queue → CRM (um prospect aprovado vira um registro do CRM).
+
+**Não iniciar esta nem nenhuma outra etapa automaticamente.** Só começa com autorização explícita do proprietário do projeto (Breno Bento).

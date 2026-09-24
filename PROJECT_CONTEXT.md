@@ -40,7 +40,7 @@ Existe, no Notion, uma estrutura organizacional oficial chamada **`RIO-X7-AI-AGE
 
 - **CORE** — base de conhecimento fixo (links para documentos publicados)
 - **SKILLS** — Skills nativas (SDR — Psicologia, Raio-X Engine — Universal)
-- **CRM** — Central Comercial + database Pipeline Comercial
+- **CRM** — Central Comercial + database Pipeline Comercial (no Notion, agora base de conhecimento/histórico: **o CRM operacional é o do próprio sistema desde 2026-09-23** — ver a seção "CRM" abaixo)
 - **SALES** — processo comercial em uso
 - **RAIO-X** — documentos de diagnóstico gerados
 - **CLIENTS** — reservada, vazia (fase futura do roadmap)
@@ -74,7 +74,7 @@ PROSPECTOR
 
 ## Status real do campo `Status` (CRM — Pipeline Comercial)
 
-Confirmado diretamente no schema do database em 2026-09-16. São exatamente **13 valores**:
+Confirmado diretamente no schema do database do Notion em 2026-09-16. São exatamente **13 valores** (os mesmos 13 são hoje o enum de status do CRM operacional próprio — `src/crm/constants.js`, decisões 0012 e 0013):
 
 1. PROSPECT
 2. RESEARCH
@@ -114,6 +114,8 @@ Hipótese nunca deve ser apresentada como fato.
 **Histórico (SUPERADO em 2026-09-23 — ver [decisão 0012](./docs/decisions/0012-crm-operational-source-of-truth.md)):** até esta data, o texto desta seção era *"O CRM central atualmente está no Notion. Não será criado um segundo CRM local neste passo."* Essa decisão foi revogada explicitamente pelo proprietário do projeto.
 
 **Estado atual:** o Rio X7 AI Agency OS passa a ter um CRM operacional próprio, acessível pelo Dashboard (Breno/Rafael), como nova fonte de verdade do Pipeline Comercial — substituindo o Notion nesse papel. O Notion continua como base de conhecimento, documentação e repositório das Skills nativas; uma eventual sincronização entre os dois é decisão futura, não implementada. Ver a decisão 0012 para o racional completo, o princípio de persistência desacoplada e o que ainda não foi implementado.
+
+**Onde está implementado (2026-09-24):** domínio (`src/crm/`), CRM Service (`src/services/crmService.js`), API HTTP (`/api/crm`, `src/server/app.js`) e Dashboard V1 (`dashboard/`: lista, busca, filtros, ficha, histórico, criar, editar, mudar status, "Não contatar"). **Ainda não existe:** a promoção Approval Queue → CRM (CRM-INTEGRATION), Kanban, persistência centralizada (hoje é um arquivo local por computador, `data/crm.json`, fora do Git). O estado detalhado e a próxima etapa estão em [docs/operations/CONTINUE-HERE.md](./docs/operations/CONTINUE-HERE.md).
 
 ## Skills
 

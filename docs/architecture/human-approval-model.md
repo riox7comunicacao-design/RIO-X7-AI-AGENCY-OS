@@ -112,7 +112,7 @@ Requisito arquitetural registrado nesta consolidação — **não implementado**
 
 - Toda conversa conduzida com apoio de IA deve poder existir em um de dois modos: `AI` ou `HUMAN`.
 - Deve ser possível **pausar** e **reativar** a IA numa conversa específica.
-- **O estado (`AI`/`HUMAN`) deve existir na camada de serviço/dados, nunca só na interface.** Um futuro Dashboard não pode simplesmente esconder um botão para "impedir" a IA de agir — o serviço por trás precisa recusar a ação enquanto o modo for `HUMAN`, mesmo que alguém chame a API diretamente. Isso é a mesma regra já aplicada em "Dashboard não deve conter regra crítica de negócio" (ver [data-domains.md](./data-domains.md), princípio de arquitetura de dados).
+- **O estado (`AI`/`HUMAN`) deve existir na camada de serviço/dados, nunca só na interface.** O Dashboard (ou qualquer outra interface) não pode simplesmente esconder um botão para "impedir" a IA de agir — o serviço por trás precisa recusar a ação enquanto o modo for `HUMAN`, mesmo que alguém chame a API diretamente. Isso é a mesma regra já aplicada em "Dashboard não deve conter regra crítica de negócio" (ver [data-domains.md](./data-domains.md), princípio de arquitetura de dados).
 - Toda transição de modo deve gerar auditoria com, no mínimo (refinado em 0008.3): `actor`, `timestamp`, `previousMode`, `newMode`, `motivo/contexto quando disponível` — mesmo princípio de auditoria já usado em `approvalQueue.js` (`historico`), aplicado a um domínio diferente (conversas, não prospects).
 
 Este requisito depende do domínio "Conversas" (ver [data-domains.md](./data-domains.md)), hoje **DECISÃO ARQUITETURAL PENDENTE** — não há schema para implementar isso ainda. **Não implementar agora.**
