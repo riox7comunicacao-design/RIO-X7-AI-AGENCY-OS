@@ -15,6 +15,10 @@
 // `root` e `api` por parâmetro, então roda igual no navegador e em um DOM de teste.
 
 import { h } from '../dom.mjs';
+import { textOf, safeHttpUrl, formatDate, formatDateTime } from '../format.mjs';
+
+// Estas quatro funções puras vivem em ../format.mjs (compartilhadas com as demais telas); continuam exportadas daqui.
+export { textOf, safeHttpUrl, formatDate, formatDateTime };
 
 export const PENDING_ESTADO = 'AGUARDANDO_REVISAO';
 
@@ -64,49 +68,8 @@ const MAX_SOURCES_SHOWN = 50;
 // Funções puras
 // ---------------------------------------------------------------------------
 
-// Um valor de dado vira texto só se for um texto, número ou booleano; qualquer outra coisa (objeto, lista) é ignorada.
-export function textOf(value) {
-  if (typeof value === 'string') return value.trim();
-  if (typeof value === 'number' || typeof value === 'boolean') return String(value);
-  return '';
-}
-
 export function labelForEstado(estado) {
   return ESTADO_LABELS[estado] || textOf(estado) || '—';
-}
-
-// Devolve uma URL http(s) segura ou null. Nunca javascript:, data:, file:, blob:, vbscript:... e nunca URL com
-// usuário/senha. `assumeHttps` (só para o campo "site", que é um domínio por definição) aceita "exemplo.com.br".
-export function safeHttpUrl(value, { assumeHttps = false } = {}) {
-  const raw = textOf(value);
-  if (raw === '' || /\s/.test(raw)) return null;
-  let candidate = raw;
-  if (assumeHttps && !/^[A-Za-z][A-Za-z0-9+.-]*:/.test(raw) && /^[A-Za-z0-9-]+(\.[A-Za-z0-9-]+)+(:\d+)?([/?#].*)?$/.test(raw)) {
-    candidate = `https://${raw}`;
-  }
-  let url;
-  try {
-    url = new URL(candidate);
-  } catch {
-    return null;
-  }
-  if (url.protocol !== 'http:' && url.protocol !== 'https:') return null;
-  if (url.username !== '' || url.password !== '') return null;
-  return url.href;
-}
-
-// "2026-01-15" -> "15/01/2026" (sem fuso horário: é uma data, não um instante).
-export function formatDate(value) {
-  const raw = textOf(value);
-  const match = /^(\d{4})-(\d{2})-(\d{2})/.exec(raw);
-  return match ? `${match[3]}/${match[2]}/${match[1]}` : raw;
-}
-
-export function formatDateTime(value) {
-  const raw = textOf(value);
-  const date = new Date(raw);
-  if (raw === '' || Number.isNaN(date.getTime())) return raw;
-  return date.toLocaleString('pt-BR', { timeZone: 'America/Sao_Paulo', dateStyle: 'short', timeStyle: 'short' });
 }
 
 export function identityStatus(statusIdentidade) {

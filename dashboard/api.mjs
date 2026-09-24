@@ -5,12 +5,20 @@
 // expirada — sem nunca decidir permissão nenhuma. Ele NUNCA envia userId, role ou permissions: o corpo de uma
 // decisão é só { reason }.
 //
+// CRM (CRM-API, decisão 0015): as chamadas de /api/crm passam pelo MESMO caminho — o token da sessão, a renovação
+// única em 401, nenhum efeito em 403. O corpo de uma escrita do CRM só leva campos do registro (a lista fechada de
+// WRITABLE_KEYS) e as duas opções que a API aceita (status inicial e motivo): userId, role, permissions, actor,
+// reviewedBy e qualquer outra chave são RECUSADOS aqui, antes de existir uma requisição — a identidade de quem escreve
+// vem do token, verificada pelo servidor, nunca da interface.
+//
 // SESSÃO EXPIRADA (401): tenta renovar a sessão UMA vez, repete a requisição UMA vez e, se ainda assim falhar (ou se
 // não houver sessão), avisa onSessionLost() e desiste — sem laços. 403 NÃO tenta renovar: a conta autenticou, mas
 // não tem acesso.
 //
 // getAccessToken(): async () => token | null. refreshAccessToken(): async () => token | null (nunca lança).
 // onSessionLost(): a UI volta para o login. fetchImpl: para testes (o padrão é o fetch do navegador).
+
+import { WRITABLE_KEYS } from './crm-model.mjs';
 
 export class ApiError extends Error {
   constructor(status, code, message) {
@@ -36,6 +44,32 @@ async function readApiError(response) {
   }
   return new ApiError(response.status, code, message);
 }
+
+// Os campos de um registro do CRM que vão no corpo: um objeto simples só com chaves de WRITABLE_KEYS. Qualquer outra
+// chave (userId, role, permissions, actor, reviewedBy, status...) é um erro de programação — nunca vai para a rede.
+function crmFields(fields) {
+  if (fields === null || typeof fields !== 'object' || Array.isArray(fields)) throw new Error('crm: os campos devem ser um objeto');
+  const unknown = Object.keys(fields).filter((key) => !WRITABLE_KEYS.includes(key));
+  if (unknown.length > 0) throw new Error(`crm: campo não permitido no corpo: ${unknown.join(', ')}`);
+  return { ...fields };
+}
+
+const CREATE_OPTION_KEYS = Object.freeze(['status', 'reason']);
+
+// As opções da criação: só o status inicial e o motivo da entrada, e só quando preenchidos (texto não vazio).
+function crmCreateOptions(options) {
+  const picked = {};
+  if (options === undefined || options === null) return picked;
+  if (typeof options !== 'object' || Array.isArray(options)) throw new Error('crm: as opções devem ser um objeto');
+  const unknown = Object.keys(options).filter((key) => !CREATE_OPTION_KEYS.includes(key));
+  if (unknown.length > 0) throw new Error(`crm: opção não permitida no corpo: ${unknown.join(', ')}`);
+  for (const key of CREATE_OPTION_KEYS) {
+    if (typeof options[key] === 'string' && options[key].trim() !== '') picked[key] = options[key];
+  }
+  return picked;
+}
+
+const crmPath = (id, suffix = '') => `/api/crm/${encodeURIComponent(id)}${suffix}`;
 
 export function createApiClient({ getAccessToken, refreshAccessToken, onSessionLost, fetchImpl }) {
   const doFetch = fetchImpl || ((...args) => globalThis.fetch(...args));
@@ -84,5 +118,15 @@ export function createApiClient({ getAccessToken, refreshAccessToken, onSessionL
     listApprovals: () => request('GET', '/api/approvals'),
     approve: (prospectId, reason) => request('POST', `/api/approvals/${encodeURIComponent(prospectId)}/approve`, reason ? { reason } : {}),
     reject: (prospectId, reason) => request('POST', `/api/approvals/${encodeURIComponent(prospectId)}/reject`, { reason }),
+
+    // CRM. As escritas são `async`: um corpo recusado por crmFields/crmCreateOptions vira uma promessa rejeitada, como
+    // qualquer outra falha (e nenhuma requisição sai).
+    listCrm: () => request('GET', '/api/crm'),
+    getCrm: (id) => request('GET', crmPath(id)),
+    getCrmHistory: (id) => request('GET', crmPath(id, '/history')),
+    createCrm: async (fields, options) => request('POST', '/api/crm', { ...crmFields(fields), ...crmCreateOptions(options) }),
+    updateCrm: async (id, patch) => request('PATCH', crmPath(id), crmFields(patch)),
+    moveCrmStatus: (id, to, reason) => request('POST', crmPath(id, '/status'), typeof reason === 'string' && reason.trim() !== '' ? { to, reason } : { to }),
+    markCrmDnc: (id, reason) => request('POST', crmPath(id, '/dnc'), typeof reason === 'string' && reason.trim() !== '' ? { reason } : {}),
   };
 }

@@ -5,10 +5,11 @@ Este documento existe para que o projeto **nunca dependa de uma máquina especí
 ## Estado atual (na data deste documento)
 
 - **branch:** `main`
-- **últimos commits de código:** etapa CRM-API — `feat(server): add CRM API ...`, precedido pela etapa CRM-SERVICE (`feat(services): add CRM service ...`) (confira `git log -5 --oneline`; não confie em nenhum hash escrito aqui)
+- **últimos commits de código:** etapa CRM-DASHBOARD — `feat(dashboard): add the CRM interface ...`, precedido pela etapa CRM-API (`feat(server): add CRM API routes ...`) e pela CRM-SERVICE (`feat(services): add CRM service ...`) (confira `git log -5 --oneline`; não confie em nenhum hash escrito aqui)
 - **origin/main:** sincronizado com o commit acima (confirmado por push + `git fetch` antes de escrever este documento)
-- **etapa concluída:** CRM-API, sobre CRM-SERVICE e CRM-DOMAIN (modelo de dados, os 13 status, máquina de estados, DNC, deduplicação, repositório; autorização `READ:CRM`/`WRITE:CRM`; rotas `/api/crm`) — ver [0013](../decisions/0013-crm-domain.md), [0014](../decisions/0014-crm-service.md) e [0015](../decisions/0015-crm-api.md)
-- **próxima etapa:** CRM-DASHBOARD (as telas do CRM sobre as rotas `/api/crm`)
+- **etapa concluída:** CRM-DASHBOARD V1, sobre CRM-API, CRM-SERVICE e CRM-DOMAIN (modelo de dados, os 13 status, máquina de estados, DNC, deduplicação, repositório; autorização `READ:CRM`/`WRITE:CRM`; rotas `/api/crm`; telas do CRM no Dashboard) — ver o [CHANGELOG.md](../../CHANGELOG.md), [0013](../decisions/0013-crm-domain.md), [0014](../decisions/0014-crm-service.md) e [0015](../decisions/0015-crm-api.md)
+- **o Dashboard hoje tem:** Visão Geral, CRM (lista, busca, filtros, ficha, histórico, criar, editar, mudar status, "Não contatar"), Aprovações e Sair. O `ADMIN` lê e escreve no CRM; o `COMMERCIAL_CLOSER` só lê.
+- **próxima etapa:** CRM-INTEGRATION (a promoção Approval Queue → CRM), aguardando autorização
 
 Este próprio documento, e o `CONTINUE-HERE.md` ao lado, são publicados num commit **seguinte** ao de cima (documentação, sem mudança de código) — confira `git log --oneline -5` para o HEAD exato agora.
 
@@ -45,7 +46,7 @@ Node.js **22 ou mais recente** é exigido (`engines.node` em `package.json`; est
 npm test
 ```
 
-Sem nenhuma configuração local, a suíte roda quase inteira (só os testes que exigem `.env`/um token real do Supabase ficam `PENDENTE`, nunca falham). No retrato desta data: **638 testes, 636 passam, 0 falham, 2 pulados** sem `.env`/token real presentes.
+Sem nenhuma configuração local, a suíte roda quase inteira (só os testes que exigem `.env`/um token real do Supabase ficam `PENDENTE`, nunca falham). No retrato desta data: **752 testes, 750 passam, 0 falham, 2 pulados** sem `.env`/token real presentes.
 
 ## Verificação estrutural (preflight)
 
@@ -122,7 +123,11 @@ Nenhum destes é (ou deve ser) versionado — `.gitignore` já cobre todos.
 6. `node --env-file-if-exists=.env scripts/preflight.js` de novo — agora tudo deve estar OK
 7. `npm test`
 8. `npm start` (ou `npm run dev`)
-9. Validar o Dashboard: login real, `/api/me`, aprovações
+9. Validar o Dashboard com o login real (a etapa CRM-DASHBOARD foi conferida só com um serviço de autenticação falso — nenhuma credencial real foi usada; esta conferência é de quem tem as contas):
+   - como `ADMIN` (Breno): entrar; a Visão Geral abre; o menu tem Visão Geral, CRM, Aprovações e Sair; no CRM, criar um registro, achá-lo na busca e nos filtros, abrir a ficha, editar um campo, mudar o status e, num registro de teste, usar "Marcar como Não contatar" (deve mostrar o aviso de ação terminal e exigir a caixa de confirmação); a fila de Aprovações continua abrindo;
+   - como `COMMERCIAL_CLOSER` (Rafael): entrar; ver a lista, buscar, filtrar e abrir a ficha; **nenhum** botão de criar, editar, mudar status ou "Não contatar" (e `#/crm/novo` deve dizer que a conta não pode criar);
+   - "Sair" volta ao login, e abrir `#/crm` sem sessão mostra só o login.
+   Os registros criados ficam em `data/crm.json` (local, fora do Git).
 10. Continuar a partir da próxima etapa aprovada (ver [CONTINUE-HERE.md](./CONTINUE-HERE.md))
 
 ## Acesso remoto / continuidade
@@ -131,4 +136,4 @@ Nenhuma integração de acesso remoto foi criada ou é necessária além do pró
 
 ## Próxima etapa
 
-**CRM-DASHBOARD** — ver [docs/decisions/0015-crm-api.md](../decisions/0015-crm-api.md), seções "Rotas e contratos" e "Limites e decisões pendentes". Não implementado ainda; aguardando autorização.
+**CRM-INTEGRATION** — a promoção Approval Queue → CRM (um prospect aprovado vira um registro do CRM). Não implementado ainda; aguardando autorização explícita do proprietário do projeto. As decisões pendentes que a interface do CRM tornou visíveis estão no [CHANGELOG.md](../../CHANGELOG.md) (entrada "CRM Dashboard V1") e em [0015](../decisions/0015-crm-api.md), seção "Limites e decisões pendentes".
