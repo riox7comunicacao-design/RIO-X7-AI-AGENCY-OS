@@ -23,7 +23,7 @@ const indicadores = (browser) =>
       .filter((cartao) => browser.by.cls(cartao, 'stat').length > 0)
       .map((cartao) => [browser.by.tag(cartao, 'h3')[0].textContent, browser.by.cls(cartao, 'stat')[0].textContent])
   );
-const ZEROS = Object.freeze({ 'Leads no CRM': '0', 'Novos prospects': '0', 'Aprovações pendentes': '0', 'Reuniões': '0', 'Propostas': '0', 'Negociações': '0' });
+const ZEROS = Object.freeze({ 'Leads no CRM': '0', 'Prospects no pipeline': '0', 'Aprovações pendentes': '0', 'Reuniões': '0', 'Propostas': '0', 'Negociações': '0' });
 
 async function montar({ permissions = TUDO, items = [], approvals = [], me = { name: 'Breno Bento' }, now = MANHA } = {}) {
   const { createOverviewView } = await import('../../dashboard/views/overview.mjs');
@@ -46,11 +46,11 @@ test('[DASH-OVERVIEW-1] mostra o total do CRM, a contagem só dos status que exi
   const t = await montar({ items: itens, approvals: [{ prospectId: 'a' }, { prospectId: 'b' }] });
   await t.abrir();
 
-  assert.deepEqual(indicadores(t.browser), { 'Leads no CRM': '4', 'Novos prospects': '1', 'Aprovações pendentes': '2', 'Reuniões': '0', 'Propostas': '0', 'Negociações': '0' });
+  assert.deepEqual(indicadores(t.browser), { 'Leads no CRM': '4', 'Prospects no pipeline': '1', 'Aprovações pendentes': '2', 'Reuniões': '0', 'Propostas': '0', 'Negociações': '0' });
   const linhas = t.browser.by.cls(t.browser.root, 'pipeline-row').map((li) => [t.browser.by.cls(li, 'badge')[0].textContent, t.browser.by.cls(li, 'pipeline-count')[0].textContent]);
   assert.equal(linhas.length, 13, 'o pipeline mostra os 13 status REAIS do domínio, na ordem do funil');
-  assert.deepEqual(linhas.map(([nome]) => nome), ['Prospect', 'Research', 'Qualified Prospect', 'Contacted', 'Responded', 'Qualification', 'Meeting Scheduled', 'Meeting Completed', 'Proposal', 'Negotiation', 'Won', 'Lost', 'Do Not Contact']);
-  assert.deepEqual(Object.fromEntries(linhas.filter(([, n]) => n !== '0')), { Prospect: '1', Contacted: '2', Won: '1' });
+  assert.deepEqual(linhas.map(([nome]) => nome), ['Prospecção', 'Pesquisa', 'Prospect Qualificado', 'Contatado', 'Respondeu', 'Qualificação', 'Reunião Agendada', 'Reunião Realizada', 'Proposta', 'Negociação', 'Ganho', 'Perdido', 'Não Contatar']);
+  assert.deepEqual(Object.fromEntries(linhas.filter(([, n]) => n !== '0')), { 'Prospecção': '1', Contatado: '2', Ganho: '1' });
   assert.match(texto(t.browser), /Bom dia, Breno Bento/);
   assert.match(texto(t.browser), /Central operacional da Rio X7\./);
   assert.match(texto(t.browser), /registros no CRM/);
@@ -145,4 +145,21 @@ test('[DASH-OVERVIEW-6] fill(): ignora null, undefined e false (o replaceChildre
   // O DOM de teste imita o navegador: replaceChildren com algo que não é nó escreve TEXTO — exatamente o erro que fill() evita.
   lista.replaceChildren(null, undefined);
   assert.equal(lista.textContent, 'nullundefined');
+});
+
+test('[DASH-OVERVIEW-7] os nomes em português dos status valem só na Visão Geral: cobrem exatamente os 13 status do domínio (identificadores intactos), um status desconhecido cai no rótulo do CRM, e o CRM segue com os rótulos de sempre', async () => {
+  const { OVERVIEW_STATUS_LABELS, overviewStatusLabel } = await import('../../dashboard/views/overview.mjs');
+  const { CRM_STATUSES, statusLabel } = await import('../../dashboard/crm-model.mjs');
+  assert.deepEqual(Object.keys(OVERVIEW_STATUS_LABELS), CRM_STATUSES.map((status) => status.value), 'mesmos identificadores, mesma ordem do funil');
+  assert.deepEqual(Object.values(OVERVIEW_STATUS_LABELS), ['Prospecção', 'Pesquisa', 'Prospect Qualificado', 'Contatado', 'Respondeu', 'Qualificação', 'Reunião Agendada', 'Reunião Realizada', 'Proposta', 'Negociação', 'Ganho', 'Perdido', 'Não Contatar']);
+  assert.equal(overviewStatusLabel('STATUS_NOVO'), statusLabel('STATUS_NOVO'));
+  assert.equal(overviewStatusLabel('constructor'), statusLabel('constructor'), 'nada herdado do protótipo vira rótulo');
+  assert.equal(statusLabel('PROSPECT'), 'Prospect', 'o rótulo do CRM não mudou');
+
+  const t = await montar({ items: [], approvals: [] });
+  await t.abrir();
+  const cartao = t.browser.by.cls(t.browser.root, 'kpi').find((c) => t.browser.by.tag(c, 'h3')[0].textContent === 'Prospects no pipeline');
+  assert.ok(cartao, 'o cartão se chama "Prospects no pipeline"');
+  assert.equal(t.browser.by.cls(cartao, 'kpi-sub')[0].textContent, 'registros no status Prospecção');
+  assert.doesNotMatch(texto(t.browser), /Novos prospects/);
 });

@@ -1,8 +1,8 @@
 // Tela VISÃO GERAL — a central operacional: indicadores, pipeline comercial e atividade recente.
 //
 // Só mostra dados que as rotas que já existem devolvem (GET /api/crm e GET /api/approvals): nenhum número inventado e nenhum
-// status novo. Os indicadores do CRM são contagens dos status REAIS do domínio (Prospect, Meeting Scheduled, Proposal,
-// Negotiation); a atividade recente são os eventos REAIS do histórico dos registros do CRM. Sem dado, um estado vazio — nunca
+// status novo. Os indicadores do CRM são contagens dos status REAIS do domínio (Prospecção, Reunião Agendada, Proposta,
+// Negociação); a atividade recente são os eventos REAIS do histórico dos registros do CRM. Sem dado, um estado vazio — nunca
 // um número de enfeite.
 //
 // Cada indicador só aparece se a conta tem a área correspondente (`permissions`, do que /api/me devolveu) — uma
@@ -15,6 +15,29 @@ import { buildHash } from '../router.mjs';
 import { countByStatus, messageForCrmError, statusLabel, statusTone } from '../crm-model.mjs';
 
 const MAX_ACTIVITY = 8;
+
+// Os NOMES, em português, dos status do CRM — só para a Visão Geral. Os identificadores (PROSPECT, WON...) são os do domínio e
+// não mudam; o CRM e as Aprovações continuam mostrando os rótulos de crm-model.mjs. Um status que não esteja aqui cai no
+// rótulo de crm-model (nunca fica em branco).
+export const OVERVIEW_STATUS_LABELS = Object.freeze({
+  PROSPECT: 'Prospecção',
+  RESEARCH: 'Pesquisa',
+  QUALIFIED_PROSPECT: 'Prospect Qualificado',
+  CONTACTED: 'Contatado',
+  RESPONDED: 'Respondeu',
+  QUALIFICATION: 'Qualificação',
+  MEETING_SCHEDULED: 'Reunião Agendada',
+  MEETING_COMPLETED: 'Reunião Realizada',
+  PROPOSAL: 'Proposta',
+  NEGOTIATION: 'Negociação',
+  WON: 'Ganho',
+  LOST: 'Perdido',
+  DO_NOT_CONTACT: 'Não Contatar',
+});
+
+export function overviewStatusLabel(value) {
+  return Object.prototype.hasOwnProperty.call(OVERVIEW_STATUS_LABELS, value) ? OVERVIEW_STATUS_LABELS[value] : statusLabel(value);
+}
 
 // "Bom dia" até 11h59, "Boa tarde" até 17h59, "Boa noite" depois (a hora é a de Brasília).
 export function greetingFor(hour) {
@@ -98,7 +121,7 @@ export function createOverviewView({ document, root, api, me, permissions, now =
     const total = crm.items.length;
     return [
       kpi({ id: 'leads', title: 'Leads no CRM', value: total, sub: plural(total, 'registro no CRM', 'registros no CRM'), link: { href: buildHash({ name: 'crm-list' }), text: 'Abrir CRM' } }),
-      kpi({ id: 'prospects', title: 'Novos prospects', value: counts.get('PROSPECT') || 0, sub: 'no status Prospect' }),
+      kpi({ id: 'prospects', title: 'Prospects no pipeline', value: counts.get('PROSPECT') || 0, sub: `registros no status ${overviewStatusLabel('PROSPECT')}` }),
     ];
   }
 
@@ -123,9 +146,9 @@ export function createOverviewView({ document, root, api, me, permissions, now =
     if (crm.status !== 'ready') return [];
     const counts = new Map(countByStatus(crm.items).map((status) => [status.value, status.count]));
     return [
-      kpi({ id: 'meetings', title: 'Reuniões', value: counts.get('MEETING_SCHEDULED') || 0, sub: 'no status Meeting Scheduled' }),
-      kpi({ id: 'proposals', title: 'Propostas', value: counts.get('PROPOSAL') || 0, sub: 'no status Proposal' }),
-      kpi({ id: 'negotiations', title: 'Negociações', value: counts.get('NEGOTIATION') || 0, sub: 'no status Negotiation' }),
+      kpi({ id: 'meetings', title: 'Reuniões', value: counts.get('MEETING_SCHEDULED') || 0, sub: `no status ${overviewStatusLabel('MEETING_SCHEDULED')}` }),
+      kpi({ id: 'proposals', title: 'Propostas', value: counts.get('PROPOSAL') || 0, sub: `no status ${overviewStatusLabel('PROPOSAL')}` }),
+      kpi({ id: 'negotiations', title: 'Negociações', value: counts.get('NEGOTIATION') || 0, sub: `no status ${overviewStatusLabel('NEGOTIATION')}` }),
     ];
   }
 
@@ -137,7 +160,7 @@ export function createOverviewView({ document, root, api, me, permissions, now =
     if (total === 0) {
       body = el('p', { className: 'empty-state', text: 'Ainda não há registros.' });
     } else {
-      const stages = countByStatus(crm.items);
+      const stages = countByStatus(crm.items).map((stage) => ({ ...stage, label: overviewStatusLabel(stage.value) }));
       body = el(
         'ul',
         { className: 'plain pipeline' },
@@ -171,8 +194,8 @@ export function createOverviewView({ document, root, api, me, permissions, now =
             { className: 'plain activity' },
             ...events.map(({ record, entry }) => {
               const company = textOf(record.empresa) || 'Sem nome';
-              const to = statusLabel(entry.to);
-              const change = entry.from ? `${statusLabel(entry.from)} → ${to}` : `Registro criado como ${to}`;
+              const to = overviewStatusLabel(entry.to);
+              const change = entry.from ? `${overviewStatusLabel(entry.from)} → ${to}` : `Registro criado como ${to}`;
               const who = entry.actor === 'HUMAN' && entry.reviewedBy && typeof entry.reviewedBy === 'object' ? textOf(entry.reviewedBy.name) || 'Equipe' : 'Sistema';
               const id = textOf(record.id);
               return el(
@@ -198,7 +221,7 @@ export function createOverviewView({ document, root, api, me, permissions, now =
     const name = me && typeof me.name === 'string' ? textOf(me.name) : '';
     const greeting = greetingFor(brasiliaHour(now()));
     const cards = [...crmKpis().slice(0, 2), ...approvalsKpi(), ...crmStageKpis()];
-    // ordem dos indicadores: Leads, Novos prospects (CRM), Aprovações pendentes, e as três etapas do CRM (Reuniões, Propostas, Negociações)
+    // ordem dos indicadores: Leads, Prospects no pipeline (CRM), Aprovações pendentes, e as três etapas do CRM (Reuniões, Propostas, Negociações)
     const panels = state.crm.status === 'ready' ? [pipelineCard(), activityCard()] : [];
     fill(
       root,

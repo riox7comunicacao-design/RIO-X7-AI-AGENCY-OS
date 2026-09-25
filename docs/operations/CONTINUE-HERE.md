@@ -45,8 +45,8 @@ npm start
 
 | Onde | Total | Passam | Falham | Pulados |
 |---|---|---|---|---|
-| Neste computador, com `.env` | 883 | 881 | 0 | 2 |
-| Sem `.env` e sem `data/*.json` (um clone limpo) | 883 | 876 | 0 | 7 |
+| Neste computador, com `.env` | 884 | 882 | 0 | 2 |
+| Sem `.env` e sem `data/*.json` (um clone limpo) | 884 | 877 | 0 | 7 |
 
 Nenhuma falha. Os pulados são esperados: sem `.env` (5 testes de conectividade/autenticação contra o Supabase real), o `[REAL-2]` (só roda com `RIO_X7_TEST_ACCESS_TOKEN`, um token real de teste) e o `[SRV-SEC-24b]` (symlink, que o Windows sem privilégio não permite). O preflight sem `.env` **falha de propósito** (`.env` e `data/users.json` ausentes; conectividade pulada) — é o comportamento correto de um computador ainda não configurado.
 

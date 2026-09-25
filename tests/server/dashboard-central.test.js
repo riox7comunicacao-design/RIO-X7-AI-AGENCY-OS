@@ -135,9 +135,9 @@ test('[DASH-CENTRAL-4] a atividade recente são os eventos REAIS do histórico d
   assert.equal(linhas.length, 2);
   assert.equal(t.browser.by.tag(linhas[0], 'a')[0].href, '#/crm/registro/crm%3Az');
   assert.match(linhas[0].textContent, /Clínica Zeta/);
-  assert.match(linhas[0].textContent, /Prospect → Contacted/);
+  assert.match(linhas[0].textContent, /Prospecção → Contatado/);
   assert.match(linhas[0].textContent, /Breno Bento/);
-  assert.match(linhas[1].textContent, /Registro criado como Prospect/);
+  assert.match(linhas[1].textContent, /Registro criado como Prospecção/);
 });
 
 test('[DASH-CENTRAL-5] nenhum dado sensível na tela: nem o token da sessão, nem o authUserId, nem chaves — no painel inteiro e na Central de Agentes', async () => {

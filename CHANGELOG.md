@@ -1,5 +1,14 @@
 # Changelog
 
+## 2026-09-25 — Dashboard V1.1: rótulos da Visão Geral
+
+Refinamento visual **só da Visão Geral**; backend, API, permissões, CRM, Approval Queue, CRM/Aprovações (telas), Central de Agentes e o tamanho da tela não mudaram, e nenhum card novo foi criado.
+
+- O indicador "Novos prospects" (que conta registros no status `PROSPECT`) passou a **"Prospects no pipeline"**, com o apoio "registros no status Prospecção". O identificador interno não mudou.
+- Os 13 status do pipeline ganharam nomes em português **só na Visão Geral** (`PROSPECT`→Prospecção, `RESEARCH`→Pesquisa, `QUALIFIED_PROSPECT`→Prospect Qualificado, `CONTACTED`→Contatado, `RESPONDED`→Respondeu, `QUALIFICATION`→Qualificação, `MEETING_SCHEDULED`→Reunião Agendada, `MEETING_COMPLETED`→Reunião Realizada, `PROPOSAL`→Proposta, `NEGOTIATION`→Negociação, `WON`→Ganho, `LOST`→Perdido, `DO_NOT_CONTACT`→Não Contatar). Os mesmos nomes aparecem nas outras linhas da própria Visão Geral que citam um status (o apoio dos indicadores de Reuniões, Propostas e Negociações e a atividade recente), para não misturar idiomas na mesma tela. O CRM e as Aprovações seguem com os rótulos de antes (`crm-model.mjs` não foi alterado).
+- **Testes:** 1 novo (`DASH-OVERVIEW-7`: os nomes cobrem exatamente os 13 status do domínio, um desconhecido cai no rótulo do CRM, o CRM não mudou) e asserções ajustadas só para os nomes novos (`DASH-OVERVIEW-1/2/4/5`, `DASH-SHELL-13`, `DASH-CENTRAL-4`) — 884 no total: 882 passam e 2 pulados com `.env`; 877 e 7 pulados sem `.env`; 0 falhas. Validada visualmente com dados fictícios.
+- **Não feito, de propósito:** agenda/próximas ações. Os registros de validação já existentes (TESTE REDE 02, TESTE PAYLOAD 01, TESTE CRM Rio X7) **não foram tocados**; a limpeza será feita à parte.
+
 ## 2026-09-25 — Dashboard V1: a Central Operacional (evolução visual)
 
 Primeira versão visual profissional do Dashboard, a **RIO X7 · AI AGENCY OS — Central Operacional**. Etapa de **UX/UI**: nenhum backend, regra do CRM, Approval Queue, autenticação, permissão ou rota da API foi alterado; nenhuma dependência nova; nenhum CDN; o CSP, o `no-store`, o `textContent` e a ausência de token/`authUserId` na tela continuam valendo. Tudo o que já funcionava (login, CRM, Aprovações, promoção) foi preservado.

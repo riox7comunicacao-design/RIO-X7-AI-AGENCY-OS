@@ -267,12 +267,12 @@ test('[DASH-SHELL-13] navegação: cada item do menu abre a sua tela e fica marc
   assert.deepEqual(ativo(t.browser), ['Visão Geral']);
   assert.match(textoDaTela(t.browser), /Visão Geral/);
   const indicadores = Object.fromEntries(t.browser.by.cls(t.browser.root, 'kpi').map((cartao) => [t.browser.by.tag(cartao, 'h3')[0].textContent, (t.browser.by.cls(cartao, 'stat')[0] || {}).textContent]));
-  assert.deepEqual(indicadores, { 'Leads no CRM': '2', 'Novos prospects': '0', 'Aprovações pendentes': '1', 'Reuniões': '0', 'Propostas': '0', 'Negociações': '0' }, 'a Visão Geral mostra o total do CRM (de GET /api/crm), a fila (de GET /api/approvals) e as etapas do CRM');
+  assert.deepEqual(indicadores, { 'Leads no CRM': '2', 'Prospects no pipeline': '0', 'Aprovações pendentes': '1', 'Reuniões': '0', 'Propostas': '0', 'Negociações': '0' }, 'a Visão Geral mostra o total do CRM (de GET /api/crm), a fila (de GET /api/approvals) e as etapas do CRM');
   assert.match(textoDaTela(t.browser), /registros no CRM/);
   assert.match(textoDaTela(t.browser), /prospect aguardando revisão/);
   const pipeline = Object.fromEntries(t.browser.by.cls(t.browser.root, 'pipeline-row').map((linha) => [t.browser.by.cls(linha, 'badge')[0].textContent, t.browser.by.cls(linha, 'pipeline-count')[0].textContent]));
-  assert.equal(pipeline.Contacted, '1');
-  assert.equal(pipeline.Won, '1');
+  assert.equal(pipeline.Contatado, '1');
+  assert.equal(pipeline.Ganho, '1');
 
   t.browser.click(t.browser.by.link(t.browser.root, 'CRM'));
   await t.browser.flush();

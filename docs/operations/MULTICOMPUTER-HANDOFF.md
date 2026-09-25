@@ -93,8 +93,8 @@ Ensaio feito em 2026-09-24 num diretório temporário, só com os arquivos versi
 | `npm ci` | 9 pacotes instalados (a única dependência direta é `@supabase/supabase-js`), 0 vulnerabilidades, ~10 s |
 | `preflight` **sem** `.env` | **4 falhas e 1 aviso** (`.env` ausente, `SUPABASE_URL`, `SUPABASE_ANON_KEY` e `data/users.json` ausentes; conectividade pulada), código de saída 1 — **esperado**: o computador ainda não está configurado |
 | `preflight` **com** `.env` e `data/users.json` | 14 verificações, **0 falhas**, 0 avisos (inclui uma checagem real, só leitura e sem login, do Supabase) |
-| `npm test` **sem** `.env` | **883 testes: 876 passam, 0 falham, 7 pulados** |
-| `npm test` **com** `.env` | **883 testes: 881 passam, 0 falham, 2 pulados** |
+| `npm test` **sem** `.env` | **884 testes: 877 passam, 0 falham, 7 pulados** |
+| `npm test` **com** `.env` | **884 testes: 882 passam, 0 falham, 2 pulados** |
 
 Os pulados são esperados: sem `.env`, 5 testes de conectividade/autenticação contra o Supabase real; o `[REAL-2]` (só roda com `RIO_X7_TEST_ACCESS_TOKEN`, um token real de um usuário de **teste** — opcional); e o `[SRV-SEC-24b]` (symlink, que o Windows sem privilégio não permite). Qualquer **falha** é um problema real, nunca esperado.
 
