@@ -4,6 +4,8 @@
 
 Implementado em 2026-09-25, etapa CRM-INTEGRATION, sobre [0007](./0007-human-approval-queue.md), [0009](./0009-identity-roles-and-authorization-model.md), [0012](./0012-crm-operational-source-of-truth.md), [0013](./0013-crm-domain.md), [0014](./0014-crm-service.md) e [0015](./0015-crm-api.md). É só a camada de **serviços** (mais a auditoria no domínio da fila): **nenhuma rota HTTP, nenhum Dashboard, nenhuma permissão nova, nenhuma dependência nova**. A API, o Dashboard, o domínio do CRM e o CRM Service não foram alterados.
 
+> **Atualização de estado (2026-09-25, preservando o texto acima como registro da etapa original):** a exposição pela rota `POST /api/approvals/:id/promote` e pela ação "Promover para CRM" no Dashboard foi feita depois, no commit `2c3abbf` (ver "Limites e decisões pendentes"); e a auditoria de concorrência posterior corrigiu o que esta decisão dizia sobre a corrida entre processos (ver "Concorrência entre processos — auditoria e correção deste documento").
+
 ## O que decide esta etapa
 
 Um prospect que um humano **aprovou** na Approval Queue (`APROVADO_PARA_CRM`) pode ser **promovido** para o CRM por uma operação nova, explícita e nunca automática — de forma segura, rastreável e idempotente. A fila continua sendo a barreira humana; o CRM continua sendo o dono da identidade, da deduplicação e do DNC.
@@ -134,7 +136,60 @@ Nenhuma falha parcial cria um estado impossível: o CRM é gravado antes da fila
 ## Concorrência — o que se garante e o que **não** se garante
 
 - **Dentro de um processo**, `promoteProspect` é síncrona de ponta a ponta e, portanto, indivisível: duas chamadas quase simultâneas se enfileiram; uma cria, a outra vê `JA_PROMOVIDO`.
-- **Entre processos, não há garantia.** Os arquivos não têm trava nem transação (e não há transação entre **dois** arquivos), e nada disso foi fingido. Se outro processo concluir a promoção entre a leitura e a criação, para um prospect com **identidade forte** o domínio do CRM barra a segunda criação (um registro só, tentativa perdedora auditada). Para um prospect **só com nome e cidade** (sem site, telefone, WhatsApp nem Instagram) **não existe barreira**: pode nascer um registro duplicado. A fila recusa ligá-lo (`PROMOTION_INCONSISTENT`, com o id do duplicado e auditoria) — mas como o CRM não tem exclusão, o duplicado precisa de **revisão humana**. Um único processo servidor é o pressuposto desta persistência de desenvolvimento (0012–0014); o limite tem teste (`INT-42`) e só muda com uma persistência transacional (Supabase/Postgres — candidato, não decidido).
+- **Entre processos, não há garantia — e a identidade forte NÃO a fornece.** Os arquivos não têm trava, versão nem transação (e não há transação entre **dois** arquivos). Duas promoções realmente simultâneas de processos diferentes podem se sobrescrever (perda de atualização), com as duas partes recebendo `CRIADO`; um registro duplicado também é possível pelo desenho. Isso vale para qualquer escrita, não só para a promoção. Um único processo servidor por pasta de dados é o pressuposto (regra operacional temporária); o detalhe, o experimento e a classificação do risco estão em "Concorrência entre processos — auditoria e correção deste documento" abaixo. O teste `INT-42` simula o entrelaçamento em um único processo e continua válido para isso.
+
+> *Texto original desta linha (superado, mantido como histórico):* "Se outro processo concluir a promoção entre a leitura e a criação, para um prospect com identidade forte o domínio do CRM barra a segunda criação (um registro só, tentativa perdedora auditada). Para um prospect só com nome e cidade não existe barreira: pode nascer um registro duplicado."
+
+## Concorrência entre processos — auditoria e correção deste documento (2026-09-25)
+
+Uma auditoria técnica, feita depois da exposição pelo Dashboard (`2c3abbf`), **testou de verdade** a corrida entre processos e mostrou que o texto original desta decisão sobre o assunto estava **errado num ponto**. O texto original é preservado abaixo, marcado como superado; o que vale é esta seção.
+
+**O que o texto original afirmava (superado):** que, entre dois processos, um prospect com identidade forte (site, telefone, WhatsApp ou Instagram) fica protegido porque "o domínio do CRM barra a segunda criação (um registro só, tentativa perdedora auditada)", e que só um prospect com apenas nome e cidade poderia gerar duplicata. **Isso não é uma garantia.** A identidade forte só funciona se o segundo processo *ler* o CRM depois de o primeiro *gravar*; numa chamada realmente simultânea ele lê antes, e a deduplicação (verificar e depois gravar, `crmDomain.createRecord`) não enxerga o outro. O teste `INT-41`/`INT-42` simula esse entrelaçamento em um único processo e continua válido para o que simula, mas não cobre a perda de atualização abaixo.
+
+**O experimento (real, sem alterar o projeto):** dois processos Node independentes, sobre a **mesma** fila e o **mesmo** CRM (arquivos temporários, dados fictícios), promovendo o mesmo prospect aprovado, com uma barreira de tempo e uma defasagem controlada entre os dois; 20 rodadas por configuração.
+
+| Defasagem entre os dois processos | O que aconteceu |
+|---|---|
+| 0 ms (identidade forte) | Os **dois** retornaram `CRIADO`, com ids diferentes, mas o CRM ficou com **um** registro: a gravação de um processo sobrescreveu a do outro (**perda de atualização**, "o último a gravar vence"). Quem perdeu foi avisado de que criou um registro que não existe. Em uma rodada houve `EPERM` no `rename` do arquivo (Windows), que chega ao usuário como erro 500. |
+| ~5 ms (identidade forte) | Em 6 de 20 rodadas o perdedor foi **barrado como duplicado** pelo domínio (a barreira funcionou), mas a auditoria dele na fila (gravada a partir de uma leitura antiga) **sobrescreveu** a do vencedor: o registro existe no CRM e a fila ficou **sem `promocao`** (o **marcador de promoção na fila foi perdido**). Isso se cura sozinho: repetir a promoção acha o registro pelo marcador da criação e devolve `RECONCILIADO`, sem duplicar. |
+| ≥ ~15 ms | Correto e idempotente: `CRIADO` + `JA_PROMOVIDO`, sem problema (20 de 20 e 20 de 20). |
+| 0 ms (só nome e cidade) | Igual ao caso de 0 ms com identidade forte: os dois `CRIADO`, um registro só. |
+
+Conclusões dos dados: (1) a janela é de ordem de **~10 ms**; (2) o modo de falha observado é **perda silenciosa de atualização** (um registro do CRM ou o `promocao` da fila), com o retorno `CRIADO` para as duas partes — **não** foi visto um registro duplicado em cerca de 100 rodadas, embora o desenho o permita; (3) a mesma falha vale para **qualquer** escrita (aprovar, rejeitar, criar e editar no CRM): a promoção só a herda, porque cada operação lê o arquivo **inteiro** e o regrava **inteiro**.
+
+**Três propriedades que não podem ser confundidas:**
+
+| Propriedade | O que garante | O que **não** garante | Estado |
+|---|---|---|---|
+| **Atomicidade da escrita** (arquivo temporário + `fsync` + `rename`, na fila e no CRM) | O arquivo nunca fica truncado ou pela metade | Que duas escritas não se atropelem | Existe |
+| **Idempotência e reconciliação** (`item.promocao`, marcador com o id do prospect no motivo da criação, repetir a promoção) | Que **uma sequência** de chamadas, ou uma falha entre os dois arquivos, não duplique nem deixe a promoção pela metade | Nada contra duas chamadas **simultâneas** de processos diferentes | Existe |
+| **Concorrência entre processos** (trava, versão ou transação) | Que dois escritores simultâneos não se sobrescrevam | — | **Não existe** (nem na fila, nem no CRM) |
+
+**Classificação do risco:**
+
+- **A — risco teórico/muito baixo no cenário atual.** Um único processo servidor atende a pasta de dados; dentro dele tudo é síncrono (sem corrida, verificado por `PROMO-API-5`); nada mais escreve na fila ou no CRM (o `seed-dev-queue.js` recusa a fila real; não existe Prospector, SDR nem job agendado). A corrida exige dois processos sobre os mesmos arquivos com menos de ~10 ms de diferença.
+- **B — risco operacional relevante assim que existir um segundo escritor** (por exemplo, um Prospector como processo separado regravando a fila enquanto uma pessoa aprova, um job agendado, ou dois servidores sobre a mesma pasta). O gatilho mais provável e mais grave é a **perda de uma decisão de aprovação**, não a promoção.
+- **Não é C hoje:** não precisa ser resolvido antes de continuar o desenvolvimento, **desde que** a regra operacional abaixo seja respeitada e nenhum segundo escritor seja criado antes de resolver a persistência.
+
+**Regra operacional temporária (vale até a persistência ser decidida):** **um servidor por pasta de dados** (nunca dois processos gravando os mesmos `data/*.json`). Não subir dois servidores sobre a mesma fila/CRM, não rodar scripts que gravem na fila ou no CRM reais enquanto o servidor está no ar, e não pôr `data/` em pasta sincronizada por dois computadores ao mesmo tempo.
+
+**Decisão: um lock específico da promoção NÃO será implementado agora.** Motivos: ele protegeria só uma das operações (aprovar, rejeitar e as edições do CRM continuariam vulneráveis); a correção real é **genérica, no armazenamento** — um lock em todos os escritores dos dois arquivos (com ordem fixa e tratamento de lock órfão no Windows) ou, definitivamente, uma persistência transacional com restrição de unicidade (candidato: Supabase/Postgres, ainda não decidido), que também resolve a divergência entre computadores; e um lock em arquivo seria código descartável quando a persistência mudar. Antes de qualquer segundo escritor existir (Prospector como processo próprio, job agendado, dois servidores), a decisão de persistência/concorrência **precisa** ser tomada pelo proprietário. Não fazem parte desta decisão: chave de idempotência vinda do cliente, versionamento otimista sob medida, nem nova dependência.
+
+**Outros riscos apontados pela auditoria (não tratados aqui):** o CRM é um único `data/crm.json` local, sem backup, sem exclusão e sem exportação; os dados são locais a cada computador (cada pessoa teria o seu CRM); e o `EPERM` observado no Windows (rename sobre um arquivo que outro processo, antivírus ou backup segura) aparece como erro 500 ao usuário.
+
+**O que continua verdadeiro e o que foi superado dos limites da 0016:**
+
+| Limite registrado | Estado após `2c3abbf` e esta auditoria |
+|---|---|
+| "Sem rota e sem Dashboard" | **Superado** por `2c3abbf` (rota `POST /api/approvals/:id/promote` e ação "Promover para CRM"). |
+| "Identidade forte impede a corrida entre processos" | **Incorreto** (ver acima); substituído por esta seção. |
+| "Só nome e cidade pode gerar registro duplicado" | **Incompleto**: o modo de falha observado é perda de atualização; a duplicata continua possível pelo desenho. |
+| Sem trava entre processos / um processo servidor é o pressuposto | **Continua verdadeiro** (agora como regra operacional explícita). |
+| O snapshot pode mudar depois da aprovação | Continua verdadeiro. |
+| `googlePerfil` não chega ao CRM | Continua verdadeiro. |
+| Perda do CRM com a fila intacta é recuperação manual | Continua verdadeiro. |
+| Auditoria de bloqueios cresce | Continua verdadeiro. |
+| Persistência centralizada é necessidade futura, não decidida | Continua verdadeiro — e agora é também a resposta definitiva à concorrência. |
 
 ## Segurança — auditoria e resultado
 
@@ -151,7 +206,7 @@ Nenhuma falha parcial cria um estado impossível: o CRM é gravado antes da fila
 - **O snapshot pode mudar depois da aprovação:** a redescoberta atualiza o `discoverySnapshot` mesmo de um item terminal, então a promoção usa os dados **atuais** da fila, não os do momento da aprovação. Congelar o que foi aprovado exigiria mudar a aprovação na fila — decisão futura.
 - **`googlePerfil` não chega ao CRM:** a pesquisa o produz, mas `sanitizeSnapshot` da fila não o guarda (`fontes` pode citar o Google Maps). Corrigir é uma mudança no snapshot da fila — decisão futura.
 - **Perda do CRM com a fila intacta:** se `data/crm.json` se perder e a fila disser "promovido", a promoção falha claramente (`INCONSISTENT`) em vez de recriar; recuperar é ação manual (remover o `promocao` do item) até existir uma operação administrativa — decisão futura.
-- **Registro duplicado por corrida entre processos** (acima): sem exclusão no CRM, é revisão humana.
+- **Corrida entre processos** (risco A hoje, B com um segundo escritor; ver a seção de auditoria): perda de atualização e, pelo desenho, registro duplicado; sem exclusão no CRM, é revisão humana. Regra operacional temporária: **um servidor por pasta de dados** (nunca dois processos gravando os mesmos `data/*.json`). Nenhum lock específico da promoção será implementado agora.
 - **Auditoria de bloqueios** cresce a cada tentativa bloqueada (só um ADMIN as dispara).
 - **Persistência centralizada** (compartilhar CRM e fila entre computadores) segue como necessidade futura, ainda não decidida.
 - Continuam valendo as decisões pendentes de 0014/0015 (o closer não marca DNC; editar campos não gera histórico; sem filtros no servidor; etc.).

@@ -158,6 +158,10 @@ Os registros criados ficam em `data/crm.json` (local, fora do Git).
 
 Nenhuma integração de acesso remoto foi criada ou é necessária além do próprio GitHub — o repositório é a única fonte compartilhada entre computadores. O Dashboard não deve ser exposto além de `127.0.0.1` sem um proxy HTTPS deliberado na frente (não configurado, não recomendado nesta etapa). Nenhum túnel público, porta aberta ou "porta dos fundos" para o Claude foi criado.
 
+## Regra operacional temporária: um servidor por pasta de dados
+
+A fila e o CRM são arquivos JSON sem trava entre processos ([0016](../decisions/0016-crm-integration.md), seção de auditoria da concorrência): dois processos gravando os mesmos `data/*.json` ao mesmo tempo podem se sobrescrever. Por isso, **um servidor por pasta de dados** (nunca dois processos gravando os mesmos `data/*.json`): não suba dois servidores sobre a mesma pasta, não rode scripts que gravem na fila ou no CRM reais com o servidor no ar e não sincronize `data/` entre computadores em uso simultâneo. Cada computador tem os seus próprios dados (não compartilhados).
+
 ## Próxima etapa
 
 **Ainda não definida:** o proprietário decide depois de revisar a promoção Approval Queue → CRM pelo Dashboard ([0016](../decisions/0016-crm-integration.md)): o ADMIN promove um prospect aprovado pela tela Aprovações; o closer aprova, mas não promove. Nenhuma etapa começa sem autorização explícita. O estado completo e as decisões pendentes estão no [CONTINUE-HERE.md](./CONTINUE-HERE.md) e no [CHANGELOG.md](../../CHANGELOG.md).

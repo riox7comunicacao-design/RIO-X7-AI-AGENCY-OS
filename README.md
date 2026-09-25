@@ -24,7 +24,7 @@ Navegador → Dashboard (dashboard/) → HTTP /api/* (src/server) → Services (
 
 **Implementado e testado:** login com Supabase, Dashboard, fila de aprovação humana, o CRM completo da primeira versão (domínio → Service → API → Dashboard: lista, busca, filtros, ficha, histórico, criar, editar, mudar status, "Não contatar") e a **promoção controlada Approval Queue → CRM** (`src/services/crmIntegrationService.js`: só prospects aprovados por um humano, idempotente, com auditoria nos dois lados — pelo serviço, pela rota e pelo botão "Promover para CRM" da tela Aprovações; ver a [decisão 0016](./docs/decisions/0016-crm-integration.md)).
 
-**Ainda não implementado:** Kanban do CRM, SDR, outbound, WhatsApp, prospecção automática, IA nos especialistas e **persistência centralizada** — hoje os dados operacionais (`data/*.json`) são locais a cada computador e não são sincronizados.
+**Ainda não implementado:** Kanban do CRM, SDR, outbound, WhatsApp, prospecção automática, IA nos especialistas e **persistência centralizada** — hoje os dados operacionais (`data/*.json`) são locais a cada computador e não são sincronizados. Regra operacional temporária: **um servidor por pasta de dados** (nunca dois processos gravando os mesmos `data/*.json`) — os arquivos não têm trava entre processos (ver a [decisão 0016](./docs/decisions/0016-crm-integration.md)).
 
 ## Como iniciar e testar
 
