@@ -12,6 +12,7 @@
 const { createCandidate } = require('./candidate');
 const { checkDuplicate } = require('./duplicateCheck');
 const { checkDoNotContact } = require('./doNotContact');
+const { identityViews, toProspectorRecords } = require('./crmAdapter');
 const { INFO_STATUS, DUPLICATE_STATUS } = require('./constants');
 
 const OPERATIONAL_STATE = Object.freeze({
@@ -152,9 +153,19 @@ function toDedupeCandidate(identifiedFinding) {
   });
 }
 
-// Etapa 6 — DUPLICATE CHECK: reaproveita checkDuplicate() sem nenhuma alteração.
+// Etapa 6 — DUPLICATE CHECK: reaproveita checkDuplicate() sem nenhuma alteração. Os registros do CRM passam por
+// crmAdapter (que os traduz para o formato das checagens e separa cada número — telefone/WhatsApp — em uma visão), e cada
+// visão do CANDIDATO é comparada: assim um número guardado no campo "errado", de qualquer dos dois lados, também é achado.
+// Ordem de gravidade do resultado: DUPLICADO, depois POSSIVEL_DUPLICADO, depois NOVO; NAO_VERIFICADO só se nenhum
+// critério pôde ser verificado.
 function runDuplicateCheck(candidate, crmRecords) {
-  return checkDuplicate(candidate, crmRecords);
+  const registros = toProspectorRecords(crmRecords);
+  const resultados = identityViews(candidate).map((view) => checkDuplicate(view, registros));
+  const duplicado = resultados.find((resultado) => resultado.status === DUPLICATE_STATUS.DUPLICADO);
+  if (duplicado) return duplicado;
+  const possivel = resultados.find((resultado) => resultado.status === DUPLICATE_STATUS.POSSIVEL_DUPLICADO);
+  if (possivel) return possivel;
+  return resultados.every((resultado) => resultado.status === DUPLICATE_STATUS.NAO_VERIFICADO) ? resultados[0] : resultados.find((resultado) => resultado.status === DUPLICATE_STATUS.NOVO);
 }
 
 // Etapa 7 — DO NOT CONTACT CHECK: reaproveita checkDoNotContact() sem alteração.
@@ -164,8 +175,10 @@ function runDncCheck(candidate, crmRecords, crmDisponivel) {
   if (!crmDisponivel) {
     return { status: DNC_STATUS.NAO_VERIFICADO };
   }
-  const result = checkDoNotContact(candidate, crmRecords);
-  return { status: result.doNotContact ? DNC_STATUS.BLOQUEADO : DNC_STATUS.NAO_ENCONTRADO };
+  // O DNC do CRM (status DO_NOT_CONTACT) só é reconhecido depois da tradução de crmAdapter; cada visão do candidato conta.
+  const registros = toProspectorRecords(crmRecords);
+  const bloqueado = identityViews(candidate).some((view) => checkDoNotContact(view, registros).doNotContact);
+  return { status: bloqueado ? DNC_STATUS.BLOQUEADO : DNC_STATUS.NAO_ENCONTRADO };
 }
 
 function countValidatedFields(camposConfirmados) {
@@ -330,6 +343,7 @@ module.exports = {
   IDENTITY_STATUS,
   IDENTITY_REASON,
   DATA_STATUS,
+  EVIDENCE_FIELDS,
   receiveBriefing,
   screenExclusions,
   identifyAndConfirm,

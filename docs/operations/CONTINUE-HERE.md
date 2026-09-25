@@ -45,8 +45,8 @@ npm start
 
 | Onde | Total | Passam | Falham | Pulados |
 |---|---|---|---|---|
-| Neste computador, com `.env` | 884 | 882 | 0 | 2 |
-| Sem `.env` e sem `data/*.json` (um clone limpo) | 884 | 877 | 0 | 7 |
+| Neste computador, com `.env` | 925 | 923 | 0 | 2 |
+| Sem `.env` e sem `data/*.json` (um clone limpo) | 925 | 918 | 0 | 7 |
 
 Nenhuma falha. Os pulados são esperados: sem `.env` (5 testes de conectividade/autenticação contra o Supabase real), o `[REAL-2]` (só roda com `RIO_X7_TEST_ACCESS_TOKEN`, um token real de teste) e o `[SRV-SEC-24b]` (symlink, que o Windows sem privilégio não permite). O preflight sem `.env` **falha de propósito** (`.env` e `data/users.json` ausentes; conectividade pulada) — é o comportamento correto de um computador ainda não configurado.
 
@@ -84,7 +84,8 @@ A API não informa as transições permitidas (a tela oferece os outros status e
 - documentação e handoff para outro computador: concluídos e ensaiados com um clone limpo do `origin/main`
 - CRM-INTEGRATION: **concluído** (decisão 0016) — serviço, rota `POST /api/approvals/:id/promote` e ação "Promover para CRM" no Dashboard
 - **Dashboard V1 — Central Operacional: concluído** (só UX/UI): menu lateral agrupado (áreas ainda inexistentes desabilitadas, "Em desenvolvimento"), Visão Geral com indicadores/pipeline/atividade **reais**, Central de Agentes IA (`#/agentes`, só estrutura visual). Nenhuma regra, permissão ou API mudou; ver o [CHANGELOG.md](../../CHANGELOG.md)
-- Kanban, Prospector, SDR, agentes de IA, outbound: NÃO implementados (a Central de Agentes é só visual)
+- **Prospector — 1º incremento: concluído** (só domínio, puro): adaptador CRM → DNC/duplicidade (`crmAdapter.js`), esquema dos raw findings (`rawFindingSchema.js`) e contabilidade de lote (`batchAccounting.js`). O esquema ainda **não está ligado** a nenhum serviço; sem pesquisa web, IA, lote/dossiê persistente, ingestão, rota ou interface
+- Kanban, SDR, agentes de IA, outbound: NÃO implementados (a Central de Agentes é só visual)
 - persistência centralizada / sincronização entre computadores: NÃO implementada (necessidade futura)
 
 ## PRÓXIMA ETAPA
