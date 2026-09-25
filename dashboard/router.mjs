@@ -9,6 +9,7 @@
 //   #/crm/novo                formulário de novo registro
 //   #/crm/registro/<id>       ficha de um registro (o id vai codificado: crm%3A...)
 //   #/aprovacoes              a fila de aprovação
+//   #/agentes                 a Central de Agentes IA (só a estrutura visual)
 //
 // Um fragmento que não é nenhum destes é "not-found" (uma tela amigável), nunca um erro.
 
@@ -32,6 +33,7 @@ export function parseRoute(hash) {
     return { name: 'not-found' };
   }
   if (segments.length === 1 && segments[0] === 'aprovacoes') return { name: 'approvals' };
+  if (segments.length === 1 && segments[0] === 'agentes') return { name: 'agents' };
   return { name: 'not-found' };
 }
 
@@ -47,6 +49,8 @@ export function buildHash(route) {
       return `#/crm/${CRM_RECORD_SEGMENT}/${encodeURIComponent(route.id)}`;
     case 'approvals':
       return '#/aprovacoes';
+    case 'agents':
+      return '#/agentes';
     default:
       return '#/';
   }
@@ -57,6 +61,7 @@ export function sectionOf(route) {
   const name = route && route.name;
   if (name === 'crm-list' || name === 'crm-new' || name === 'crm-record') return 'crm';
   if (name === 'approvals') return 'approvals';
+  if (name === 'agents') return 'agents';
   if (name === 'overview') return 'overview';
   return null;
 }

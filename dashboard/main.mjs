@@ -20,6 +20,7 @@ import { createApiClient } from './api.mjs';
 import { roleLabel } from './format.mjs';
 import { parseRoute, buildHash, sectionOf } from './router.mjs';
 import { permissionsOf } from './crm-model.mjs';
+import { createAgentsView } from './views/agents.mjs';
 import { createApprovalsView } from './views/approvals.mjs';
 import { createCrmView } from './views/crm.mjs';
 import { createOverviewView } from './views/overview.mjs';
@@ -32,15 +33,29 @@ const PAGE_TITLES = Object.freeze({
   'crm-new': 'Novo registro · CRM',
   'crm-record': 'Registro · CRM',
   approvals: 'Aprovações',
+  agents: 'Agentes IA',
   'not-found': 'Página não encontrada',
 });
 
 // O menu: as seções, na ordem. `needs` é a permissão (de /api/me) que a conta precisa ter para o item aparecer — só para
 // não mostrar um caminho que levaria a um 403; o servidor continua decidindo.
-const NAV_ITEMS = Object.freeze([
-  { section: 'overview', label: 'Visão Geral', route: { name: 'overview' } },
-  { section: 'crm', label: 'CRM', route: { name: 'crm-list' }, needs: 'canReadCrm' },
-  { section: 'approvals', label: 'Aprovações', route: { name: 'approvals' } },
+//
+// O menu lateral é agrupado. Um item COM `route` é uma área que existe; um item SEM `route` (`soon`) é uma área ainda não
+// implementada e aparece desabilitado, marcado "Em desenvolvimento" — nunca um link para uma rota que não existe.
+const SOON = 'Em desenvolvimento';
+const NAV_GROUPS = Object.freeze([
+  {
+    title: 'Operacional',
+    items: [
+      { section: 'overview', label: 'Visão Geral', route: { name: 'overview' } },
+      { section: 'crm', label: 'CRM', route: { name: 'crm-list' }, needs: 'canReadCrm' },
+      { section: 'approvals', label: 'Aprovações', route: { name: 'approvals' } },
+      { label: 'Agenda' },
+    ],
+  },
+  { title: 'Comercial', items: [{ label: 'Prospecção' }, { label: 'Leads' }, { label: 'Conversas' }, { label: 'Reuniões' }, { label: 'Propostas' }] },
+  { title: 'Agentes IA', items: [{ section: 'agents', label: 'Central de Agentes', route: { name: 'agents' } }] },
+  { title: 'Gestão', items: [{ label: 'Relatórios' }, { label: 'Configurações' }] },
 ]);
 
 // document/root: onde desenhar. fetchImpl: o fetch do navegador. sdk: o SDK do Supabase (globalThis.supabase).
@@ -167,8 +182,9 @@ export function startDashboard({ document, root, fetchImpl, sdk, navigation }) {
             document,
             'form',
             { className: 'login', onsubmit: onSubmit },
-            h(document, 'h1', { text: 'Rio X7 AI Agency OS' }),
-            h(document, 'p', { className: 'muted', text: 'Entre com a sua conta para acessar o painel.' }),
+            h(document, 'div', { className: 'brand-block on-light' }, h(document, 'h1', { className: 'brand-name', text: 'RIO X7' }), h(document, 'span', { className: 'brand-sub', text: 'AI AGENCY OS' })),
+            h(document, 'p', { className: 'muted', text: 'Central operacional da Rio X7 Comunicação.' }),
+            h(document, 'p', { className: 'login-hint', text: 'Entre com a sua conta para acessar o painel.' }),
             h(document, 'div', { className: 'field' }, h(document, 'label', { for: 'login-email', text: 'E-mail' }), email),
             h(document, 'div', { className: 'field' }, h(document, 'label', { for: 'login-password', text: 'Senha' }), password),
             feedback,
@@ -188,9 +204,9 @@ export function startDashboard({ document, root, fetchImpl, sdk, navigation }) {
         { className: 'shell' },
         h(
           document,
-          'header',
-          { className: 'topbar' },
-          h(document, 'span', { className: 'brand', text: BASE_TITLE }),
+          'aside',
+          { className: 'sidebar' },
+          brandBlock(),
           nav,
           h(
             document,
@@ -203,6 +219,10 @@ export function startDashboard({ document, root, fetchImpl, sdk, navigation }) {
         ),
         main
       );
+    }
+
+    function brandBlock() {
+      return h(document, 'div', { className: 'brand-block' }, h(document, 'span', { className: 'brand-name', text: 'RIO X7' }), h(document, 'span', { className: 'brand-sub', text: 'AI AGENCY OS' }));
     }
 
     async function showDashboard() {
@@ -226,10 +246,24 @@ export function startDashboard({ document, root, fetchImpl, sdk, navigation }) {
         document,
         'nav',
         { className: 'nav', 'aria-label': 'Navegação principal' },
-        ...NAV_ITEMS.filter((item) => !item.needs || permissions[item.needs]).map((item) => {
-          const link = h(document, 'a', { className: 'nav-link', href: buildHash(item.route), text: item.label });
-          navLinks.set(item.section, link);
-          return link;
+        ...NAV_GROUPS.map((group) => {
+          const items = group.items.filter((item) => !item.needs || permissions[item.needs]);
+          if (items.length === 0) return null;
+          return h(
+            document,
+            'div',
+            { className: 'nav-group' },
+            h(document, 'p', { className: 'nav-title', text: group.title }),
+            ...items.map((item) => {
+              if (!item.route) {
+                // área ainda não implementada: desabilitada e marcada, sem link e sem rota
+                return h(document, 'span', { className: 'nav-link soon', 'aria-disabled': 'true' }, h(document, 'span', { text: item.label }), h(document, 'span', { className: 'nav-soon', text: SOON }));
+              }
+              const link = h(document, 'a', { className: 'nav-link', href: buildHash(item.route), text: item.label });
+              navLinks.set(item.section, link);
+              return link;
+            })
+          );
         })
       );
       mount(shell(me, main, nav));
@@ -276,6 +310,11 @@ export function startDashboard({ document, root, fetchImpl, sdk, navigation }) {
             canReadCrm: permissions.canReadCrm,
           });
           transient.load();
+        } else if (section === 'agents') {
+          const target = container();
+          main.replaceChildren(target);
+          transient = createAgentsView({ document, root: target });
+          transient.render();
         } else if (section === 'overview') {
           const target = container();
           main.replaceChildren(target);

@@ -14,7 +14,7 @@ Navegador → Dashboard (dashboard/) → HTTP /api/* (src/server) → Services (
 | Parte | Onde está |
 |---|---|
 | **CRM operacional** (13 status, máquina de estados, "Não contatar", deduplicação) | domínio `src/crm/` → Service `src/services/crmService.js` → API `/api/crm` (`src/server/app.js`) → telas `dashboard/views/crm.mjs` |
-| **Dashboard** (login, Visão Geral, CRM, Aprovações, Sair) | `dashboard/` — JavaScript puro, sem CDN (o SDK do Supabase vem do `node_modules`, instalado pelo `npm ci`); conversa com o servidor só por HTTP |
+| **Dashboard — Central Operacional** (login, menu lateral, Visão Geral com indicadores/pipeline/atividade reais, CRM, Aprovações, Central de Agentes IA — só visual —, Sair) | `dashboard/` — JavaScript puro, sem CDN (o SDK do Supabase vem do `node_modules`, instalado pelo `npm ci`); conversa com o servidor só por HTTP |
 | **Fila de aprovação humana** (Research + Prospector) | `src/research-prospector/`, `src/services/approvalQueueService.js` |
 | **Promoção Approval Queue → CRM** | `src/services/crmIntegrationService.js` (+ `prospectToCrmFields.js`, `approvalPromotionService.js`) — serviço, rota `POST /api/approvals/:id/promote` e ação "Promover para CRM" na tela Aprovações |
 | **Autenticação e permissões** | `src/auth/` (Supabase Auth; matriz em `docs/architecture/permissions-matrix.md`) |

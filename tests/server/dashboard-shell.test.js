@@ -95,8 +95,8 @@ test('[DASH-SHELL-3] login: o e-mail e a senha digitados vão SÓ para o SDK; de
   await entrarPeloFormulario(t);
   assert.deepEqual(t.sdk.calls.signIn, [{ email: 'usuario-teste@example.test', password: 'senha-de-teste-nao-real' }]);
 
-  assert.deepEqual(linksDoMenu(t.browser).map((link) => link.textContent), ['Visão Geral', 'CRM', 'Aprovações']);
-  assert.deepEqual(linksDoMenu(t.browser).map((link) => link.href), ['#/', '#/crm', '#/aprovacoes']);
+  assert.deepEqual(linksDoMenu(t.browser).map((link) => link.textContent), ['Visão Geral', 'CRM', 'Aprovações', 'Central de Agentes']);
+  assert.deepEqual(linksDoMenu(t.browser).map((link) => link.href), ['#/', '#/crm', '#/aprovacoes', '#/agentes']);
   assert.ok(t.browser.by.button(t.browser.root, 'Sair'));
   const texto = textoDaTela(t.browser);
   assert.match(texto, /Breno/);
@@ -137,7 +137,7 @@ test('[DASH-SHELL-5] e-mail ou senha vazios: pede os dois e nem chama o SDK', as
 test('[DASH-SHELL-6] com sessão já existente o painel abre direto, sem passar pelo login', async () => {
   const t = await iniciar({ session: true, routes: await rotasLogado() });
   assert.equal(t.browser.by.tag(t.browser.root, 'form').length, 0);
-  assert.deepEqual(linksDoMenu(t.browser).map((link) => link.textContent), ['Visão Geral', 'CRM', 'Aprovações']);
+  assert.deepEqual(linksDoMenu(t.browser).map((link) => link.textContent), ['Visão Geral', 'CRM', 'Aprovações', 'Central de Agentes']);
   assert.deepEqual(t.sdk.calls.signIn, []);
 });
 
@@ -165,7 +165,7 @@ test('[DASH-SHELL-7] logout: "Sair" encerra a sessão no SDK, volta ao login, n�
   assert.equal(chamadasDeApi(t.fetchImpl).length, antes, 'nenhuma chamada nova de API');
 
   await entrarPeloFormulario(t);
-  assert.deepEqual(linksDoMenu(t.browser).map((link) => link.textContent), ['Visão Geral', 'CRM', 'Aprovações']);
+  assert.deepEqual(linksDoMenu(t.browser).map((link) => link.textContent), ['Visão Geral', 'CRM', 'Aprovações', 'Central de Agentes']);
   assert.equal(t.browser.window._listeners.size, 1, 'um único ouvinte de rotas de novo (nada vazou)');
 });
 
@@ -266,11 +266,13 @@ test('[DASH-SHELL-13] navegação: cada item do menu abre a sua tela e fica marc
   const t = await iniciar({ session: true, routes: await rotasLogado() });
   assert.deepEqual(ativo(t.browser), ['Visão Geral']);
   assert.match(textoDaTela(t.browser), /Visão Geral/);
-  assert.deepEqual(t.browser.by.cls(t.browser.root, 'stat').map((el) => el.textContent), ['2', '1'], 'a Visão Geral mostra o total do CRM (de GET /api/crm) e o da fila (de GET /api/approvals)');
+  const indicadores = Object.fromEntries(t.browser.by.cls(t.browser.root, 'kpi').map((cartao) => [t.browser.by.tag(cartao, 'h3')[0].textContent, (t.browser.by.cls(cartao, 'stat')[0] || {}).textContent]));
+  assert.deepEqual(indicadores, { 'Leads no CRM': '2', 'Novos prospects': '0', 'Aprovações pendentes': '1', 'Reuniões': '0', 'Propostas': '0', 'Negociações': '0' }, 'a Visão Geral mostra o total do CRM (de GET /api/crm), a fila (de GET /api/approvals) e as etapas do CRM');
   assert.match(textoDaTela(t.browser), /registros no CRM/);
   assert.match(textoDaTela(t.browser), /prospect aguardando revisão/);
-  assert.match(textoDaTela(t.browser), /Contacted 1/);
-  assert.match(textoDaTela(t.browser), /Won 1/);
+  const pipeline = Object.fromEntries(t.browser.by.cls(t.browser.root, 'pipeline-row').map((linha) => [t.browser.by.cls(linha, 'badge')[0].textContent, t.browser.by.cls(linha, 'pipeline-count')[0].textContent]));
+  assert.equal(pipeline.Contacted, '1');
+  assert.equal(pipeline.Won, '1');
 
   t.browser.click(t.browser.by.link(t.browser.root, 'CRM'));
   await t.browser.flush();
@@ -286,6 +288,12 @@ test('[DASH-SHELL-13] navegação: cada item do menu abre a sua tela e fica marc
   assert.match(textoDaTela(t.browser), /Prospect X/);
   assert.equal(t.browser.by.tag(t.browser.root, 'table').length, 1);
   assert.doesNotMatch(textoDaTela(t.browser), /Odonto Beta/, 'a tela anterior saiu');
+
+  t.browser.click(t.browser.by.link(t.browser.root, 'Central de Agentes'));
+  await t.browser.flush();
+  assert.deepEqual(ativo(t.browser), ['Central de Agentes']);
+  assert.equal(t.browser.document.title, 'Agentes IA — Rio X7 AI Agency OS');
+  assert.match(textoDaTela(t.browser), /Especialistas digitais da operação Rio X7\./);
 
   t.browser.click(t.browser.by.link(t.browser.root, 'Visão Geral'));
   await t.browser.flush();
@@ -325,7 +333,7 @@ test('[DASH-SHELL-14] link direto: abrir o painel já em #/crm/registro/<id> mos
 test('[DASH-SHELL-15] COMMERCIAL_CLOSER no painel: vê o menu, a lista e a ficha, mas não tem nenhum botão de escrita — e uma tentativa de criar por link direto mostra que a conta não pode', async () => {
   const t = await iniciar({ session: true, routes: await rotasLogado(ME_CLOSER) });
   assert.match(textoDaTela(t.browser), /Closer comercial/);
-  assert.deepEqual(linksDoMenu(t.browser).map((link) => link.textContent), ['Visão Geral', 'CRM', 'Aprovações']);
+  assert.deepEqual(linksDoMenu(t.browser).map((link) => link.textContent), ['Visão Geral', 'CRM', 'Aprovações', 'Central de Agentes']);
   t.browser.window.location.hash = '#/crm';
   await t.browser.flush();
   assert.match(textoDaTela(t.browser), /Odonto Beta/);
@@ -344,7 +352,7 @@ test('[DASH-SHELL-15] COMMERCIAL_CLOSER no painel: vê o menu, a lista e a ficha
 test('[DASH-SHELL-16] uma conta sem READ:CRM não vê o item CRM no menu, e o link direto mostra "sem acesso" SEM chamar a API do CRM', async () => {
   const semCrm = { ...ME_ADMIN, permissions: ['APPROVE:LEAD_APPROVAL'] };
   const t = await iniciar({ session: true, routes: await rotasLogado(semCrm), hash: '#/crm' });
-  assert.deepEqual(linksDoMenu(t.browser).map((link) => link.textContent), ['Visão Geral', 'Aprovações']);
+  assert.deepEqual(linksDoMenu(t.browser).map((link) => link.textContent), ['Visão Geral', 'Aprovações', 'Central de Agentes']);
   assert.match(textoDaTela(t.browser), /Esta conta não possui acesso a esta área\./);
   assert.equal(chamadasDeApi(t.fetchImpl).filter((chamada) => chamada.path.startsWith('/api/crm')).length, 0);
 

@@ -12,12 +12,25 @@ const { createBrowser } = require('../helpers/fakeDom');
 const loadFixtures = () => import('../helpers/dashboardFixtures.mjs');
 const TUDO = Object.freeze({ canReadCrm: true, canWriteCrm: true, canReview: true });
 
-async function montar({ permissions = TUDO, items = [], approvals = [], me = { name: 'Breno Bento' } } = {}) {
+// 12:00Z = 09:00 em Brasília (UTC-3), logo Bom dia
+const MANHA = () => new Date('2026-09-25T12:00:00Z');
+
+// Os indicadores da tela, por título: { 'Leads no CRM': '4', ... } (um cartão sem número, como o de erro, fica de fora).
+const indicadores = (browser) =>
+  Object.fromEntries(
+    browser.by
+      .cls(browser.root, 'kpi')
+      .filter((cartao) => browser.by.cls(cartao, 'stat').length > 0)
+      .map((cartao) => [browser.by.tag(cartao, 'h3')[0].textContent, browser.by.cls(cartao, 'stat')[0].textContent])
+  );
+const ZEROS = Object.freeze({ 'Leads no CRM': '0', 'Novos prospects': '0', 'Aprovações pendentes': '0', 'Reuniões': '0', 'Propostas': '0', 'Negociações': '0' });
+
+async function montar({ permissions = TUDO, items = [], approvals = [], me = { name: 'Breno Bento' }, now = MANHA } = {}) {
   const { createOverviewView } = await import('../../dashboard/views/overview.mjs');
   const { createFakeApi } = await loadFixtures();
   const browser = createBrowser();
   const api = createFakeApi({ items, approvals });
-  const view = createOverviewView({ document: browser.document, root: browser.root, api, me, permissions });
+  const view = createOverviewView({ document: browser.document, root: browser.root, api, me, permissions, now });
   return { browser, api, view, async abrir() { await view.load(); await browser.flush(); } };
 }
 
@@ -33,10 +46,13 @@ test('[DASH-OVERVIEW-1] mostra o total do CRM, a contagem só dos status que exi
   const t = await montar({ items: itens, approvals: [{ prospectId: 'a' }, { prospectId: 'b' }] });
   await t.abrir();
 
-  assert.deepEqual(t.browser.by.cls(t.browser.root, 'stat').map((el) => el.textContent), ['4', '2']);
-  const linhas = t.browser.by.tag(t.browser.by.cls(t.browser.root, 'status-breakdown')[0], 'li').map((li) => li.textContent.replace(/\s+/g, ' ').trim());
-  assert.deepEqual(linhas, ['Prospect 1', 'Contacted 2', 'Won 1'], 'só os status que existem, na ordem do funil');
-  assert.match(texto(t.browser), /Olá, Breno Bento\./);
+  assert.deepEqual(indicadores(t.browser), { 'Leads no CRM': '4', 'Novos prospects': '1', 'Aprovações pendentes': '2', 'Reuniões': '0', 'Propostas': '0', 'Negociações': '0' });
+  const linhas = t.browser.by.cls(t.browser.root, 'pipeline-row').map((li) => [t.browser.by.cls(li, 'badge')[0].textContent, t.browser.by.cls(li, 'pipeline-count')[0].textContent]);
+  assert.equal(linhas.length, 13, 'o pipeline mostra os 13 status REAIS do domínio, na ordem do funil');
+  assert.deepEqual(linhas.map(([nome]) => nome), ['Prospect', 'Research', 'Qualified Prospect', 'Contacted', 'Responded', 'Qualification', 'Meeting Scheduled', 'Meeting Completed', 'Proposal', 'Negotiation', 'Won', 'Lost', 'Do Not Contact']);
+  assert.deepEqual(Object.fromEntries(linhas.filter(([, n]) => n !== '0')), { Prospect: '1', Contacted: '2', Won: '1' });
+  assert.match(texto(t.browser), /Bom dia, Breno Bento/);
+  assert.match(texto(t.browser), /Central operacional da Rio X7\./);
   assert.match(texto(t.browser), /registros no CRM/);
   assert.match(texto(t.browser), /prospects aguardando revisão/);
   assert.equal(t.browser.by.link(t.browser.root, 'Abrir CRM').href, '#/crm');
@@ -56,8 +72,10 @@ test('[DASH-OVERVIEW-2] singular e vazio: "1 registro no CRM", "1 prospect aguar
 
   const vazio = await montar({ items: [], approvals: [] });
   await vazio.abrir();
-  assert.deepEqual(vazio.browser.by.cls(vazio.browser.root, 'stat').map((el) => el.textContent), ['0', '0']);
+  assert.deepEqual(indicadores(vazio.browser), ZEROS, 'sem dados os indicadores são 0 — nenhum número inventado');
   assert.match(texto(vazio.browser), /Ainda não há registros\./);
+  assert.match(texto(vazio.browser), /Nenhuma atividade registrada ainda\./);
+  assert.equal(vazio.browser.by.cls(vazio.browser.root, 'pipeline-row').length, 0);
 });
 
 test('[DASH-OVERVIEW-3] cada cartão só existe se a conta tem a área: sem READ:CRM não há cartão do CRM (e a API do CRM nem é chamada); sem a permissão de revisão não há cartão da fila; sem nenhuma, uma frase', async () => {
@@ -86,11 +104,11 @@ test('[DASH-OVERVIEW-4] uma falha só derruba o cartão que falhou: 500 mostra a
   await t.abrir();
   assert.match(texto(t.browser), /Não foi possível concluir a operação agora/);
   assert.doesNotMatch(texto(t.browser), /segredo|crm\.json/);
-  assert.deepEqual(t.browser.by.cls(t.browser.root, 'stat').map((el) => el.textContent), ['1'], 'o cartão da fila carregou');
+  assert.deepEqual(indicadores(t.browser), { 'Aprovações pendentes': '1' }, 'o cartão da fila carregou; o do CRM virou um cartão de erro');
 
   t.browser.click(t.browser.by.button(t.browser.root, 'Tentar novamente'));
   await t.browser.flush();
-  assert.deepEqual(t.browser.by.cls(t.browser.root, 'stat').map((el) => el.textContent), ['0', '1']);
+  assert.deepEqual(indicadores(t.browser), { ...ZEROS, 'Aprovações pendentes': '1' });
 
   t.api.failNext('listApprovals', new ApiError(403, 'FORBIDDEN', 'Esta conta não possui acesso a esta área.'));
   await t.view.load();
@@ -103,7 +121,7 @@ test('[DASH-OVERVIEW-5] uma resposta malformada (itens que não são lista) vira
   t.api.listCrm = async () => ({ items: 'não é lista' });
   t.api.listApprovals = async () => ({ items: { a: 1 } });
   await t.abrir();
-  assert.deepEqual(t.browser.by.cls(t.browser.root, 'stat').map((el) => el.textContent), ['0', '0']);
+  assert.deepEqual(indicadores(t.browser), ZEROS);
 
   t.view.destroy();
   const antes = t.browser.root.textContent;

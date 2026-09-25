@@ -45,8 +45,8 @@ npm start
 
 | Onde | Total | Passam | Falham | Pulados |
 |---|---|---|---|---|
-| Neste computador, com `.env` | 877 | 875 | 0 | 2 |
-| Sem `.env` e sem `data/*.json` (um clone limpo) | 877 | 870 | 0 | 7 |
+| Neste computador, com `.env` | 883 | 881 | 0 | 2 |
+| Sem `.env` e sem `data/*.json` (um clone limpo) | 883 | 876 | 0 | 7 |
 
 Nenhuma falha. Os pulados são esperados: sem `.env` (5 testes de conectividade/autenticação contra o Supabase real), o `[REAL-2]` (só roda com `RIO_X7_TEST_ACCESS_TOKEN`, um token real de teste) e o `[SRV-SEC-24b]` (symlink, que o Windows sem privilégio não permite). O preflight sem `.env` **falha de propósito** (`.env` e `data/users.json` ausentes; conectividade pulada) — é o comportamento correto de um computador ainda não configurado.
 
@@ -83,11 +83,12 @@ A API não informa as transições permitidas (a tela oferece os outros status e
 - testes de regressão: concluídos (`DASH-FULL-9`, `DASH-FULL-10`, `DASH-CRM-35`)
 - documentação e handoff para outro computador: concluídos e ensaiados com um clone limpo do `origin/main`
 - CRM-INTEGRATION: **concluído** (decisão 0016) — serviço, rota `POST /api/approvals/:id/promote` e ação "Promover para CRM" no Dashboard
-- Kanban, Prospector, SDR, outbound: NÃO implementados
+- **Dashboard V1 — Central Operacional: concluído** (só UX/UI): menu lateral agrupado (áreas ainda inexistentes desabilitadas, "Em desenvolvimento"), Visão Geral com indicadores/pipeline/atividade **reais**, Central de Agentes IA (`#/agentes`, só estrutura visual). Nenhuma regra, permissão ou API mudou; ver o [CHANGELOG.md](../../CHANGELOG.md)
+- Kanban, Prospector, SDR, agentes de IA, outbound: NÃO implementados (a Central de Agentes é só visual)
 - persistência centralizada / sincronização entre computadores: NÃO implementada (necessidade futura)
 
 ## PRÓXIMA ETAPA
 
-**Ainda não definida.** O proprietário (Breno Bento) decide depois de revisar a promoção pelo Dashboard. Candidatas naturais, **nenhuma iniciada**: melhorias no snapshot da fila (`googlePerfil`, congelar o que foi aprovado); persistência centralizada.
+**Ainda não definida.** O proprietário (Breno Bento) decide depois de ver o Dashboard V1 (Central Operacional) funcionando. Candidatas naturais, **nenhuma iniciada**: melhorias no snapshot da fila (`googlePerfil`, congelar o que foi aprovado); persistência centralizada.
 
 **Não iniciar nenhuma etapa automaticamente** — nem o Prospector. Só começa com autorização explícita do proprietário do projeto.

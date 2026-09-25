@@ -36,7 +36,7 @@ function scan(file) {
 const SCANS = new Map(FILES.map((file) => [rel(file), scan(file)]));
 
 test('[DASH-GUARD-1] a lista de módulos do Dashboard é a esperada (um módulo novo exige decidir aqui — de propósito)', () => {
-  assert.deepEqual([...SCANS.keys()].sort(), ['api.mjs', 'app.mjs', 'crm-model.mjs', 'dom.mjs', 'format.mjs', 'main.mjs', 'router.mjs', 'views/approvals.mjs', 'views/crm.mjs', 'views/overview.mjs']);
+  assert.deepEqual([...SCANS.keys()].sort(), ['api.mjs', 'app.mjs', 'crm-model.mjs', 'dom.mjs', 'format.mjs', 'main.mjs', 'router.mjs', 'views/agents.mjs', 'views/approvals.mjs', 'views/crm.mjs', 'views/overview.mjs']);
   for (const [nome, { analysis }] of SCANS) assert.deepEqual(analysis.issues, [], `${nome}: carregamento que a análise não enxerga`);
 });
 
