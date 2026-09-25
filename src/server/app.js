@@ -79,6 +79,9 @@ const DEFAULT_ESTADO = 'AGUARDANDO_REVISAO';
 // As operações do CRM Service que a API usa (o contrato de src/services/crmService.js). Verificadas na criação do app.
 const CRM_OPERATIONS = Object.freeze(['listRecords', 'getRecord', 'getHistory', 'createRecord', 'updateRecord', 'moveStatus', 'markDoNotContact']);
 
+// A operação da promoção Approval Queue → CRM (src/services/crmIntegrationService.js) que a API usa. Verificada na criação.
+const PROMOTION_OPERATION = 'promoteProspect';
+
 const NO_ACCESS_MESSAGE = 'Esta conta não possui acesso a esta área.';
 
 // O catálogo de respostas de erro: status + mensagem fixa.
@@ -97,6 +100,15 @@ const CATALOG = Object.freeze({
   DNC_BLOCKED: [409, 'Esta identidade está bloqueada como "não contatar".'],
   RECORD_LOCKED: [409, 'Este registro está bloqueado como "não contatar" e não pode ser alterado.'],
   INVALID_TRANSITION: [409, 'Esta mudança de status não é permitida.'],
+  // Promoção Approval Queue → CRM (decisão 0016), por `code` estável do serviço. Mensagens FIXAS: nunca o id do registro
+  // existente, o critério que casou nem o texto do serviço.
+  PROMOTION_NOT_APPROVED: [409, 'Este prospect não está aprovado para o CRM.'],
+  PROMOTION_APPROVAL_MISSING: [409, 'A aprovação deste prospect não está registrada. A promoção foi bloqueada.'],
+  PROMOTION_BLOCKED_DNC: [409, 'Promoção bloqueada: existe uma restrição de contato para este prospect.'],
+  PROMOTION_BLOCKED_DUPLICATE: [409, 'Este prospect parece já existir no CRM. A promoção foi bloqueada para não duplicar o registro.'],
+  PROMOTION_INSUFFICIENT_DATA: [409, 'Os dados deste prospect não são suficientes para entrar no CRM.'],
+  PROMOTION_INCONSISTENT: [409, 'O estado deste prospect está inconsistente entre a fila e o CRM. Nada foi alterado; peça uma revisão.'],
+  PROMOTION_PARTIAL: [409, 'A promoção foi concluída só em parte. Tente promover de novo.'],
   PAYLOAD_TOO_LARGE: [413, 'Requisição grande demais.'],
   UNSUPPORTED_MEDIA_TYPE: [415, 'Envie o corpo como application/json.'],
   INVALID_REQUEST: [400, 'Requisição inválida.'],
@@ -149,6 +161,20 @@ const KNOWN_MESSAGES = Object.freeze([
   [/^CRM: reason deve ser um texto/, 'INVALID_REQUEST', 'O motivo deve ser um texto.'],
 ]);
 
+// Os `code` do serviço de promoção que a API reconhece. PROMOTION_INVALID_INPUT e PROMOTION_PROSPECT_NOT_FOUND viram os
+// mesmos 400/404 das demais rotas; um teste vigia que esta lista não divirja de PROMOTION_ERROR.
+const PROMOTION_CODES = Object.freeze({
+  PROMOTION_INVALID_INPUT: 'INVALID_REQUEST',
+  PROMOTION_PROSPECT_NOT_FOUND: 'NOT_FOUND',
+  PROMOTION_NOT_APPROVED: 'PROMOTION_NOT_APPROVED',
+  PROMOTION_APPROVAL_MISSING: 'PROMOTION_APPROVAL_MISSING',
+  PROMOTION_BLOCKED_DNC: 'PROMOTION_BLOCKED_DNC',
+  PROMOTION_BLOCKED_DUPLICATE: 'PROMOTION_BLOCKED_DUPLICATE',
+  PROMOTION_INSUFFICIENT_DATA: 'PROMOTION_INSUFFICIENT_DATA',
+  PROMOTION_INCONSISTENT: 'PROMOTION_INCONSISTENT',
+  PROMOTION_PARTIAL: 'PROMOTION_PARTIAL',
+});
+
 // Dicas para o LOG de erros internos conhecidos — sem repetir a mensagem original, que pode trazer trechos de
 // dados (um JSON de fila corrompido cita um pedaço do conteúdo).
 const INTERNAL_HINTS = Object.freeze([
@@ -169,6 +195,9 @@ function mapErrorToHttp(error) {
     code = error.category === CONNECTIVITY_ERROR.AUTH ? 'UNAUTHENTICATED' : 'AUTH_UNAVAILABLE';
   } else if (error instanceof UserResolutionError) {
     code = error.code === USER_NOT_FOUND ? 'NO_ACCESS' : 'INTERNAL';
+  } else if (error && typeof error === 'object' && Object.prototype.hasOwnProperty.call(PROMOTION_CODES, error.code)) {
+    code = PROMOTION_CODES[error.code];
+    if (code === 'INVALID_REQUEST') detail = 'Identificador inválido.';
   } else {
     const message = error && typeof error.message === 'string' ? error.message : '';
     const known = KNOWN_MESSAGES.find(([pattern]) => pattern.test(message));
@@ -330,9 +359,13 @@ function parseTarget(req) {
 }
 
 // `crm`: as rotas do CRM só existem quando o CRM Service foi injetado; sem ele, /api/crm... é uma rota desconhecida (404).
-function matchRoute(pathname, { crm }) {
+function matchRoute(pathname, { crm, promotion }) {
   if (pathname === '/api/me') return { name: 'me', label: '/api/me', methods: ['GET'] };
   if (pathname === '/api/approvals') return { name: 'list', label: '/api/approvals', methods: ['GET'] };
+  if (promotion) {
+    const promote = /^\/api\/approvals\/([^/]+)\/promote$/.exec(pathname);
+    if (promote) return { name: 'promote', label: '/api/approvals/:id/promote', methods: ['POST'], rawId: promote[1] };
+  }
   const decision = /^\/api\/approvals\/([^/]+)\/(approve|reject)$/.exec(pathname);
   if (decision) return { name: decision[2], label: `/api/approvals/:id/${decision[2]}`, methods: ['POST'], rawId: decision[1] };
   if (crm) {
@@ -407,11 +440,12 @@ function requireFunction(value, name) {
 // approvalQueueService: o Approval Queue Service (listQueue, approveProspect, rejectProspect).
 // crmService: o CRM Service (as 7 operações de CRM_OPERATIONS) — OPCIONAL: sem ele as rotas /api/crm não existem (404).
 //   Presente, é validado por inteiro na criação (falha fechada); `null` não é "ausente", é erro.
+// crmIntegrationService: a promoção Approval Queue → CRM (promoteProspect) — OPCIONAL: sem ele a rota de promoção não existe (404).
 // publicConfig: { supabaseUrl, supabaseAnonKey } — os valores PÚBLICOS que o navegador recebe.
 // staticRoot / staticFiles: os arquivos do Dashboard (ver static.js).
 // log: (texto) => void. authTimeoutMs: quanto esperar pela verificação do token.
 function createApp(dependencies) {
-  const { verifyAccessToken, userStore, approvalQueueService, crmService, publicConfig, staticRoot, staticFiles, log = () => {}, authTimeoutMs = DEFAULT_AUTH_TIMEOUT_MS } =
+  const { verifyAccessToken, userStore, approvalQueueService, crmService, crmIntegrationService, publicConfig, staticRoot, staticFiles, log = () => {}, authTimeoutMs = DEFAULT_AUTH_TIMEOUT_MS } =
     dependencies || {};
   requireFunction(verifyAccessToken, 'verifyAccessToken');
   requireFunction(log, 'log');
@@ -425,6 +459,9 @@ function createApp(dependencies) {
     for (const operation of CRM_OPERATIONS) {
       if (!crmService || typeof crmService[operation] !== 'function') throw new Error(`createApp exige { crmService } com ${operation}()`);
     }
+  }
+  if (crmIntegrationService !== undefined && (!crmIntegrationService || typeof crmIntegrationService[PROMOTION_OPERATION] !== 'function')) {
+    throw new Error(`createApp exige { crmIntegrationService } com ${PROMOTION_OPERATION}()`);
   }
   if (!publicConfig || typeof publicConfig.supabaseUrl !== 'string' || typeof publicConfig.supabaseAnonKey !== 'string') {
     throw new Error('createApp exige { publicConfig: { supabaseUrl, supabaseAnonKey } }');
@@ -496,7 +533,7 @@ function createApp(dependencies) {
 
   async function dispatch(req, trace) {
     const url = parseTarget(req);
-    const route = matchRoute(url.pathname, { crm: crmService !== undefined });
+    const route = matchRoute(url.pathname, { crm: crmService !== undefined, promotion: crmIntegrationService !== undefined });
     if (route === null) {
       trace.label = 'static';
       return serveStatic(req, url);
@@ -521,6 +558,20 @@ function createApp(dependencies) {
 
     readQuery(url, []);
     const id = decodeId(route.rawId);
+    if (route.name === 'promote') {
+      // A ÚNICA entrada é o id do prospect (na URL). O corpo tem de ser {}: nada que decide a promoção vem do cliente —
+      // nem estado, nem approvalId, nem actor, nem userId, nem role, nem permissions.
+      if (Object.keys(await readJsonBody(req)).length > 0) throw new HttpError('INVALID_REQUEST', 'Campos não permitidos na requisição.');
+      const promoted = await crmIntegrationService.promoteProspect(context, id);
+      // Resultado SEGURO: só o desfecho, os dois ids e se há sinal de duplicidade (o registro inteiro e a outra
+      // identidade não saem daqui).
+      return respond(200, {
+        outcome: promoted.outcome,
+        prospectId: promoted.prospectId,
+        crmRecordId: promoted.crmRecordId,
+        possivelDuplicidade: promoted.possivelDuplicidade !== null && promoted.possivelDuplicidade !== undefined,
+      });
+    }
     const reason = readReason(await readJsonBody(req), { required: route.name === 'reject' });
     const options = reason === undefined ? {} : { reason };
     const item =

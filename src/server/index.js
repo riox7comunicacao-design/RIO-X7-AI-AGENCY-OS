@@ -38,6 +38,7 @@ const {
 } = require('../auth');
 const { createApprovalQueueService } = require('../services/approvalQueueService');
 const { createFileBackedCrmService } = require('../services/crmFileService');
+const { createFileBackedCrmIntegrationService } = require('../services/crmIntegrationFileService');
 const { createApp } = require('./app');
 
 const ROOT = path.join(__dirname, '..', '..');
@@ -141,11 +142,20 @@ function createServer(env = process.env, options = {}) {
     filePath: resolveFile(env.RIO_X7_CRM_PATH, DEFAULT_CRM_FILE),
   });
 
+  // A promoção Approval Queue → CRM (decisão 0016): os MESMOS dois arquivos e as MESMAS portas de autorização.
+  const crmIntegrationService = createFileBackedCrmIntegrationService({
+    authorizeReviewer: authorizeReviewerForApprovalQueue,
+    authorizeOperation: authorizeCrmOperation,
+    queuePath: resolveFile(env.RIO_X7_QUEUE_PATH, undefined),
+    crmPath: resolveFile(env.RIO_X7_CRM_PATH, DEFAULT_CRM_FILE),
+  });
+
   const app = createApp({
     verifyAccessToken: authAdapter.verifyAccessToken,
     userStore,
     approvalQueueService,
     crmService,
+    crmIntegrationService,
     publicConfig: { supabaseUrl, supabaseAnonKey },
     staticRoot: DASHBOARD_ROOT,
     staticFiles: { '/lib/supabase.js': SUPABASE_BUNDLE },

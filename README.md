@@ -16,15 +16,15 @@ Navegador → Dashboard (dashboard/) → HTTP /api/* (src/server) → Services (
 | **CRM operacional** (13 status, máquina de estados, "Não contatar", deduplicação) | domínio `src/crm/` → Service `src/services/crmService.js` → API `/api/crm` (`src/server/app.js`) → telas `dashboard/views/crm.mjs` |
 | **Dashboard** (login, Visão Geral, CRM, Aprovações, Sair) | `dashboard/` — JavaScript puro, sem CDN (o SDK do Supabase vem do `node_modules`, instalado pelo `npm ci`); conversa com o servidor só por HTTP |
 | **Fila de aprovação humana** (Research + Prospector) | `src/research-prospector/`, `src/services/approvalQueueService.js` |
-| **Promoção Approval Queue → CRM** | `src/services/crmIntegrationService.js` (+ `prospectToCrmFields.js`, `approvalPromotionService.js`) — só serviço, sem rota HTTP nem tela |
+| **Promoção Approval Queue → CRM** | `src/services/crmIntegrationService.js` (+ `prospectToCrmFields.js`, `approvalPromotionService.js`) — serviço, rota `POST /api/approvals/:id/promote` e ação "Promover para CRM" na tela Aprovações |
 | **Autenticação e permissões** | `src/auth/` (Supabase Auth; matriz em `docs/architecture/permissions-matrix.md`) |
 | **Notion** | base de conhecimento, documentação e Skills nativas — **não** é mais o CRM (decisão 0012) |
 
 ## O que existe e o que ainda não
 
-**Implementado e testado:** login com Supabase, Dashboard, fila de aprovação humana, o CRM completo da primeira versão (domínio → Service → API → Dashboard: lista, busca, filtros, ficha, histórico, criar, editar, mudar status, "Não contatar") e a **promoção controlada Approval Queue → CRM** (`src/services/crmIntegrationService.js`: só prospects aprovados por um humano, idempotente, com auditoria nos dois lados — como serviço; ver a [decisão 0016](./docs/decisions/0016-crm-integration.md)).
+**Implementado e testado:** login com Supabase, Dashboard, fila de aprovação humana, o CRM completo da primeira versão (domínio → Service → API → Dashboard: lista, busca, filtros, ficha, histórico, criar, editar, mudar status, "Não contatar") e a **promoção controlada Approval Queue → CRM** (`src/services/crmIntegrationService.js`: só prospects aprovados por um humano, idempotente, com auditoria nos dois lados — pelo serviço, pela rota e pelo botão "Promover para CRM" da tela Aprovações; ver a [decisão 0016](./docs/decisions/0016-crm-integration.md)).
 
-**Ainda não implementado:** uma rota HTTP e uma ação "Promover para CRM" no Dashboard (a promoção ainda não tem tela), Kanban do CRM, SDR, outbound, WhatsApp, prospecção automática, IA nos especialistas e **persistência centralizada** — hoje os dados operacionais (`data/*.json`) são locais a cada computador e não são sincronizados.
+**Ainda não implementado:** Kanban do CRM, SDR, outbound, WhatsApp, prospecção automática, IA nos especialistas e **persistência centralizada** — hoje os dados operacionais (`data/*.json`) são locais a cada computador e não são sincronizados.
 
 ## Como iniciar e testar
 

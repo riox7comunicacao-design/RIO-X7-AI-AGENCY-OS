@@ -73,7 +73,7 @@ test('[CRM-API-ARCH-3] a raiz de composição só chama a fábrica de src/servic
   assert.deepEqual(analise.issues, []);
   assert.deepEqual(
     analise.refs.map((ref) => ref.specifier).sort(),
-    ['../auth', '../services/approvalQueueService', '../services/crmFileService', './app', 'node:fs', 'node:http', 'node:path']
+    ['../auth', '../services/approvalQueueService', '../services/crmFileService', '../services/crmIntegrationFileService', './app', 'node:fs', 'node:http', 'node:path']
   );
   const identificadores = identificadoresDe(analise);
   for (const proibido of ['createCrmService', 'createJsonFileCrmRepository', 'createInMemoryCrmRepository', 'assertValidRepository', 'crmDomain']) {
@@ -87,4 +87,5 @@ test('[CRM-API-ARCH-4] a composição injeta o autorizador de src/auth e o camin
   const codigo = fs.readFileSync(path.join(REPO_ROOT, 'src/server/index.js'), 'utf8');
   assert.match(codigo, /createFileBackedCrmService\(\{\s*authorizeOperation: authorizeCrmOperation,\s*filePath: resolveFile\(env\.RIO_X7_CRM_PATH, DEFAULT_CRM_FILE\),?\s*\}\)/);
   assert.match(codigo, /createApp\(\{[^}]*\bcrmService,/);
+  assert.match(codigo, /createApp\(\{[^}]*\bcrmIntegrationService,/);
 });

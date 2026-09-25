@@ -16,11 +16,13 @@
 
 import { h } from '../dom.mjs';
 import { textOf, safeHttpUrl, formatDate, formatDateTime } from '../format.mjs';
+import { buildHash } from '../router.mjs';
 
 // Estas quatro funções puras vivem em ../format.mjs (compartilhadas com as demais telas); continuam exportadas daqui.
 export { textOf, safeHttpUrl, formatDate, formatDateTime };
 
 export const PENDING_ESTADO = 'AGUARDANDO_REVISAO';
+export const APPROVED_ESTADO = 'APROVADO_PARA_CRM';
 
 export const ESTADO_LABELS = Object.freeze({
   AGUARDANDO_REVISAO: 'Aguardando revisão',
@@ -123,15 +125,40 @@ export function messageForError(error) {
   return GENERIC_ERROR;
 }
 
+// Como a promoção terminou (o servidor devolve só isto). Qualquer outro valor é resposta inesperada.
+const PROMOTION_DONE = Object.freeze(['CRIADO', 'RECONCILIADO']);
+const PROMOTION_ALREADY = 'JA_PROMOVIDO';
+
+export const PROMOTED_MESSAGE = 'Prospect promovido para o CRM.';
+export const ALREADY_PROMOTED_MESSAGE = 'Este prospect já foi promovido para o CRM.';
+export const PROMOTE_CONFIRM_TEXT = 'Este prospect será incluído no CRM e poderá entrar no pipeline comercial.';
+
+// A mensagem de uma promoção que falhou. Os 409 trazem uma mensagem FIXA do servidor (duplicidade, restrição de contato,
+// não aprovado...), só usada quando o código é de promoção — nada de texto interno. 401 devolve null (o login cuida).
+export function promotionMessageForError(error) {
+  const status = error && typeof error.status === 'number' ? error.status : 0;
+  if (status === 401) return null;
+  if (status === 403) return 'Sua conta não pode promover prospects para o CRM.';
+  if (status === 404) return 'Este prospect não foi encontrado. A lista foi atualizada.';
+  if (status === 409) {
+    const fromServer = error && typeof error.code === 'string' && error.code.startsWith('PROMOTION_') ? textOf(error.serverMessage) : '';
+    return fromServer || 'A promoção foi bloqueada.';
+  }
+  if (status === 400) return 'Não foi possível promover: identificador inválido.';
+  return GENERIC_ERROR;
+}
+
 const cityUf = (snapshot) => [textOf(snapshot.cidade), textOf(snapshot.estadoUf)].filter(Boolean).join('/');
 
 // ---------------------------------------------------------------------------
 // A tela
 // ---------------------------------------------------------------------------
 
-// document/root: onde desenhar. api: { listApprovals, approve, reject } (api.mjs). canReview: mostra os botões.
-export function createApprovalsView({ document, root, api, canReview }) {
-  const state = { loading: true, items: [], selectedId: null, mode: null, busy: false, message: null, formError: null };
+// document/root: onde desenhar. api: { listApprovals, approve, reject, promoteApproval } (api.mjs). canReview: mostra os
+// botões de aprovar/rejeitar. canPromote: mostra "Promover para CRM" nos aprovados. canReadCrm: mostra "Ver no CRM".
+// As três são conveniência de interface (vêm de /api/me); quem autoriza é o servidor.
+export function createApprovalsView({ document, root, api, canReview, canPromote = false, canReadCrm = false }) {
+  const state = { loading: true, items: [], selectedId: null, mode: null, busy: false, message: null, formError: null, filter: PENDING_ESTADO, promoted: {} };
   let reasonInput = null;
 
   const badge = (text, tone) => h(document, 'span', { className: `badge ${tone || 'neutral'}`, text });
@@ -145,7 +172,7 @@ export function createApprovalsView({ document, root, api, canReview }) {
     state.loading = true;
     render();
     try {
-      const data = await api.listApprovals();
+      const data = await api.listApprovals(state.filter === PENDING_ESTADO ? undefined : state.filter);
       state.items = Array.isArray(data && data.items) ? data.items : [];
       if (!selectedItem()) {
         state.selectedId = null;
@@ -156,6 +183,17 @@ export function createApprovalsView({ document, root, api, canReview }) {
     }
     state.loading = false;
     render();
+  }
+
+  function setFilter(filter) {
+    if (state.busy || state.filter === filter) return;
+    state.filter = filter;
+    state.items = [];
+    state.selectedId = null;
+    state.mode = null;
+    state.formError = null;
+    state.message = null;
+    return load();
   }
 
   function select(prospectId) {
@@ -179,7 +217,55 @@ export function createApprovalsView({ document, root, api, canReview }) {
     render();
   }
 
+  // O id do registro do CRM que ESTE prospect já tem — só o que o servidor informou (a resposta da promoção ou o
+  // item.promocao da fila). Nunca inventado nem montado a partir do nome.
+  function promotedRecordId(item) {
+    const fromResponse = Object.prototype.hasOwnProperty.call(state.promoted, item.prospectId) ? state.promoted[item.prospectId] : null;
+    if (typeof fromResponse === 'string' && fromResponse !== '') return fromResponse;
+    const promocao = item.promocao;
+    if (promocao && typeof promocao === 'object' && promocao.resultado !== 'BLOQUEADO' && typeof promocao.crmRecordId === 'string' && promocao.crmRecordId !== '') {
+      return promocao.crmRecordId;
+    }
+    return null;
+  }
+
+  async function confirmPromotion() {
+    const item = selectedItem();
+    // busy: um segundo clique (ou um botão antigo ainda na tela) nunca dispara uma segunda requisição.
+    if (!item || state.mode !== 'promote' || state.busy || !canPromote || item.estado !== APPROVED_ESTADO) return;
+    state.busy = true;
+    state.message = null;
+    render();
+    try {
+      const result = await api.promoteApproval(item.prospectId);
+      const outcome = result && typeof result === 'object' ? result.outcome : null;
+      const crmRecordId = result && typeof result === 'object' ? result.crmRecordId : null;
+      if (!(PROMOTION_DONE.includes(outcome) || outcome === PROMOTION_ALREADY) || typeof crmRecordId !== 'string' || crmRecordId === '') {
+        throw new Error('resposta inesperada');
+      }
+      state.promoted[item.prospectId] = crmRecordId;
+      const base = outcome === PROMOTION_ALREADY ? ALREADY_PROMOTED_MESSAGE : PROMOTED_MESSAGE;
+      setMessage('success', result.possivelDuplicidade === true ? `${base} Atenção: há sinal de possível duplicidade no CRM — confira o registro.` : base);
+      state.busy = false;
+      state.mode = null;
+      await load();
+    } catch (error) {
+      state.busy = false;
+      state.mode = null;
+      setMessage('error', promotionMessageForError(error));
+      if (error && error.status === 404) {
+        state.selectedId = null;
+        await load();
+      } else if (error && error.status === 409) {
+        await load();
+      } else {
+        render();
+      }
+    }
+  }
+
   async function confirm() {
+    if (state.mode === 'promote') return confirmPromotion();
     const item = selectedItem();
     if (!item || !state.mode || state.busy) return;
     const mode = state.mode;
@@ -222,8 +308,9 @@ export function createApprovalsView({ document, root, api, canReview }) {
   // ---- desenho ----------------------------------------------------------
 
   function renderList() {
+    const approved = state.filter === APPROVED_ESTADO;
     if (state.loading && state.items.length === 0) return h(document, 'p', { className: 'muted', text: 'Carregando…' });
-    if (state.items.length === 0) return h(document, 'p', { className: 'muted', text: 'Nenhum prospect aguardando revisão.' });
+    if (state.items.length === 0) return h(document, 'p', { className: 'muted', text: approved ? 'Nenhum prospect aprovado.' : 'Nenhum prospect aguardando revisão.' });
 
     const head = h(
       document,
@@ -262,7 +349,7 @@ export function createApprovalsView({ document, root, api, canReview }) {
       document,
       'div',
       { className: 'table-wrap' },
-      h(document, 'table', { className: 'list' }, h(document, 'caption', { className: 'visually-hidden', text: 'Prospects aguardando revisão' }), h(document, 'thead', {}, head), h(document, 'tbody', {}, ...rows))
+      h(document, 'table', { className: 'list' }, h(document, 'caption', { className: 'visually-hidden', text: approved ? 'Prospects aprovados' : 'Prospects aguardando revisão' }), h(document, 'thead', {}, head), h(document, 'tbody', {}, ...rows))
     );
   }
 
@@ -322,6 +409,47 @@ export function createApprovalsView({ document, root, api, canReview }) {
         const reason = entry && textOf(entry.motivo) ? `: ${textOf(entry.motivo)}` : '';
         return h(document, 'li', { text: `${line}${reason}` });
       })
+    );
+  }
+
+  function renderPromotionConfirmation(item) {
+    return h(
+      document,
+      'div',
+      { className: 'confirm', role: 'group', 'aria-label': 'Confirmar promoção para o CRM' },
+      h(document, 'h4', { text: 'Promover para o CRM' }),
+      h(document, 'p', { text: `Prospect: ${textOf(item.empresa) || 'Sem nome'}` }),
+      h(document, 'p', { text: PROMOTE_CONFIRM_TEXT }),
+      h(
+        document,
+        'div',
+        { className: 'actions' },
+        h(document, 'button', { type: 'button', className: 'btn secondary', text: 'Cancelar', disabled: state.busy, onclick: cancelConfirmation }),
+        h(document, 'button', { type: 'button', className: 'btn primary', text: state.busy ? 'Promovendo…' : 'Promover', disabled: state.busy, onclick: confirm })
+      )
+    );
+  }
+
+  // As ações de um prospect já APROVADO na triagem: promover para o CRM (só com permissão) ou, se já foi promovido,
+  // avisar e levar ao registro.
+  function renderApprovedActions(item) {
+    const recordId = promotedRecordId(item);
+    if (recordId !== null) {
+      return h(
+        document,
+        'div',
+        { className: 'promotion' },
+        h(document, 'p', { className: 'muted', text: ALREADY_PROMOTED_MESSAGE }),
+        canReadCrm ? h(document, 'a', { className: 'btn secondary', href: buildHash({ name: 'crm-record', id: recordId }), text: 'Ver no CRM' }) : null
+      );
+    }
+    if (!canPromote) return h(document, 'p', { className: 'muted', text: 'Sua conta não pode promover prospects para o CRM.' });
+    if (state.mode === 'promote') return renderPromotionConfirmation(item);
+    return h(
+      document,
+      'div',
+      { className: 'actions' },
+      h(document, 'button', { type: 'button', className: 'btn primary', text: 'Promover para CRM', disabled: state.busy, onclick: () => openConfirmation('promote') })
     );
   }
 
@@ -402,6 +530,8 @@ export function createApprovalsView({ document, root, api, canReview }) {
           : renderConfirmation(item);
     } else if (pending) {
       actions = h(document, 'p', { className: 'muted', text: 'Sua conta não pode aprovar ou rejeitar prospects.' });
+    } else if (item.estado === APPROVED_ESTADO) {
+      actions = renderApprovedActions(item);
     } else {
       actions = h(document, 'p', { className: 'muted', text: 'Este item já foi decidido ou está bloqueado.' });
     }
@@ -417,7 +547,9 @@ export function createApprovalsView({ document, root, api, canReview }) {
   }
 
   function render() {
-    const pendingCount = state.items.filter((item) => item.estado === PENDING_ESTADO).length;
+    const approvedView = state.filter === APPROVED_ESTADO;
+    const pendingCount = state.items.filter((item) => item.estado === (approvedView ? APPROVED_ESTADO : PENDING_ESTADO)).length;
+    const countText = approvedView ? `${pendingCount} ${pendingCount === 1 ? 'aprovado' : 'aprovados'}` : `${pendingCount} ${pendingCount === 1 ? 'pendente' : 'pendentes'}`;
     root.replaceChildren(
       h(
         document,
@@ -428,7 +560,14 @@ export function createApprovalsView({ document, root, api, canReview }) {
           'div',
           { className: 'approvals-head' },
           h(document, 'h2', { id: 'approvals-title', text: 'Aprovações' }),
-          h(document, 'p', { className: 'pending-count', text: `${pendingCount} ${pendingCount === 1 ? 'pendente' : 'pendentes'}` }),
+          h(document, 'p', { className: 'pending-count', text: countText }),
+          h(
+            document,
+            'div',
+            { className: 'actions', role: 'group', 'aria-label': 'Filtrar por estado' },
+            h(document, 'button', { type: 'button', className: 'btn secondary', text: 'Pendentes', 'aria-pressed': approvedView ? 'false' : 'true', disabled: state.busy, onclick: () => setFilter(PENDING_ESTADO) }),
+            h(document, 'button', { type: 'button', className: 'btn secondary', text: 'Aprovados', 'aria-pressed': approvedView ? 'true' : 'false', disabled: state.busy, onclick: () => setFilter(APPROVED_ESTADO) })
+          ),
           h(document, 'button', { type: 'button', className: 'btn secondary', text: 'Atualizar', disabled: state.busy || state.loading, onclick: refresh })
         ),
         state.message ? h(document, 'p', { className: `message ${state.message.kind}`, role: 'status', text: state.message.text }) : null,

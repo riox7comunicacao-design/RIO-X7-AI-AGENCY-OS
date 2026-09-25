@@ -115,9 +115,13 @@ export function createApiClient({ getAccessToken, refreshAccessToken, onSessionL
 
   return {
     me: () => request('GET', '/api/me'),
-    listApprovals: () => request('GET', '/api/approvals'),
+    // `estado` só filtra a listagem (o servidor valida e decide); sem ele, a lista padrão do servidor (pendentes).
+    listApprovals: (estado) => request('GET', typeof estado === 'string' && estado !== '' ? `/api/approvals?estado=${encodeURIComponent(estado)}` : '/api/approvals'),
     approve: (prospectId, reason) => request('POST', `/api/approvals/${encodeURIComponent(prospectId)}/approve`, reason ? { reason } : {}),
     reject: (prospectId, reason) => request('POST', `/api/approvals/${encodeURIComponent(prospectId)}/reject`, { reason }),
+    // Promoção Approval Queue -> CRM (decisão 0016): SÓ o id do prospect (na URL) e um corpo VAZIO. Quem promove vem do
+    // token; a aprovação, o estado e a autorização o servidor confere na fila real — nada disso sai daqui.
+    promoteApproval: (prospectId) => request('POST', `/api/approvals/${encodeURIComponent(prospectId)}/promote`, {}),
 
     // CRM. As escritas são `async`: um corpo recusado por crmFields/crmCreateOptions vira uma promessa rejeitada, como
     // qualquer outra falha (e nenhuma requisição sai).

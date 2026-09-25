@@ -58,6 +58,8 @@ p { margin: 0 0 8px; }
 .btn.primary { background: var(--primary); border-color: var(--primary); color: var(--primary-text); }
 .btn.danger { background: var(--danger); border-color: var(--danger); color: #ffffff; }
 .btn:disabled { opacity: 0.55; cursor: not-allowed; }
+.btn[aria-pressed="true"] { background: var(--primary); border-color: var(--primary); color: var(--primary-text); }
+.promotion { margin-top: 8px; display: flex; flex-direction: column; gap: 8px; align-items: flex-start; }
 
 .link-button {
   font: inherit;

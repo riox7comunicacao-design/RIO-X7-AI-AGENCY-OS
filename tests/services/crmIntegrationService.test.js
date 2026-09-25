@@ -958,7 +958,7 @@ test('[INT-43] a camada não fala com a rede: com o fetch global derrubado, a pr
   assert.equal(rede.mock.callCount(), 0);
 });
 
-test('[INT-44] fronteira arquitetural: o serviço importa só a fila (domínio e descoberta), a autenticação e o mapeamento — NUNCA o domínio do CRM, o servidor, o disco ou a rede; e nenhuma rota HTTP expõe a promoção (API e Dashboard não foram alterados)', () => {
+test('[INT-44] fronteira arquitetural: o serviço importa só a fila (domínio e descoberta), a autenticação e o mapeamento — NUNCA o domínio do CRM, o servidor, o disco ou a rede; e a rota HTTP só usa o serviço injetado (a composição fica na fábrica de arquivos)', () => {
   const analise = analyzeSource(fs.readFileSync(SOURCE, 'utf8'), 'src/services/crmIntegrationService.js');
   assert.deepEqual(analise.issues, []);
   assert.deepEqual(
@@ -973,12 +973,15 @@ test('[INT-44] fronteira arquitetural: o serviço importa só a fila (domínio e
   for (const texto of analise.strings) {
     assert.doesNotMatch(texto.value, /supabase|notion|https?:|\.env|service_role|SUPABASE_/i, `texto suspeito: ${texto.value.slice(0, 60)}`);
   }
-  // nenhuma rota, nenhuma composição no servidor: a promoção ainda não é exposta
+  // A promoção é exposta pela rota POST /api/approvals/:id/promote (etapa PROMOÇÃO PELO DASHBOARD): o servidor só usa o serviço
+  // INJETADO (promoteProspect) e a raiz de composição só chama a fábrica de arquivos — nenhum dos dois constrói a integração
+  // nem a auditoria à mão (as regras seguem no serviço).
   for (const arquivo of [SERVER_APP, SERVER_INDEX]) {
     const codigo = fs.readFileSync(arquivo, 'utf8');
-    assert.ok(!/promoteProspect|crmIntegration|approvalPromotion|createCrmIntegrationService|createApprovalPromotionService/.test(codigo), `${path.basename(arquivo)} não deve referenciar a promoção`);
+    assert.ok(!/createCrmIntegrationService|createApprovalPromotionService|approvalPromotion/.test(codigo), `${path.basename(arquivo)} não constrói a integração nem a auditoria`);
   }
-  assert.ok(!fs.readFileSync(path.join(__dirname, '..', '..', 'dashboard', 'api.mjs'), 'utf8').includes('promot'), 'o Dashboard não foi alterado');
+  assert.ok(/createFileBackedCrmIntegrationService/.test(fs.readFileSync(SERVER_INDEX, 'utf8')));
+  assert.ok(fs.readFileSync(path.join(__dirname, '..', '..', 'dashboard', 'api.mjs'), 'utf8').includes('promoteApproval'), 'o Dashboard tem a chamada de promoção');
 });
 
 test('[INT-45] a permissão exigida é só WRITE:CRM (pela ponte do CRM, logo no início) mais APPROVE:LEAD_APPROVAL (pela fila): nenhuma permissão nova, e o closer — que tem READ:CRM e APPROVE:LEAD_APPROVAL — continua sem poder promover', (t) => {

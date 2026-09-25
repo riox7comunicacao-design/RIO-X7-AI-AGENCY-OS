@@ -45,8 +45,8 @@ npm start
 
 | Onde | Total | Passam | Falham | Pulados |
 |---|---|---|---|---|
-| Neste computador, com `.env` | 839 | 837 | 0 | 2 |
-| Sem `.env` e sem `data/*.json` (um clone limpo) | 839 | 832 | 0 | 7 |
+| Neste computador, com `.env` | 877 | 875 | 0 | 2 |
+| Sem `.env` e sem `data/*.json` (um clone limpo) | 877 | 870 | 0 | 7 |
 
 Nenhuma falha. Os pulados são esperados: sem `.env` (5 testes de conectividade/autenticação contra o Supabase real), o `[REAL-2]` (só roda com `RIO_X7_TEST_ACCESS_TOKEN`, um token real de teste) e o `[SRV-SEC-24b]` (symlink, que o Windows sem privilégio não permite). O preflight sem `.env` **falha de propósito** (`.env` e `data/users.json` ausentes; conectividade pulada) — é o comportamento correto de um computador ainda não configurado.
 
@@ -65,7 +65,7 @@ Na primeira validação manual real, a ficha de "TESTE CRM Rio X7" mostrou a **c
 
 [Decisão 0016](../decisions/0016-crm-integration.md). `promoteProspect(context, prospectId)` (`src/services/crmIntegrationService.js`) promove, para o CRM, um prospect que um **humano aprovou** na fila: explícita (nunca automática), idempotente (a mesma aprovação nunca cria dois registros — nem depois de uma falha no meio) e com auditoria na fila **e** no CRM. Exige `APPROVE:LEAD_APPROVAL` e `WRITE:CRM` (nenhuma permissão nova): o ADMIN promove; o closer aprova, mas não promove. A duplicidade e o DNC continuam sendo do **domínio do CRM**; nome+cidade só sinaliza. Nenhum estado novo na fila (`APROVADO_PARA_CRM` continua terminal; a promoção fica em `item.promocao` e no histórico).
 
-**Existe só como serviço — sem rota HTTP e sem tela.** Uma ação "Promover para CRM" no Dashboard exigirá uma rota autorizada (etapa futura, com autorização do proprietário). **Limites** (detalhes na 0016): sem trava entre processos (dois processos podem criar um registro duplicado para um prospect só com nome e cidade; o CRM não tem exclusão — revisão humana); a promoção usa o snapshot **atual** da fila (a redescoberta o atualiza mesmo depois da aprovação); `googlePerfil` não chega ao CRM (a fila não o guarda); se `data/crm.json` se perder com a fila intacta, a promoção falha claramente (`PROMOTION_INCONSISTENT`) e a recuperação é manual.
+**Exposta pelo Dashboard** (2026-09-25): `POST /api/approvals/:id/promote` (só o id na URL e corpo `{}`; autenticação obrigatória; chama `promoteProspect(contexto, id)` pelo serviço injetado; resposta segura `{ outcome, prospectId, crmRecordId, possivelDuplicidade }`; erros por `code` com mensagem fixa: 400/401/403/404/409/500) e, na tela Aprovações, o filtro **Pendentes/Aprovados** e o botão **Promover para CRM** (só em `APROVADO_PARA_CRM`, só para o ADMIN; o closer não o vê e a rota o recusa com 403), com confirmação, trava contra clique duplo e **Ver no CRM** (com o id devolvido pelo servidor). A rota só existe se o servidor recebe o serviço de promoção; a composição fica em `src/services/crmIntegrationFileService.js`. **Limites** (detalhes na 0016): sem trava entre processos (dois processos podem criar um registro duplicado para um prospect só com nome e cidade; o CRM não tem exclusão — revisão humana); a promoção usa o snapshot **atual** da fila (a redescoberta o atualiza mesmo depois da aprovação); `googlePerfil` não chega ao CRM (a fila não o guarda); se `data/crm.json` se perder com a fila intacta, a promoção falha claramente (`PROMOTION_INCONSISTENT`) e a recuperação é manual.
 
 ## Decisões pendentes que a interface do CRM tornou visíveis (nenhuma resolvida)
 
@@ -73,7 +73,7 @@ A API não informa as transições permitidas (a tela oferece os outros status e
 
 ---
 
-## ESTADO ATUAL (2026-09-24)
+## ESTADO ATUAL (2026-09-25)
 
 - CRM-DOMAIN: concluído
 - CRM-SERVICE: concluído
@@ -82,12 +82,12 @@ A API não informa as transições permitidas (a tela oferece os outros status e
 - investigação manual da cidade: **não reproduzida** (sem correção de produção)
 - testes de regressão: concluídos (`DASH-FULL-9`, `DASH-FULL-10`, `DASH-CRM-35`)
 - documentação e handoff para outro computador: concluídos e ensaiados com um clone limpo do `origin/main`
-- CRM-INTEGRATION: **concluído como serviço** (decisão 0016) — sem rota HTTP e sem tela
-- Kanban, ação "Promover para CRM" no Dashboard, Prospector, SDR, outbound: NÃO implementados
+- CRM-INTEGRATION: **concluído** (decisão 0016) — serviço, rota `POST /api/approvals/:id/promote` e ação "Promover para CRM" no Dashboard
+- Kanban, Prospector, SDR, outbound: NÃO implementados
 - persistência centralizada / sincronização entre computadores: NÃO implementada (necessidade futura)
 
 ## PRÓXIMA ETAPA
 
-**Ainda não definida.** O proprietário (Breno Bento) decide depois de revisar a CRM-INTEGRATION. Candidatas naturais, **nenhuma iniciada**: a rota autorizada e a ação "Promover para CRM" no Dashboard; melhorias no snapshot da fila (`googlePerfil`, congelar o que foi aprovado); persistência centralizada.
+**Ainda não definida.** O proprietário (Breno Bento) decide depois de revisar a promoção pelo Dashboard. Candidatas naturais, **nenhuma iniciada**: melhorias no snapshot da fila (`googlePerfil`, congelar o que foi aprovado); persistência centralizada.
 
 **Não iniciar nenhuma etapa automaticamente** — nem o Prospector. Só começa com autorização explícita do proprietário do projeto.

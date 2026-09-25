@@ -266,7 +266,15 @@ export function startDashboard({ document, root, fetchImpl, sdk, navigation }) {
         } else if (section === 'approvals') {
           const target = container();
           main.replaceChildren(target);
-          transient = createApprovalsView({ document, root: target, api, canReview: permissions.canReview });
+          transient = createApprovalsView({
+            document,
+            root: target,
+            api,
+            canReview: permissions.canReview,
+            // Promover exige as duas permissões (o servidor confere as reais): APPROVE:LEAD_APPROVAL e WRITE:CRM.
+            canPromote: permissions.canReview && permissions.canWriteCrm,
+            canReadCrm: permissions.canReadCrm,
+          });
           transient.load();
         } else if (section === 'overview') {
           const target = container();

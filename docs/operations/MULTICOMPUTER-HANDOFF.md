@@ -85,7 +85,7 @@ git rev-parse origin/main
 
 ## Resultado esperado (ensaio com um clone limpo do `origin/main`, 2026-09-24)
 
-Ensaio feito em 2026-09-24 num diretório temporário, só com os arquivos versionados — **sem** copiar `.env`, `data/users.json` nem `data/crm.json`. A etapa CRM-INTEGRATION (2026-09-25) só acrescentou testes e código de serviço: `package.json`, `package-lock.json` e o preflight não mudaram, então os passos e os resultados são os mesmos, com a contagem de testes atualizada:
+Ensaio feito em 2026-09-24 num diretório temporário, só com os arquivos versionados — **sem** copiar `.env`, `data/users.json` nem `data/crm.json`. As etapas CRM-INTEGRATION e "promoção pelo Dashboard" (2026-09-25) só acrescentaram testes e código (serviço, rota e tela): `package.json`, `package-lock.json` e o preflight não mudaram, então os passos e os resultados são os mesmos, com a contagem de testes atualizada:
 
 | Passo | Resultado esperado |
 |---|---|
@@ -93,8 +93,8 @@ Ensaio feito em 2026-09-24 num diretório temporário, só com os arquivos versi
 | `npm ci` | 9 pacotes instalados (a única dependência direta é `@supabase/supabase-js`), 0 vulnerabilidades, ~10 s |
 | `preflight` **sem** `.env` | **4 falhas e 1 aviso** (`.env` ausente, `SUPABASE_URL`, `SUPABASE_ANON_KEY` e `data/users.json` ausentes; conectividade pulada), código de saída 1 — **esperado**: o computador ainda não está configurado |
 | `preflight` **com** `.env` e `data/users.json` | 14 verificações, **0 falhas**, 0 avisos (inclui uma checagem real, só leitura e sem login, do Supabase) |
-| `npm test` **sem** `.env` | **839 testes: 832 passam, 0 falham, 7 pulados** |
-| `npm test` **com** `.env` | **839 testes: 837 passam, 0 falham, 2 pulados** |
+| `npm test` **sem** `.env` | **877 testes: 870 passam, 0 falham, 7 pulados** |
+| `npm test` **com** `.env` | **877 testes: 875 passam, 0 falham, 2 pulados** |
 
 Os pulados são esperados: sem `.env`, 5 testes de conectividade/autenticação contra o Supabase real; o `[REAL-2]` (só roda com `RIO_X7_TEST_ACCESS_TOKEN`, um token real de um usuário de **teste** — opcional); e o `[SRV-SEC-24b]` (symlink, que o Windows sem privilégio não permite). Qualquer **falha** é um problema real, nunca esperado.
 
@@ -160,4 +160,4 @@ Nenhuma integração de acesso remoto foi criada ou é necessária além do pró
 
 ## Próxima etapa
 
-**Ainda não definida:** o proprietário decide depois de revisar a CRM-INTEGRATION (a promoção Approval Queue → CRM, já implementada como serviço — [0016](../decisions/0016-crm-integration.md)). Nenhuma etapa começa sem autorização explícita. O estado completo e as decisões pendentes estão no [CONTINUE-HERE.md](./CONTINUE-HERE.md) e no [CHANGELOG.md](../../CHANGELOG.md).
+**Ainda não definida:** o proprietário decide depois de revisar a promoção Approval Queue → CRM pelo Dashboard ([0016](../decisions/0016-crm-integration.md)): o ADMIN promove um prospect aprovado pela tela Aprovações; o closer aprova, mas não promove. Nenhuma etapa começa sem autorização explícita. O estado completo e as decisões pendentes estão no [CONTINUE-HERE.md](./CONTINUE-HERE.md) e no [CHANGELOG.md](../../CHANGELOG.md).

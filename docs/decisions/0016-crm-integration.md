@@ -147,7 +147,7 @@ Nenhuma falha parcial cria um estado impossível: o CRM é gravado antes da fila
 
 ## Limites e decisões pendentes (registrados, não resolvidos)
 
-- **Sem rota e sem Dashboard.** A promoção só existe como serviço. Uma ação "Promover para CRM" no Dashboard exigirá uma rota autorizada (`POST` sobre o prospect, compondo os três Services no servidor, com mapeamento de erros por `code`) e uma tela — etapa própria, com autorização do proprietário. A composição (os dois arquivos de caminho e as pontes de autorização) já é a que o servidor faz hoje.
+- **Exposição pelo Dashboard (2026-09-25, etapa seguinte).** A promoção agora é exposta por `POST /api/approvals/:id/promote` (só o id na URL e corpo `{}`; autenticação obrigatória; chama `promoteProspect(contexto, id)` pelo serviço injetado; resposta segura `{ outcome, prospectId, crmRecordId, possivelDuplicidade }`; erros por `code` com mensagem fixa: 400/401/403/404/409/500) e pela ação "Promover para CRM" na tela Aprovações (só para `APROVADO_PARA_CRM` e só para quem tem as duas permissões). A rota **não** compõe nada nem duplica regra: recebe o serviço pronto, montado por `src/services/crmIntegrationFileService.js` sobre os mesmos arquivos e pontes de autorização. Nenhuma permissão nova; a matriz não mudou. Aprovar continua diferente de promover.
 - **O snapshot pode mudar depois da aprovação:** a redescoberta atualiza o `discoverySnapshot` mesmo de um item terminal, então a promoção usa os dados **atuais** da fila, não os do momento da aprovação. Congelar o que foi aprovado exigiria mudar a aprovação na fila — decisão futura.
 - **`googlePerfil` não chega ao CRM:** a pesquisa o produz, mas `sanitizeSnapshot` da fila não o guarda (`fontes` pode citar o Google Maps). Corrigir é uma mudança no snapshot da fila — decisão futura.
 - **Perda do CRM com a fila intacta:** se `data/crm.json` se perder e a fila disser "promovido", a promoção falha claramente (`INCONSISTENT`) em vez de recriar; recuperar é ação manual (remover o `promocao` do item) até existir uma operação administrativa — decisão futura.
@@ -158,8 +158,8 @@ Nenhuma falha parcial cria um estado impossível: o CRM é gravado antes da fila
 
 ## O que NÃO foi implementado
 
-Prospector e nova pesquisa web, SDR, outbound, WhatsApp, e-mail, automação de contato, CRM com IA, Supabase/Postgres, rota HTTP nova, alteração no Dashboard, permissão nova, sincronização com o Notion, promoção automática (nenhum item vira `APROVADO_PARA_CRM` por esta camada; ela só consome uma aprovação que já existe) e qualquer promoção em lote.
+Prospector e nova pesquisa web, SDR, outbound, WhatsApp, e-mail, automação de contato, CRM com IA, Supabase/Postgres, permissão nova, sincronização com o Notion, promoção automática (nenhum item vira `APROVADO_PARA_CRM` por esta camada; ela só consome uma aprovação que já existe) e qualquer promoção em lote.
 
 ## Próximo passo
 
-A etapa seguinte **não está definida**: o proprietário decide depois de revisar esta implementação. Candidatas naturais (nenhuma iniciada): a rota autorizada e a ação "Promover para CRM" no Dashboard; o snapshot da fila (`googlePerfil`, congelar o que foi aprovado); persistência centralizada.
+A etapa seguinte **não está definida**: o proprietário decide depois de revisar esta implementação. Candidatas naturais (nenhuma iniciada): o snapshot da fila (`googlePerfil`, congelar o que foi aprovado); persistência centralizada.

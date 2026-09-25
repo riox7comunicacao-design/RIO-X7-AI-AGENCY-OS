@@ -14,6 +14,7 @@ const domain = require('../../src/research-prospector/approvalQueue');
 const { runDiscoveryPipeline, SOURCE_TYPE } = require('../../src/research-prospector/discovery');
 const { createApprovalQueueService } = require('../../src/services/approvalQueueService');
 const { createFileBackedCrmService } = require('../../src/services/crmFileService');
+const { createFileBackedCrmIntegrationService } = require('../../src/services/crmIntegrationFileService');
 const { defineUser, createUserStore, ROLE, USER_STATUS, authorizeReviewerForApprovalQueue, authorizeCrmOperation, createSupabaseAuthAdapter } = require('../../src/auth');
 const { createApp } = require('../../src/server/app');
 const { FAKE_ENV, fakeAccessToken, installFakeSupabaseAuth, supabaseUserBody } = require('../helpers/authFixtures');
@@ -83,7 +84,7 @@ function novoArquivoCrm(t) {
 // CRM (opcional — por padrão o app NÃO tem rotas /api/crm, como antes): `crm: true` liga o CRM Service REAL (a mesma
 // fábrica que a composição usa, com a ponte de autorização real) sobre um arquivo temporário, devolvido em
 // `crmFilePath`; `crmService` injeta um Service já pronto (um double), no lugar.
-function montarAmbiente(t, { usuarios = [BRENO, RAFAEL], queue, authTimeoutMs, staticFiles, log, crm = false, crmFilePath, crmService: crmServiceInjetado } = {}) {
+function montarAmbiente(t, { usuarios = [BRENO, RAFAEL], queue, authTimeoutMs, staticFiles, log, crm = false, crmFilePath, crmService: crmServiceInjetado, integracao = false, crmIntegrationService: integracaoInjetada } = {}) {
   const { filePath, ids } = queue || novaFila(t);
   const tokensPorUsuario = {};
   const corposSupabase = {};
@@ -98,6 +99,14 @@ function montarAmbiente(t, { usuarios = [BRENO, RAFAEL], queue, authTimeoutMs, s
   const approvalQueueService = createApprovalQueueService({ authorizeReviewer: authorizeReviewerForApprovalQueue, queuePath: filePath });
   const arquivoCrm = crm ? crmFilePath || novoArquivoCrm(t) : undefined;
   const crmService = crmServiceInjetado || (crm ? createFileBackedCrmService({ authorizeOperation: authorizeCrmOperation, filePath: arquivoCrm }) : undefined);
+  // Promoção Approval Queue → CRM (opcional): `integracao: true` liga a fábrica REAL de produção sobre a MESMA fila e o MESMO
+  // arquivo do CRM (exige `crm: true`); `crmIntegrationService` injeta um double no lugar.
+  if (integracao && !arquivoCrm) throw new Error('montarAmbiente: integracao exige crm: true');
+  const crmIntegrationService =
+    integracaoInjetada ||
+    (integracao
+      ? createFileBackedCrmIntegrationService({ authorizeReviewer: authorizeReviewerForApprovalQueue, authorizeOperation: authorizeCrmOperation, queuePath: filePath, crmPath: arquivoCrm })
+      : undefined);
   const logs = [];
   const publicConfig = { supabaseUrl: FAKE_ENV.SUPABASE_URL, supabaseAnonKey: FAKE_ENV.SUPABASE_ANON_KEY };
   const resolvedStaticFiles = staticFiles === undefined ? (fs.existsSync(SUPABASE_BUNDLE) ? { '/lib/supabase.js': SUPABASE_BUNDLE } : {}) : staticFiles;
@@ -106,6 +115,7 @@ function montarAmbiente(t, { usuarios = [BRENO, RAFAEL], queue, authTimeoutMs, s
     userStore,
     approvalQueueService,
     crmService,
+    crmIntegrationService,
     publicConfig,
     staticRoot: DASHBOARD_ROOT,
     staticFiles: resolvedStaticFiles,
@@ -121,6 +131,7 @@ function montarAmbiente(t, { usuarios = [BRENO, RAFAEL], queue, authTimeoutMs, s
     userStore,
     approvalQueueService,
     crmService,
+    crmIntegrationService,
     crmFilePath: arquivoCrm,
     fakeAuth,
     // Expostos para testes que montam uma VARIANTE do app (ex.: trocando só o Service por um double, para
