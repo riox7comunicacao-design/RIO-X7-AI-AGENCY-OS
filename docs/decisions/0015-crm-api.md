@@ -106,3 +106,7 @@ Dashboard do CRM, Kanban, qualquer UI, SDR, outbound, WhatsApp, prospecção, pe
 ## Atualização (2026-09-24)
 
 O "Dashboard (futuro)" do diagrama acima já existe: a etapa CRM-DASHBOARD V1 (2026-09-23) consome estas rotas sem alterar nenhum contrato desta decisão. O que foi feito, as limitações que a interface tornou visíveis e as decisões ainda pendentes estão no [CHANGELOG](../../CHANGELOG.md) (entrada "CRM Dashboard V1") e em [CONTINUE-HERE](../operations/CONTINUE-HERE.md).
+
+## Atualização (2026-09-25)
+
+A promoção Approval Queue → CRM (CRM-INTEGRATION), que esta decisão registrava como pendente, foi implementada como **serviço**; nenhuma rota `/api/crm` nem `/api/approvals` foi criada ou alterada por ela (uma rota "promover" é etapa futura). O texto acima descreve o estado da etapa em que esta decisão foi escrita e foi preservado como histórico. Ver [0016 — CRM-INTEGRATION](./0016-crm-integration.md) e o [CHANGELOG](../../CHANGELOG.md).

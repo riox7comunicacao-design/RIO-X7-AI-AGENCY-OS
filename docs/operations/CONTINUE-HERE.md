@@ -41,12 +41,12 @@ npm test
 npm start
 ```
 
-## Baseline dos testes (2026-09-24)
+## Baseline dos testes (2026-09-25)
 
 | Onde | Total | Passam | Falham | Pulados |
 |---|---|---|---|---|
-| Neste computador, com `.env` | 755 | 753 | 0 | 2 |
-| Clone limpo, **sem** `.env` e sem `data/*.json` | 755 | 748 | 0 | 7 |
+| Neste computador, com `.env` | 839 | 837 | 0 | 2 |
+| Sem `.env` e sem `data/*.json` (um clone limpo) | 839 | 832 | 0 | 7 |
 
 Nenhuma falha. Os pulados são esperados: sem `.env` (5 testes de conectividade/autenticação contra o Supabase real), o `[REAL-2]` (só roda com `RIO_X7_TEST_ACCESS_TOKEN`, um token real de teste) e o `[SRV-SEC-24b]` (symlink, que o Windows sem privilégio não permite). O preflight sem `.env` **falha de propósito** (`.env` e `data/users.json` ausentes; conectividade pulada) — é o comportamento correto de um computador ainda não configurado.
 
@@ -60,6 +60,12 @@ Na primeira validação manual real, a ficha de "TESTE CRM Rio X7" mostrou a **c
 - **Decisão pendente (não tomada):** padronizar UF (por exemplo, sempre maiúsculas) e nicho. Hoje o sistema **preserva o que foi digitado**, só removendo espaços nas pontas. Se o proprietário quiser padronizar, o lugar certo é uma regra única no domínio (`src/crm`), decidida e documentada — não maquiar só na tela.
 
 **Testes de regressão preservados** (todos passam, sem rede, sem credencial real, sem dado real; os valores são fictícios): `[DASH-FULL-9]` (o caso relatado pela interface, camada por camada, com o CRM vazio, incluindo o arquivo lido cru do disco), `[DASH-FULL-10]` (o mesmo caso direto na API, sem o Dashboard — localiza se um problema futuro é do servidor) e `[DASH-CRM-35]` (as sugestões dos campos nunca reescrevem o que foi digitado, mesmo chegando depois de a pessoa começar a digitar).
+
+## CRM-INTEGRATION (promoção Approval Queue → CRM) — o que existe
+
+[Decisão 0016](../decisions/0016-crm-integration.md). `promoteProspect(context, prospectId)` (`src/services/crmIntegrationService.js`) promove, para o CRM, um prospect que um **humano aprovou** na fila: explícita (nunca automática), idempotente (a mesma aprovação nunca cria dois registros — nem depois de uma falha no meio) e com auditoria na fila **e** no CRM. Exige `APPROVE:LEAD_APPROVAL` e `WRITE:CRM` (nenhuma permissão nova): o ADMIN promove; o closer aprova, mas não promove. A duplicidade e o DNC continuam sendo do **domínio do CRM**; nome+cidade só sinaliza. Nenhum estado novo na fila (`APROVADO_PARA_CRM` continua terminal; a promoção fica em `item.promocao` e no histórico).
+
+**Existe só como serviço — sem rota HTTP e sem tela.** Uma ação "Promover para CRM" no Dashboard exigirá uma rota autorizada (etapa futura, com autorização do proprietário). **Limites** (detalhes na 0016): sem trava entre processos (dois processos podem criar um registro duplicado para um prospect só com nome e cidade; o CRM não tem exclusão — revisão humana); a promoção usa o snapshot **atual** da fila (a redescoberta o atualiza mesmo depois da aprovação); `googlePerfil` não chega ao CRM (a fila não o guarda); se `data/crm.json` se perder com a fila intacta, a promoção falha claramente (`PROMOTION_INCONSISTENT`) e a recuperação é manual.
 
 ## Decisões pendentes que a interface do CRM tornou visíveis (nenhuma resolvida)
 
@@ -76,11 +82,12 @@ A API não informa as transições permitidas (a tela oferece os outros status e
 - investigação manual da cidade: **não reproduzida** (sem correção de produção)
 - testes de regressão: concluídos (`DASH-FULL-9`, `DASH-FULL-10`, `DASH-CRM-35`)
 - documentação e handoff para outro computador: concluídos e ensaiados com um clone limpo do `origin/main`
-- **CRM-INTEGRATION: NÃO IMPLEMENTADO**
+- CRM-INTEGRATION: **concluído como serviço** (decisão 0016) — sem rota HTTP e sem tela
+- Kanban, ação "Promover para CRM" no Dashboard, Prospector, SDR, outbound: NÃO implementados
 - persistência centralizada / sincronização entre computadores: NÃO implementada (necessidade futura)
 
 ## PRÓXIMA ETAPA
 
-**CRM-INTEGRATION** — a promoção Approval Queue → CRM (um prospect aprovado vira um registro do CRM).
+**Ainda não definida.** O proprietário (Breno Bento) decide depois de revisar a CRM-INTEGRATION. Candidatas naturais, **nenhuma iniciada**: a rota autorizada e a ação "Promover para CRM" no Dashboard; melhorias no snapshot da fila (`googlePerfil`, congelar o que foi aprovado); persistência centralizada.
 
-**Não iniciar esta nem nenhuma outra etapa automaticamente.** Só começa com autorização explícita do proprietário do projeto (Breno Bento).
+**Não iniciar nenhuma etapa automaticamente** — nem o Prospector. Só começa com autorização explícita do proprietário do projeto.

@@ -53,7 +53,7 @@ Instrução explícita do proprietário, registrada aqui como princípio arquite
 ## 6. Implicações
 
 - **Permissões inalteradas.** ADMIN mantém `WRITE:CRM`; `COMMERCIAL_CLOSER` continua sem `WRITE:CRM`. Esta decisão não concede, nem implicitamente, nenhuma permissão nova a nenhuma role — reafirmado por instrução explícita do proprietário.
-- **Approval Queue inalterada.** `src/research-prospector/approvalQueue.js` continua sendo, sozinho, o domínio "Lead Approval" — decide só "este achado pode virar lead?". A promoção `APROVADO_PARA_CRM → CRM` (etapa CRM-INTEGRATION, futura) é uma operação nova e explícita, nunca automática, preservando a responsabilidade da fila já documentada em `0008`.
+- **Approval Queue inalterada.** `src/research-prospector/approvalQueue.js` continua sendo, sozinho, o domínio "Lead Approval" — decide só "este achado pode virar lead?". A promoção `APROVADO_PARA_CRM → CRM` (etapa CRM-INTEGRATION, futura) é uma operação nova e explícita, nunca automática, preservando a responsabilidade da fila já documentada em `0008`. **Atualização (2026-09-25):** essa operação foi implementada na etapa CRM-INTEGRATION — ver [0016](./0016-crm-integration.md).
 - **Nenhuma migração de dado real do Notion para o novo CRM é implicada por esta decisão.** O CRM operacional nasce vazio; popular com dados reais de clientes/prospects é decisão e execução futuras, fora desta etapa.
 - **Divergência com o Notion passa a ser aceita conscientemente**, não mais um risco não decidido: `0008` registrava essa divergência como risco "se a diferença crescer sem revisão periódica" — esta decisão formaliza que o pipeline comercial deixa de crescer no Notion a partir de quando o CRM operacional estiver em uso.
 

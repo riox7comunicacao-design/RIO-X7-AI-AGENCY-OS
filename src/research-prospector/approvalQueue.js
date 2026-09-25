@@ -61,6 +61,18 @@ const PERMISSION = Object.freeze({
   APPROVE_LEAD_APPROVAL: 'APPROVE:LEAD_APPROVAL',
 });
 
+// Promoção para o CRM (etapa CRM-INTEGRATION, decisão 0016). A promoção NÃO é um estado novo da fila: o item
+// continua APROVADO_PARA_CRM (o estado histórico da aprovação humana) e a promoção fica registrada numa entrada de
+// histórico e num resumo (`item.promocao`). Quem cria o registro no CRM não é este módulo — é a camada de Services
+// (src/services/crmIntegrationService.js), sobre o CRM Service; este módulo só GUARDA o que aconteceu.
+//   PROMOTION_RESULT — como o item chegou a "promovido": criou-se um registro novo (CRIADO) ou já existia um registro
+//                      que esta mesma promoção tinha criado antes de uma falha (RECONCILIADO).
+//   PROMOTION_BLOCK  — por que uma tentativa foi bloqueada (só auditoria; o estado do item nunca muda por isso).
+const PROMOTION_RESULT = Object.freeze({ CRIADO: 'CRIADO', RECONCILIADO: 'RECONCILIADO' });
+const PROMOTION_BLOCK = Object.freeze({ DNC: 'DNC', DUPLICADO: 'DUPLICADO', DADOS_INSUFICIENTES: 'DADOS_INSUFICIENTES' });
+const MAX_CRM_RECORD_ID_LENGTH = 200;
+const MAX_BLOCK_REASON_LENGTH = 500;
+
 // Único mapa de transições permitidas. Qualquer estado sem entrada aqui é
 // terminal — nenhuma função deste módulo consegue transicionar a partir dele.
 // Isso implementa, com um único mecanismo, tanto "não permitir transições
@@ -403,6 +415,121 @@ function createApprovalReviewActions(options) {
   return Object.freeze({ approveProspect: approve, rejectProspect: reject });
 }
 
+// Ações de AUDITORIA da promoção para o CRM (etapa CRM-INTEGRATION, decisão 0016). Uma fábrica À PARTE da de revisão
+// (createApprovalReviewActions, cujo conjunto de ações — só aprovar e rejeitar — continua exatamente o mesmo): quem
+// tem as ações de revisão não ganha, por isso, a de registrar promoção. Mesma porta, mesmo autorizador
+// (APPROVE:LEAD_APPROVAL): o domínio nunca registra nada sem uma identidade humana devolvida pelo autorizador, e essa
+// identidade vira `reviewedBy` da entrada — nunca vem do chamador. Nenhuma ação daqui muda o ESTADO do item, e
+// nenhuma escreve no CRM (quem escreve no CRM é a camada de Services; este módulo só GUARDA o que aconteceu).
+//
+// Como na fábrica de revisão: sem `authorizeReviewer` (função) nada é criado — a falha fechada acontece na criação — e
+// o autorizador é capturado aqui.
+function createApprovalPromotionActions(options) {
+  const authorizeReviewer = options && options.authorizeReviewer;
+  if (typeof authorizeReviewer !== 'function') {
+    throw new Error(
+      'createApprovalPromotionActions exige { authorizeReviewer } (função): sem autorizador injetado não existe caminho de registro de promoção'
+    );
+  }
+
+  function authorize(context) {
+    return assertReviewerIdentity(authorizeReviewer(context, PERMISSION.APPROVE_LEAD_APPROVAL));
+  }
+
+  // Só um item que O PRÓPRIO DOMÍNIO tem como próprio (propriedade própria de queue.items) e que está APROVADO_PARA_CRM:
+  // um id herdado do protótipo ("constructor", "__proto__") nunca é um item.
+  function requireApprovedItem(queue, id) {
+    if (!queue || typeof queue !== 'object' || !queue.items || !Object.prototype.hasOwnProperty.call(queue.items, id)) {
+      throw new Error(`prospect não encontrado na fila: ${String(id)}`);
+    }
+    const item = queue.items[id];
+    if (!item || typeof item !== 'object' || item.estado !== QUEUE_STATE.APROVADO_PARA_CRM) {
+      throw new Error(
+        `promoção só se registra em um prospect ${QUEUE_STATE.APROVADO_PARA_CRM}: ${String(id)} está em ${item && typeof item === 'object' ? String(item.estado) : 'estado desconhecido'}`
+      );
+    }
+    if (!Array.isArray(item.historico)) {
+      throw new Error(`item da fila corrompido (histórico ausente ou inválido): ${String(id)}`);
+    }
+    return item;
+  }
+
+  // Lê só PROPRIEDADES PRÓPRIAS de `details` (uma propriedade herdada do protótipo nunca participa do registro).
+  function readOwn(details, key) {
+    return details && typeof details === 'object' && Object.prototype.hasOwnProperty.call(details, key) ? details[key] : undefined;
+  }
+
+  function readCrmRecordId(value) {
+    if (typeof value !== 'string' || !value.trim() || value.trim().length > MAX_CRM_RECORD_ID_LENGTH) {
+      throw new Error(`crmRecordId deve ser um texto não vazio (até ${MAX_CRM_RECORD_ID_LENGTH} caracteres)`);
+    }
+    return value.trim();
+  }
+
+  // Registra que o prospect aprovado FOI promovido: `item.promocao` (resumo) + uma entrada de histórico. Idempotente
+  // para o MESMO registro do CRM (não duplica a entrada); recusa registrar um SEGUNDO registro para o mesmo prospect.
+  // `possivelDuplicadoDe` (opcional) guarda só o id do outro registro do CRM que coincidiu por nome+cidade — uma
+  // SINALIZAÇÃO, nunca um bloqueio (regra 0005/0006).
+  function recordPromotion(queue, id, context, details) {
+    const promotedBy = authorize(context);
+    const resultado = readOwn(details, 'resultado');
+    if (!Object.values(PROMOTION_RESULT).includes(resultado)) {
+      throw new Error(`resultado de promoção desconhecido: ${String(resultado)}`);
+    }
+    const crmRecordId = readCrmRecordId(readOwn(details, 'crmRecordId'));
+    const possivel = readOwn(details, 'possivelDuplicadoDe');
+    const possivelDuplicadoDe = possivel === undefined || possivel === null ? null : readCrmRecordId(possivel);
+    const item = requireApprovedItem(queue, id);
+
+    if (Object.prototype.hasOwnProperty.call(item, 'promocao') && item.promocao) {
+      if (item.promocao.crmRecordId === crmRecordId) return item;
+      throw new Error(`prospect já promovido para outro registro do CRM: ${String(id)}`);
+    }
+    const now = new Date().toISOString();
+    item.promocao = { crmRecordId, resultado, promovidoEm: now, promovidoPor: promotedBy };
+    item.historico.push({
+      timestamp: now,
+      from: QUEUE_STATE.APROVADO_PARA_CRM,
+      to: QUEUE_STATE.APROVADO_PARA_CRM,
+      actor: ACTOR.HUMAN,
+      motivo: 'Promovido para o CRM',
+      reviewedBy: { ...promotedBy },
+      promocao: { resultado, crmRecordId, possivelDuplicadoDe },
+    });
+    return item;
+  }
+
+  // Registra uma tentativa de promoção BLOQUEADA (DNC, duplicidade, dados insuficientes) — só auditoria: o item
+  // continua APROVADO_PARA_CRM, sem `promocao`, e pode ser promovido depois (se o bloqueio deixar de existir).
+  function recordPromotionBlocked(queue, id, context, details) {
+    const blockedBy = authorize(context);
+    const codigo = readOwn(details, 'codigo');
+    if (!Object.values(PROMOTION_BLOCK).includes(codigo)) {
+      throw new Error(`código de bloqueio de promoção desconhecido: ${String(codigo)}`);
+    }
+    const motivo = readOwn(details, 'motivo');
+    if (typeof motivo !== 'string' || !motivo.trim() || motivo.trim().length > MAX_BLOCK_REASON_LENGTH) {
+      throw new Error(`motivo do bloqueio deve ser um texto não vazio (até ${MAX_BLOCK_REASON_LENGTH} caracteres)`);
+    }
+    const existente = readOwn(details, 'crmRecordId');
+    const crmRecordId = existente === undefined || existente === null ? null : readCrmRecordId(existente);
+    const item = requireApprovedItem(queue, id);
+    const now = new Date().toISOString();
+    item.historico.push({
+      timestamp: now,
+      from: QUEUE_STATE.APROVADO_PARA_CRM,
+      to: QUEUE_STATE.APROVADO_PARA_CRM,
+      actor: ACTOR.HUMAN,
+      motivo: `Promoção bloqueada: ${motivo.trim()}`,
+      reviewedBy: { ...blockedBy },
+      promocao: { resultado: 'BLOQUEADO', codigo, crmRecordId },
+    });
+    return item;
+  }
+
+  return Object.freeze({ recordPromotion, recordPromotionBlocked });
+}
+
 // approveProspect/rejectProspect SOLTOS: existem só para falhar fechado. Antes
 // da Fase E aprovavam a partir de um objeto de identidade que o próprio chamador
 // apresentava; agora não há caminho de aprovação/rejeição sem um autorizador
@@ -463,6 +590,8 @@ module.exports = {
   QUEUE_STATE,
   ACTOR,
   PERMISSION,
+  PROMOTION_RESULT,
+  PROMOTION_BLOCK,
   ALLOWED_TRANSITIONS,
   DEFAULT_QUEUE_PATH,
   createEmptyQueue,
@@ -471,6 +600,7 @@ module.exports = {
   buildStableId,
   addProspect,
   createApprovalReviewActions,
+  createApprovalPromotionActions,
   approveProspect,
   rejectProspect,
   markDuplicado,

@@ -76,3 +76,7 @@ Rotas HTTP, Dashboard/Kanban, a promoção Approval Queue → CRM, qualquer adap
 ## Próximo passo
 
 Etapa **CRM-API**: as rotas HTTP sobre este Service (`src/server`, no padrão das rotas da Approval Queue: autenticação Bearer, projeção segura, mapeamento de erros por mensagem, sem nunca aceitar `userId/role/permissions/reviewedBy` do navegador), compondo o Service por uma fábrica de `src/services` que recebe só o caminho do arquivo (`data/`, fora do Git). **Correção posterior (etapa CRM-API, [0015](./0015-crm-api.md)):** a versão original deste parágrafo mandava compor `createCrmService({ authorizeOperation: authorizeCrmOperation, repository })` com o adapter de arquivo direto no `src/server/index.js` — o que a regra R12 acima proíbe (o servidor não pode importar `src/crm`, onde o adapter vive). A etapa CRM-API resolveu sem mudar a R12: `createFileBackedCrmService` (`src/services/crmFileService.js`).
+
+## Atualização (2026-09-25)
+
+A promoção Approval Queue → CRM, que esta decisão deixou de fora, foi implementada na etapa CRM-INTEGRATION, sobre este CRM Service (que não foi alterado). O texto acima descreve o estado da etapa em que esta decisão foi escrita e foi preservado como histórico. Ver [0016 — CRM-INTEGRATION](./0016-crm-integration.md) e o [CHANGELOG](../../CHANGELOG.md).

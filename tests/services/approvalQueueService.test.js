@@ -919,6 +919,9 @@ test('[SVC-18] o Service cobre toda ação e leitura HUMANA do domínio; o que f
   const classificacao = {
     // ações e leituras HUMANAS — cobertas pelo Service
     createApprovalReviewActions: 'servico: approveProspect, rejectProspect',
+    // CRM-INTEGRATION (decisão 0016): as duas ações humanas de AUDITORIA da promoção para o CRM. Coberta por OUTRO Service
+    // (src/services/approvalPromotionService.js), não por este: a superfície de 5 operações que a API expõe não muda.
+    createApprovalPromotionActions: 'outro service: approvalPromotionService (recordPromotion, recordPromotionBlocked)',
     getProspect: 'servico: getProspect',
     listQueue: 'servico: listQueue',
     getHistory: 'servico: getHistory',

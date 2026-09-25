@@ -51,6 +51,8 @@ Nenhum score, ranking, temperatura ou probabilidade de fechamento foi criado —
 
 **`APROVADO_PARA_CRM` significa exclusivamente**: *"este prospect pode, futuramente, ser encaminhado para eventual criação no CRM."* Não significa "crie agora", não dispara nenhuma escrita, e não é interpretado por nenhum outro código deste projeto como autorização de contato.
 
+**Atualização (2026-09-25, etapa CRM-INTEGRATION, [0016](./0016-crm-integration.md)):** a promoção de um prospect `APROVADO_PARA_CRM` para o CRM **existe agora**, como uma operação **explícita e nunca automática** (`src/services/crmIntegrationService.js`). `APROVADO_PARA_CRM` continua significando só "pode ser encaminhado" e continua **terminal**: a promoção não cria estado novo — fica registrada no resumo `promocao` do item e numa entrada de histórico. O que esta seção diz sobre a aprovação não mudou.
+
 ## Transições permitidas
 
 Um único mapa (`ALLOWED_TRANSITIONS`) governa todas as mudanças de estado:

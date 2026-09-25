@@ -16,14 +16,15 @@ Navegador → Dashboard (dashboard/) → HTTP /api/* (src/server) → Services (
 | **CRM operacional** (13 status, máquina de estados, "Não contatar", deduplicação) | domínio `src/crm/` → Service `src/services/crmService.js` → API `/api/crm` (`src/server/app.js`) → telas `dashboard/views/crm.mjs` |
 | **Dashboard** (login, Visão Geral, CRM, Aprovações, Sair) | `dashboard/` — JavaScript puro, sem CDN (o SDK do Supabase vem do `node_modules`, instalado pelo `npm ci`); conversa com o servidor só por HTTP |
 | **Fila de aprovação humana** (Research + Prospector) | `src/research-prospector/`, `src/services/approvalQueueService.js` |
+| **Promoção Approval Queue → CRM** | `src/services/crmIntegrationService.js` (+ `prospectToCrmFields.js`, `approvalPromotionService.js`) — só serviço, sem rota HTTP nem tela |
 | **Autenticação e permissões** | `src/auth/` (Supabase Auth; matriz em `docs/architecture/permissions-matrix.md`) |
 | **Notion** | base de conhecimento, documentação e Skills nativas — **não** é mais o CRM (decisão 0012) |
 
 ## O que existe e o que ainda não
 
-**Implementado e testado:** login com Supabase, Dashboard, fila de aprovação humana, e o CRM completo da primeira versão (domínio → Service → API → Dashboard: lista, busca, filtros, ficha, histórico, criar, editar, mudar status, "Não contatar").
+**Implementado e testado:** login com Supabase, Dashboard, fila de aprovação humana, o CRM completo da primeira versão (domínio → Service → API → Dashboard: lista, busca, filtros, ficha, histórico, criar, editar, mudar status, "Não contatar") e a **promoção controlada Approval Queue → CRM** (`src/services/crmIntegrationService.js`: só prospects aprovados por um humano, idempotente, com auditoria nos dois lados — como serviço; ver a [decisão 0016](./docs/decisions/0016-crm-integration.md)).
 
-**Ainda não implementado:** a promoção Approval Queue → CRM (**CRM-INTEGRATION**, a próxima etapa), Kanban do CRM, SDR, outbound, WhatsApp, prospecção automática, IA nos especialistas e **persistência centralizada** — hoje os dados operacionais (`data/*.json`) são locais a cada computador e não são sincronizados.
+**Ainda não implementado:** uma rota HTTP e uma ação "Promover para CRM" no Dashboard (a promoção ainda não tem tela), Kanban do CRM, SDR, outbound, WhatsApp, prospecção automática, IA nos especialistas e **persistência centralizada** — hoje os dados operacionais (`data/*.json`) são locais a cada computador e não são sincronizados.
 
 ## Como iniciar e testar
 
@@ -47,7 +48,7 @@ npm start                                         # sobe o Dashboard em http://1
 - [PROJECT_CONTEXT.md](./PROJECT_CONTEXT.md) — contexto de negócio validado
 - [RULES.md](./RULES.md) — regras fundamentais (não inventar, testar antes de declarar, humano no controle, privacidade, não expor segredos, uma etapa por vez)
 - [CHANGELOG.md](./CHANGELOG.md) — histórico de mudanças, etapa por etapa
-- [docs/decisions/](./docs/decisions/) — decisões arquiteturais (0001–0015); as mais recentes: 0012 (CRM próprio), 0013 (domínio), 0014 (Service), 0015 (API)
+- [docs/decisions/](./docs/decisions/) — decisões arquiteturais (0001–0016); as mais recentes: 0012 (CRM próprio), 0013 (domínio), 0014 (Service), 0015 (API), 0016 (promoção Approval Queue → CRM)
 - [docs/architecture/](./docs/architecture/) — arquitetura, domínios de dados, permissões e especialistas
 - [docs/operations/CONTINUE-HERE.md](./docs/operations/CONTINUE-HERE.md) e [docs/operations/MULTICOMPUTER-HANDOFF.md](./docs/operations/MULTICOMPUTER-HANDOFF.md) — retomada e handoff entre computadores
 - [data/README.md](./data/README.md) — o que são os arquivos locais `data/*.json` e por que não vão para o Git
