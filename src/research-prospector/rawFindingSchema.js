@@ -502,4 +502,6 @@ function validateRawFindings(list, { now = new Date() } = {}) {
   return { ok: items.every((item) => item.ok), items, validos: items.filter((item) => item.ok).map((item) => item.value), errors: [] };
 }
 
-module.exports = { LIMITS, ERROR, validateRawFinding, validateRawFindings };
+// checkText e MESSAGES também são usados por quem valida o BRIEFING (Prospecting Service): os mesmos limites e as mesmas frases, sem
+// uma segunda implementação de "texto seguro".
+module.exports = { LIMITS, ERROR, MESSAGES, checkText, validateRawFinding, validateRawFindings };

@@ -264,7 +264,7 @@ test('[HARD-3] resolveAuthenticatedIdentity e getSessionStatus (caminho por sess
 // ===========================================================================
 // [HARD-4] Fronteira 9 — nenhuma permissão extra ou faltante entra em um USER
 // ===========================================================================
-const ADMIN_LITERAL = ['READ:CRM', 'ANALYZE:CRM', 'PROPOSE:CRM', 'WRITE:CRM', 'APPROVE:LEAD_APPROVAL', 'APPROVE:OUTBOUND_APPROVAL', 'MANAGE:USERS'];
+const ADMIN_LITERAL = ['READ:CRM', 'ANALYZE:CRM', 'PROPOSE:CRM', 'WRITE:CRM', 'PROPOSE:LEAD_APPROVAL', 'APPROVE:LEAD_APPROVAL', 'APPROVE:OUTBOUND_APPROVAL', 'MANAGE:USERS'];
 const CLOSER_LITERAL = ['READ:CRM', 'ANALYZE:CRM', 'PROPOSE:CRM', 'APPROVE:LEAD_APPROVAL', 'APPROVE:OUTBOUND_APPROVAL'];
 
 test('[HARD-4] nenhuma permissão extra, faltante ou de outra role entra em um USER — ADMIN e CLOSER, uma a uma', () => {

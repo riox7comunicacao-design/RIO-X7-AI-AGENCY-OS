@@ -40,6 +40,17 @@ Nenhuma permissão é concedida por padrão — cada célula reflete o que já e
 | **Administrativo** (FUTURO) | DECISÃO PENDENTE | DECISÃO PENDENTE | DECISÃO PENDENTE | ❌ Nunca | ❌ Nunca | ❌ Nunca | ❌ Nunca | ❌ Nunca | ❌ Nunca |
 | **ADV/Jurídico** (FUTURO) | Documentos/contratos | Análise/alerta | Sinalização de risco | ❌ Nunca | ❌ Nunca | ❌ Nunca | ❌ Nunca | ❌ Nunca | ❌ Nunca — toda ação jurídica é sempre humana |
 
+## Decisão explícita: `PROPOSE:LEAD_APPROVAL` (2026-09-25)
+
+Permissão **implementada** de usuário (não de agente de IA): a capacidade de **propor candidatos para análise humana** ao Approval Queue, usada pelo Prospecting Service V1 (`src/services/prospectingService.js`). Ela **não** permite aprovar, **não** permite promover e **não** permite escrever no CRM: aprovar continua sendo `APPROVE:LEAD_APPROVAL` (ponte `approvalQueueBridge`) e promover exige também `WRITE:CRM` (ponte do CRM). A ponte própria (`src/auth/leadProposalBridge.js`) autoriza só essa permissão e recusa qualquer outra pedida.
+
+| Role | `PROPOSE:LEAD_APPROVAL` | Observação |
+|---|---|---|
+| **ADMIN** | ✅ recebe (8 permissões no total) | — |
+| **COMMERCIAL_CLOSER** | ❌ **não recebe** nesta etapa | continua com as 5 permissões de antes (aprova, mas não propõe; sem `WRITE:CRM` e `MANAGE:USERS`) |
+
+Submeter uma prospecção exige `PROPOSE:LEAD_APPROVAL` **e** `READ:CRM`. A decisão está travada nos testes de `tests/auth` (as listas literais por role, `ROLE-1`/`ROLE-3`/`ROLE-4` e `PROPOSE-1..6`): mudar quem recebe a permissão exige decidir de novo, de propósito.
+
 ## Sobre `PROPOSE` ≠ `WRITE`
 
 `PROPOSE` significa: o especialista produz uma sugestão (mensagem, rascunho, classificação, plano) que **precisa de confirmação humana** antes de virar dado real em qualquer sistema operacional (CRM, conteúdo publicado, campanha). `WRITE` significa gravação real, sem revisão humana antes. **Nesta V1, nenhum especialista de IA tem `WRITE` para dados operacionais de CRM/conteúdo/campanha** — o máximo que existe é `PROPOSE`. A única exceção é gravação em armazenamento **próprio e local** do especialista (ex.: achado bruto do Researcher em memória; item da fila local do Prospector) — que não é um dado operacional de terceiros, e mesmo assim nunca dispara uma ação por si só.

@@ -59,6 +59,7 @@ const ACTOR = Object.freeze({ HUMAN: 'HUMAN', SYSTEM: 'SYSTEM' });
 // permissão é criada aqui.
 const PERMISSION = Object.freeze({
   APPROVE_LEAD_APPROVAL: 'APPROVE:LEAD_APPROVAL',
+  PROPOSE_LEAD_APPROVAL: 'PROPOSE:LEAD_APPROVAL',
 });
 
 // Promoção para o CRM (etapa CRM-INTEGRATION, decisão 0016). A promoção NÃO é um estado novo da fila: o item
@@ -530,6 +531,39 @@ function createApprovalPromotionActions(options) {
   return Object.freeze({ recordPromotion, recordPromotionBlocked });
 }
 
+// Ação de PROPOSTA de candidatos (Prospecting Service). Uma fábrica À PARTE das de revisão e de promoção: quem tem as ações de
+// revisão (aprovar/rejeitar) NÃO ganha, por isso, a de propor — e quem só propõe não aprova nada. Porta própria
+// (`authorizeProposer`, permissão PROPOSE:LEAD_APPROVAL), separada da de aprovação: o domínio nunca junta as duas, e o autorizador
+// de PROPOSE nunca é o de APPROVE.
+//
+// O que ela faz: entra na fila, pela função addProspect JÁ EXISTENTE (mesma regra de identidade e de reentrada), um candidato
+// ELEGÍVEL — o que o discovery classificou como aguardando revisão (inclusive possível duplicidade, que um humano precisa ver).
+// Um candidato que o próprio discovery já bloqueou (DNC, duplicado, dados insuficientes) é RECUSADO aqui: estruturalmente um
+// candidato bloqueado nunca é proposto. A fila nunca recebe um estado novo nem uma aprovação: o item nasce AGUARDANDO_REVISAO.
+// A ordem é (1) autorizar, (2) só então olhar o candidato — uma chamada não autorizada não revela nada.
+function createApprovalProposalActions(options) {
+  const authorizeProposer = options && options.authorizeProposer;
+  if (typeof authorizeProposer !== 'function') {
+    throw new Error(
+      'createApprovalProposalActions exige { authorizeProposer } (função): sem autorizador injetado não existe caminho de proposta de candidatos'
+    );
+  }
+
+  function proposeProspect(queue, context, discoveryResult) {
+    assertReviewerIdentity(authorizeProposer(context, PERMISSION.PROPOSE_LEAD_APPROVAL));
+    if (!discoveryResult || typeof discoveryResult !== 'object' || !discoveryResult.empresa) {
+      throw new Error('discoveryResult inválido: empresa é obrigatória');
+    }
+    const estadoSistema = deriveSystemState(discoveryResult);
+    if (estadoSistema !== QUEUE_STATE.AGUARDANDO_REVISAO) {
+      throw new Error(`candidato bloqueado (${estadoSistema}) não pode ser proposto para revisão humana`);
+    }
+    return addProspect(queue, discoveryResult);
+  }
+
+  return Object.freeze({ proposeProspect });
+}
+
 // approveProspect/rejectProspect SOLTOS: existem só para falhar fechado. Antes
 // da Fase E aprovavam a partir de um objeto de identidade que o próprio chamador
 // apresentava; agora não há caminho de aprovação/rejeição sem um autorizador
@@ -601,6 +635,7 @@ module.exports = {
   addProspect,
   createApprovalReviewActions,
   createApprovalPromotionActions,
+  createApprovalProposalActions,
   approveProspect,
   rejectProspect,
   markDuplicado,

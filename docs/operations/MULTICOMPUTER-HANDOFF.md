@@ -10,7 +10,7 @@ O passo a passo desta página foi **ensaiado** a partir de um clone limpo do `or
 |---|---|---|
 | **Código e arquitetura** (código, testes, documentação, decisões, `package.json`, `package-lock.json`, `.env.example`) | **GitHub** | `git clone` |
 | **Configuração e segredos** (`.env`, `data/users.json`) | Só no computador de quem usa. **Nunca no Git.** | Recriados à mão (passos 6 a 8) |
-| **Dados operacionais locais** (`data/crm.json`, `data/approval-queue.json`) | Só no computador onde foram criados. **Nunca no Git.** | **Não são sincronizados.** Um computador novo começa com CRM e fila vazios — um estado válido. |
+| **Dados operacionais locais** (`data/crm.json`, `data/approval-queue.json`, `data/prospecting-batches.json` — os lotes do Prospector, criados na primeira submissão) | Só no computador onde foram criados. **Nunca no Git.** | **Não são sincronizados.** Um computador novo começa com CRM e fila vazios — um estado válido. |
 
 **Dados de teste** (por exemplo, os registros "TESTE CRM Rio X7" e "TESTE REDE 02") **não precisam ser transportados**. Compartilhar o CRM entre computadores exigirá uma **persistência centralizada** — uma necessidade futura, **ainda não decidida nem implementada**; nenhuma sincronização foi inventada.
 
@@ -93,8 +93,8 @@ Ensaio feito em 2026-09-24 num diretório temporário, só com os arquivos versi
 | `npm ci` | 9 pacotes instalados (a única dependência direta é `@supabase/supabase-js`), 0 vulnerabilidades, ~10 s |
 | `preflight` **sem** `.env` | **4 falhas e 1 aviso** (`.env` ausente, `SUPABASE_URL`, `SUPABASE_ANON_KEY` e `data/users.json` ausentes; conectividade pulada), código de saída 1 — **esperado**: o computador ainda não está configurado |
 | `preflight` **com** `.env` e `data/users.json` | 14 verificações, **0 falhas**, 0 avisos (inclui uma checagem real, só leitura e sem login, do Supabase) |
-| `npm test` **sem** `.env` | **925 testes: 918 passam, 0 falham, 7 pulados** |
-| `npm test` **com** `.env` | **925 testes: 923 passam, 0 falham, 2 pulados** |
+| `npm test` **sem** `.env` | **996 testes: 989 passam, 0 falham, 7 pulados** |
+| `npm test` **com** `.env` | **996 testes: 994 passam, 0 falham, 2 pulados** |
 
 Os pulados são esperados: sem `.env`, 5 testes de conectividade/autenticação contra o Supabase real; o `[REAL-2]` (só roda com `RIO_X7_TEST_ACCESS_TOKEN`, um token real de um usuário de **teste** — opcional); e o `[SRV-SEC-24b]` (symlink, que o Windows sem privilégio não permite). Qualquer **falha** é um problema real, nunca esperado.
 

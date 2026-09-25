@@ -42,7 +42,7 @@ const A_AUTH_ID = 'auth-d1-a';
 const B_AUTH_ID = 'auth-d1-b';
 
 // Listas LITERAIS, independentes de src/ (as mesmas de role-permissions.test.js).
-const ADMIN_LITERAL = ['READ:CRM', 'ANALYZE:CRM', 'PROPOSE:CRM', 'WRITE:CRM', 'APPROVE:LEAD_APPROVAL', 'APPROVE:OUTBOUND_APPROVAL', 'MANAGE:USERS'];
+const ADMIN_LITERAL = ['READ:CRM', 'ANALYZE:CRM', 'PROPOSE:CRM', 'WRITE:CRM', 'PROPOSE:LEAD_APPROVAL', 'APPROVE:LEAD_APPROVAL', 'APPROVE:OUTBOUND_APPROVAL', 'MANAGE:USERS'];
 const CLOSER_LITERAL = ['READ:CRM', 'ANALYZE:CRM', 'PROPOSE:CRM', 'APPROVE:LEAD_APPROVAL', 'APPROVE:OUTBOUND_APPROVAL'];
 
 // USER A: um COMMERCIAL_CLOSER. USER B: um ADMIN. Fictícios.
@@ -125,7 +125,7 @@ test('[D1-1] identidade A + USER A -> sucesso: o contexto é o de A (store real 
   }
   assert.deepEqual(consultas, [A_AUTH_ID], 'o store falso foi consultado uma vez, pelo authUserId de A');
 
-  // Controle positivo — é isto que estaria em jogo: com a identidade DE B, o contexto é o do ADMIN, com as 7 permissões.
+  // Controle positivo — é isto que estaria em jogo: com a identidade DE B, o contexto é o do ADMIN, com as 8 permissões.
   const contextoB = resolveAuthorizationContext(real, idB);
   assert.equal(contextoB.userId, 'user-d1-b');
   assert.equal(contextoB.role, ROLE.ADMIN);
@@ -213,7 +213,7 @@ test('[D1-5] identidade A + USER B com role ADMIN -> NÃO emite um contexto ADMI
   // Contra-prova: o emissor, sozinho, aceitaria esse USER e emitiria um contexto ADMIN — quem barra é o vínculo do resolver.
   const seriaEmitido = createAuthorizationContext(admin);
   assert.equal(seriaEmitido.role, ROLE.ADMIN);
-  assert.equal(seriaEmitido.permissions.length, 7);
+  assert.equal(seriaEmitido.permissions.length, 8);
 
   // O caminho honesto de A continua sendo o do CLOSER, nunca o do ADMIN.
   const honesto = resolveAuthorizationContext(createUserStore([usuarioA(), usuarioB()]), idA);
@@ -236,7 +236,7 @@ test('[D1-6] identidade A + USER B com permissões administrativas -> nenhuma pe
   };
   const lojaMentirosa = lojaFalsa(() => usuarioB());
 
-  // A + USER B (ADMIN, com as 7 permissões): nada atravessa — nem as administrativas, nem as comerciais.
+  // A + USER B (ADMIN, com as 8 permissões): nada atravessa — nem as administrativas, nem as comerciais.
   for (const permissao of ADMIN_LITERAL) {
     assert.equal(atravessa(lojaMentirosa, idA, permissao), false, `${permissao} não pode atravessar com a identidade de A + USER B`);
   }

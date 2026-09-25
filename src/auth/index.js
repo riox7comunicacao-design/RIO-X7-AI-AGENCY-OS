@@ -22,6 +22,7 @@ const {
 } = require('./authAdapter');
 const { authorizeReviewerForApprovalQueue, toApprovalQueueIdentity } = require('./approvalQueueBridge');
 const { authorizeCrmOperation } = require('./crmBridge');
+const { authorizeProposerForLeadApproval } = require('./leadProposalBridge');
 
 // Fase C: createAuthorizationContext e o emissor de contexto NÃO são exportados.
 // O emissor é interno (internal/contextIssuer.js) e só o userResolver o usa; o
@@ -51,4 +52,5 @@ module.exports = {
   authorizeReviewerForApprovalQueue,
   toApprovalQueueIdentity,
   authorizeCrmOperation,
+  authorizeProposerForLeadApproval,
 };

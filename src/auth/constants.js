@@ -45,6 +45,9 @@ const PERMISSION = Object.freeze({
   ANALYZE_CRM: 'ANALYZE:CRM',
   PROPOSE_CRM: 'PROPOSE:CRM',
   WRITE_CRM: 'WRITE:CRM',
+  // PROPOR candidatos para análise humana (Prospecting Service). NÃO é aprovar, NÃO é promover e NÃO escreve no CRM:
+  // aprovar continua sendo APPROVE:LEAD_APPROVAL (humano) e promover exige também WRITE:CRM.
+  PROPOSE_LEAD_APPROVAL: 'PROPOSE:LEAD_APPROVAL',
   APPROVE_LEAD_APPROVAL: 'APPROVE:LEAD_APPROVAL',
   APPROVE_OUTBOUND_APPROVAL: 'APPROVE:OUTBOUND_APPROVAL',
   MANAGE_USERS: 'MANAGE:USERS',
@@ -81,20 +84,22 @@ function isValidPermissionString(permission) {
 // autorização (hasPermission/requirePermission) leem apenas o array
 // `permissions` do contexto — nunca comparam o nome da role.
 //
-// ADMIN: exatamente as 7 permissões abaixo — nunca um coringa "*:*" (proibido
+// ADMIN: exatamente as 8 permissões abaixo — nunca um coringa "*:*" (proibido
 // pela decisão 0010, seção 10).
 const ADMIN_PERMISSIONS = Object.freeze([
   PERMISSION.READ_CRM,
   PERMISSION.ANALYZE_CRM,
   PERMISSION.PROPOSE_CRM,
   PERMISSION.WRITE_CRM,
+  PERMISSION.PROPOSE_LEAD_APPROVAL,
   PERMISSION.APPROVE_LEAD_APPROVAL,
   PERMISSION.APPROVE_OUTBOUND_APPROVAL,
   PERMISSION.MANAGE_USERS,
 ]);
 
-// COMMERCIAL_CLOSER: exatamente as 5 permissões abaixo — WRITE:CRM e
-// MANAGE:USERS ficam de fora, propositalmente.
+// COMMERCIAL_CLOSER: exatamente as 5 permissões abaixo — WRITE:CRM,
+// MANAGE:USERS e PROPOSE:LEAD_APPROVAL (propor candidatos do Prospector) ficam
+// de fora, propositalmente.
 const COMMERCIAL_CLOSER_PERMISSIONS = Object.freeze([
   PERMISSION.READ_CRM,
   PERMISSION.ANALYZE_CRM,

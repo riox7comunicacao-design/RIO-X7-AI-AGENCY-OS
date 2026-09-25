@@ -618,7 +618,9 @@ test('[E-17] toda recusa de autorização deixa a fila, o estado e o histórico 
 test('[E-18] a permissão do domínio e a do catálogo de src/auth não divergem (o domínio duplica o literal de propósito)', () => {
   assert.equal(approvalQueueModule.PERMISSION.APPROVE_LEAD_APPROVAL, PERMISSION.APPROVE_LEAD_APPROVAL);
   assert.equal(approvalQueueModule.PERMISSION.APPROVE_LEAD_APPROVAL, 'APPROVE:LEAD_APPROVAL');
-  assert.deepEqual(Object.keys(approvalQueueModule.PERMISSION), ['APPROVE_LEAD_APPROVAL'], 'o domínio só conhece a permissão do seu próprio domínio');
+  assert.equal(approvalQueueModule.PERMISSION.PROPOSE_LEAD_APPROVAL, PERMISSION.PROPOSE_LEAD_APPROVAL);
+  assert.equal(approvalQueueModule.PERMISSION.PROPOSE_LEAD_APPROVAL, 'PROPOSE:LEAD_APPROVAL');
+  assert.deepEqual(Object.keys(approvalQueueModule.PERMISSION), ['APPROVE_LEAD_APPROVAL', 'PROPOSE_LEAD_APPROVAL'], 'o domínio só conhece as permissões do seu próprio domínio (LEAD_APPROVAL): aprovar (humano) e propor (Prospector) — nenhuma do CRM');
 });
 
 test('[E-19] LIMITE DOCUMENTADO: o domínio obedece ao autorizador injetado — proteger a composição é papel da camada de Services, não do domínio', () => {
