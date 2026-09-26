@@ -1,5 +1,14 @@
 # Changelog
 
+## 2026-09-25 — Researcher V1 (só o módulo; nenhuma pesquisa real)
+
+Cria o pesquisador que transforma pesquisa pública em achados rawFinding V2 ([decisão 0021](./docs/decisions/0021-researcher-v1.md)). **Nenhuma pesquisa real foi executada**, nenhum lote foi criado, o `submitProspecting` não é chamado, sem rota, serviço, adaptador de rede ou Dashboard; CRM, Approval Queue, Promotion Service, discovery, dossiê e o contrato V2 **não foram alterados**; nenhuma dependência nova.
+
+- **Módulos** (`src/research-prospector/`): `researcher.js` (`createResearcher({ search, fetchPage, lookupAds? }, { now, maxDurationMs }).research(briefing)`) e `researchPolicy.js` (política de fontes, funções puras). Puro: só importa módulos irmãos; sem rede, disco, CRM, fila, serviço, autorização, `process` ou relógio próprio. A saída das portas é dado não confiável, relido com segurança e revalidado; cada achado passa por `validateRawFindingsV2`.
+- **Regras:** só fontes públicas https (nada de login, captcha, robots, dado privado); prioridade site → Google Perfil → Instagram → Facebook → LinkedIn → YouTube; evidência sempre com fonte, tipo (OFICIAL = o site lido e o que ele linka; SECUNDARIA = só a busca), URL e data; telefone/WhatsApp/e-mail só como link publicado (`tel:`, `mailto:`, `wa.me`); anúncios `IDENTIFICADO` só com nome igual, `NAO_ENCONTRADO_NA_VERIFICACAO` numa verificação feita, falha = `NAO_VERIFICADO`; Instagram só com datas observadas e CTA da bio (privado = `PERFIL_PRIVADO`); falha vira `NAO_VERIFICADO` com `motivo` e a pesquisa segue; conflito preservado; **sem análise, hipótese, score, ranking, temperatura ou decisão** e nunca "não anuncia", "site não existe" ou "Instagram inativo". Alvo = pedidos + metade de reserva, no máximo 150; nada cortado em silêncio (omissões com código no relatório).
+- **Testes:** 31 novos — 1148 no total: 1146 passam e 2 pulados com `.env`; 1141 e 7 pulados sem `.env`; 0 falhas. **Mutação:** 117 mutantes, 27 sobreviventes na 1ª rodada: 20 lacunas de teste (corrigidas, todas agora detectadas) e 7 equivalentes/defensivos (documentados).
+- **Limites:** adaptador real (HTTP/navegador, robots, taxa, timeout) e ligação ao serviço ficam para etapas próprias.
+
 ## 2026-09-25 — rawFinding V2: bloco opcional `dossie` (observações e análises), rota 4 MiB / 150 achados
 
 O achado bruto pode trazer observações e análises para o dossiê ([decisão 0020](./docs/decisions/0020-raw-finding-v2.md)). **Sem pesquisa web**, sem rota nova, sem permissão nova, sem CRM write; discovery, Approval Queue, `batchAccounting`, Promotion Service e CRM não foram alterados. Contrato da submissão inalterado: `{ briefing, rawFindings }`.
