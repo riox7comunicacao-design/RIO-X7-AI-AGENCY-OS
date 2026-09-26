@@ -35,10 +35,12 @@ const {
   isSupabaseConfigured,
   authorizeReviewerForApprovalQueue,
   authorizeCrmOperation,
+  authorizeProposerForLeadApproval,
 } = require('../auth');
 const { createApprovalQueueService } = require('../services/approvalQueueService');
 const { createFileBackedCrmService } = require('../services/crmFileService');
 const { createFileBackedCrmIntegrationService } = require('../services/crmIntegrationFileService');
+const { createFileBackedProspectingService } = require('../services/prospectingFileService');
 const { createApp } = require('./app');
 
 const ROOT = path.join(__dirname, '..', '..');
@@ -150,12 +152,22 @@ function createServer(env = process.env, options = {}) {
     crmPath: resolveFile(env.RIO_X7_CRM_PATH, DEFAULT_CRM_FILE),
   });
 
+  // O Prospecting Service (submissão de prospecção): os MESMOS arquivos da fila e do CRM e as pontes de PROPOSE:LEAD_APPROVAL e do
+  // CRM (READ:CRM). O arquivo dos lotes usa o caminho padrão e seguro do adapter (data/prospecting-batches.json, fora do Git).
+  const prospectingService = createFileBackedProspectingService({
+    authorizeProposer: authorizeProposerForLeadApproval,
+    authorizeOperation: authorizeCrmOperation,
+    queuePath: resolveFile(env.RIO_X7_QUEUE_PATH, undefined),
+    crmPath: resolveFile(env.RIO_X7_CRM_PATH, DEFAULT_CRM_FILE),
+  });
+
   const app = createApp({
     verifyAccessToken: authAdapter.verifyAccessToken,
     userStore,
     approvalQueueService,
     crmService,
     crmIntegrationService,
+    prospectingService,
     publicConfig: { supabaseUrl, supabaseAnonKey },
     staticRoot: DASHBOARD_ROOT,
     staticFiles: { '/lib/supabase.js': SUPABASE_BUNDLE },

@@ -68,6 +68,10 @@ const {
 const { createStaticHandler } = require('./static');
 
 const MAX_BODY_BYTES = 16 * 1024;
+// A ÚNICA rota com corpo maior: a submissão de prospecção (até 500 achados brutos). O limite geral acima NÃO mudou; este vale só
+// para POST /api/prospecting/submit e é conferido ANTES de ler o corpo (Content-Length) e durante a leitura (o corpo nunca é
+// processado acima dele). Os limites estruturais do rawFindingSchema continuam valendo por dentro.
+const MAX_PROSPECTING_BODY_BYTES = 2 * 1024 * 1024;
 const MAX_TOKEN_LENGTH = 8192;
 const MAX_TARGET_LENGTH = 4096;
 const DEFAULT_AUTH_TIMEOUT_MS = 10000;
@@ -81,6 +85,9 @@ const CRM_OPERATIONS = Object.freeze(['listRecords', 'getRecord', 'getHistory', 
 
 // A operação da promoção Approval Queue → CRM (src/services/crmIntegrationService.js) que a API usa. Verificada na criação.
 const PROMOTION_OPERATION = 'promoteProspect';
+
+// A operação do Prospecting Service (src/services/prospectingService.js) que a API usa. Verificada na criação.
+const PROSPECTING_OPERATION = 'submitProspecting';
 
 const NO_ACCESS_MESSAGE = 'Esta conta não possui acesso a esta área.';
 
@@ -109,6 +116,17 @@ const CATALOG = Object.freeze({
   PROMOTION_INSUFFICIENT_DATA: [409, 'Os dados deste prospect não são suficientes para entrar no CRM.'],
   PROMOTION_INCONSISTENT: [409, 'O estado deste prospect está inconsistente entre a fila e o CRM. Nada foi alterado; peça uma revisão.'],
   PROMOTION_PARTIAL: [409, 'A promoção foi concluída só em parte. Tente promover de novo.'],
+  // Prospecting Service V1, por `code` estável do serviço. Mensagens FIXAS: nunca o valor recusado, o texto do serviço, um
+  // caminho, um id de prospect ou o texto do erro de armazenamento. A recusa de AUTORIZAÇÃO não passa por aqui (é 403 pelos
+  // caminhos de sempre).
+  PROSPECTING_INVALID_INPUT: [400, 'Submissão inválida: envie exatamente { briefing, rawFindings }.'],
+  PROSPECTING_BRIEFING_INVALID: [400, 'O briefing é inválido.'],
+  PROSPECTING_RAW_FINDINGS_INVALID: [400, 'Os achados da pesquisa são inválidos; nada foi processado.'],
+  PROSPECTING_CANDIDATE_INVALID: [422, 'Um candidato não pôde ser processado; nada foi gravado.'],
+  PROSPECTING_CONFLICT: [409, 'Conflito ao registrar o lote. Tente novamente.'],
+  PROSPECTING_NOT_FOUND: [404, 'Lote não encontrado.'],
+  PROSPECTING_CRM_INVALID: [503, 'Não foi possível ler o CRM agora; nada foi processado.'],
+  PROSPECTING_PERSISTENCE: [503, 'Não foi possível ler ou gravar os dados locais agora. Tente novamente em instantes.'],
   PAYLOAD_TOO_LARGE: [413, 'Requisição grande demais.'],
   UNSUPPORTED_MEDIA_TYPE: [415, 'Envie o corpo como application/json.'],
   INVALID_REQUEST: [400, 'Requisição inválida.'],
@@ -175,6 +193,32 @@ const PROMOTION_CODES = Object.freeze({
   PROMOTION_PARTIAL: 'PROMOTION_PARTIAL',
 });
 
+// Os `code` do Prospecting Service que a API reconhece (o próprio código do serviço vira o código HTTP; o catálogo acima traz a
+// mensagem fixa e o status). Um teste vigia que esta lista não diverge de PROSPECTING_ERROR.
+const PROSPECTING_CODES = Object.freeze([
+  'PROSPECTING_INVALID_INPUT',
+  'PROSPECTING_BRIEFING_INVALID',
+  'PROSPECTING_RAW_FINDINGS_INVALID',
+  'PROSPECTING_CANDIDATE_INVALID',
+  'PROSPECTING_CONFLICT',
+  'PROSPECTING_NOT_FOUND',
+  'PROSPECTING_CRM_INVALID',
+  'PROSPECTING_PERSISTENCE',
+]);
+
+// Os detalhes de uma recusa de validação: só CAMINHO (formado por chaves conhecidas e índices) e CÓDIGO — nunca o valor recusado.
+// Mesmo assim cada campo é reconferido aqui (forma e tamanho), no máximo 50 itens.
+function safeDetails(details) {
+  if (!details || typeof details !== 'object' || !Array.isArray(details.errors)) return undefined;
+  const list = [];
+  for (const item of details.errors.slice(0, 50)) {
+    const path = item && typeof item.path === 'string' && /^[A-Za-z0-9_.[\]?]{0,120}$/.test(item.path) ? item.path : '';
+    const itemCode = item && typeof item.code === 'string' && /^[A-Z_]{1,40}$/.test(item.code) ? item.code : 'INVALIDO';
+    list.push({ path, code: itemCode });
+  }
+  return list;
+}
+
 // Dicas para o LOG de erros internos conhecidos — sem repetir a mensagem original, que pode trazer trechos de
 // dados (um JSON de fila corrompido cita um pedaço do conteúdo).
 const INTERNAL_HINTS = Object.freeze([
@@ -187,6 +231,7 @@ function mapErrorToHttp(error) {
   let code = 'INTERNAL';
   let detail;
   let headers;
+  let details;
   if (error instanceof HttpError) {
     code = error.code;
     detail = error.detail;
@@ -195,6 +240,10 @@ function mapErrorToHttp(error) {
     code = error.category === CONNECTIVITY_ERROR.AUTH ? 'UNAUTHENTICATED' : 'AUTH_UNAVAILABLE';
   } else if (error instanceof UserResolutionError) {
     code = error.code === USER_NOT_FOUND ? 'NO_ACCESS' : 'INTERNAL';
+  } else if (error && typeof error === 'object' && typeof error.code === 'string' && PROSPECTING_CODES.includes(error.code)) {
+    code = error.code;
+    // só as recusas de VALIDAÇÃO (400) levam caminho e código; nenhum outro erro carrega detalhe
+    if (CATALOG[code][0] === 400) details = safeDetails(error.details);
   } else if (error && typeof error === 'object' && Object.prototype.hasOwnProperty.call(PROMOTION_CODES, error.code)) {
     code = PROMOTION_CODES[error.code];
     if (code === 'INVALID_REQUEST') detail = 'Identificador inválido.';
@@ -207,7 +256,9 @@ function mapErrorToHttp(error) {
     }
   }
   const [status, message] = CATALOG[code] || CATALOG.INTERNAL;
-  return { status, code, message: code === 'INVALID_REQUEST' && detail ? detail : message, headers };
+  const failure = { status, code, message: code === 'INVALID_REQUEST' && detail ? detail : message, headers };
+  if (details !== undefined) failure.details = details;
+  return failure;
 }
 
 function respond(status, payload, headers = {}) {
@@ -225,7 +276,9 @@ function respond(status, payload, headers = {}) {
 }
 
 function errorResponse(failure) {
-  return respond(failure.status, { error: { code: failure.code, message: failure.message } }, failure.headers);
+  const error = { code: failure.code, message: failure.message };
+  if (failure.details !== undefined) error.details = failure.details;
+  return respond(failure.status, { error }, failure.headers);
 }
 
 // Remove o token de um texto (defesa em profundidade: o adapter já o limpa das suas mensagens).
@@ -288,14 +341,14 @@ function collectBody(req, limit) {
 }
 
 // Content-Type application/json obrigatório, tamanho limitado, JSON estrito: o corpo é um OBJETO.
-async function readJsonBody(req) {
+async function readJsonBody(req, limit = MAX_BODY_BYTES) {
   const contentType = String(req.headers['content-type'] || '').split(';')[0].trim().toLowerCase();
   if (contentType !== 'application/json') throw new HttpError('UNSUPPORTED_MEDIA_TYPE');
   const declared = Number(req.headers['content-length']);
-  if (Number.isFinite(declared) && declared > MAX_BODY_BYTES) {
+  if (Number.isFinite(declared) && declared > limit) {
     throw new HttpError('PAYLOAD_TOO_LARGE', undefined, { Connection: 'close' });
   }
-  const text = (await collectBody(req, MAX_BODY_BYTES)).toString('utf8');
+  const text = (await collectBody(req, limit)).toString('utf8');
   let value;
   try {
     value = JSON.parse(text);
@@ -359,9 +412,10 @@ function parseTarget(req) {
 }
 
 // `crm`: as rotas do CRM só existem quando o CRM Service foi injetado; sem ele, /api/crm... é uma rota desconhecida (404).
-function matchRoute(pathname, { crm, promotion }) {
+function matchRoute(pathname, { crm, promotion, prospecting }) {
   if (pathname === '/api/me') return { name: 'me', label: '/api/me', methods: ['GET'] };
   if (pathname === '/api/approvals') return { name: 'list', label: '/api/approvals', methods: ['GET'] };
+  if (prospecting && pathname === '/api/prospecting/submit') return { name: 'prospecting-submit', label: '/api/prospecting/submit', methods: ['POST'] };
   if (promotion) {
     const promote = /^\/api\/approvals\/([^/]+)\/promote$/.exec(pathname);
     if (promote) return { name: 'promote', label: '/api/approvals/:id/promote', methods: ['POST'], rawId: promote[1] };
@@ -441,11 +495,12 @@ function requireFunction(value, name) {
 // crmService: o CRM Service (as 7 operações de CRM_OPERATIONS) — OPCIONAL: sem ele as rotas /api/crm não existem (404).
 //   Presente, é validado por inteiro na criação (falha fechada); `null` não é "ausente", é erro.
 // crmIntegrationService: a promoção Approval Queue → CRM (promoteProspect) — OPCIONAL: sem ele a rota de promoção não existe (404).
+// prospectingService: o Prospecting Service (submitProspecting) — OPCIONAL: sem ele a rota de submissão não existe (404).
 // publicConfig: { supabaseUrl, supabaseAnonKey } — os valores PÚBLICOS que o navegador recebe.
 // staticRoot / staticFiles: os arquivos do Dashboard (ver static.js).
 // log: (texto) => void. authTimeoutMs: quanto esperar pela verificação do token.
 function createApp(dependencies) {
-  const { verifyAccessToken, userStore, approvalQueueService, crmService, crmIntegrationService, publicConfig, staticRoot, staticFiles, log = () => {}, authTimeoutMs = DEFAULT_AUTH_TIMEOUT_MS } =
+  const { verifyAccessToken, userStore, approvalQueueService, crmService, crmIntegrationService, prospectingService, publicConfig, staticRoot, staticFiles, log = () => {}, authTimeoutMs = DEFAULT_AUTH_TIMEOUT_MS } =
     dependencies || {};
   requireFunction(verifyAccessToken, 'verifyAccessToken');
   requireFunction(log, 'log');
@@ -462,6 +517,9 @@ function createApp(dependencies) {
   }
   if (crmIntegrationService !== undefined && (!crmIntegrationService || typeof crmIntegrationService[PROMOTION_OPERATION] !== 'function')) {
     throw new Error(`createApp exige { crmIntegrationService } com ${PROMOTION_OPERATION}()`);
+  }
+  if (prospectingService !== undefined && (!prospectingService || typeof prospectingService[PROSPECTING_OPERATION] !== 'function')) {
+    throw new Error(`createApp exige { prospectingService } com ${PROSPECTING_OPERATION}()`);
   }
   if (!publicConfig || typeof publicConfig.supabaseUrl !== 'string' || typeof publicConfig.supabaseAnonKey !== 'string') {
     throw new Error('createApp exige { publicConfig: { supabaseUrl, supabaseAnonKey } }');
@@ -533,7 +591,7 @@ function createApp(dependencies) {
 
   async function dispatch(req, trace) {
     const url = parseTarget(req);
-    const route = matchRoute(url.pathname, { crm: crmService !== undefined, promotion: crmIntegrationService !== undefined });
+    const route = matchRoute(url.pathname, { crm: crmService !== undefined, promotion: crmIntegrationService !== undefined, prospecting: prospectingService !== undefined });
     if (route === null) {
       trace.label = 'static';
       return serveStatic(req, url);
@@ -545,6 +603,15 @@ function createApp(dependencies) {
     const context = await authenticate(req, trace);
 
     if (route.family === 'crm') return dispatchCrm(req, url, route, context);
+
+    if (route.name === 'prospecting-submit') {
+      // Só transporte: sem query, corpo JSON (objeto) de até 2 MiB, e o objeto INTEIRO vai ao serviço — que decide (autoriza
+      // PROPOSE e READ do CRM, aceita exatamente { briefing, rawFindings } e deriva autor, lote, datas e contagens). O autor é o
+      // `context` desta requisição (a identidade verificada), nunca algo do corpo. O relatório do serviço sai como está.
+      readQuery(url, []);
+      const submission = await readJsonBody(req, MAX_PROSPECTING_BODY_BYTES);
+      return respond(201, await prospectingService.submitProspecting(context, submission));
+    }
 
     if (route.name === 'me') {
       readQuery(url, []);
@@ -619,4 +686,4 @@ function createApp(dependencies) {
   return { handle, listener };
 }
 
-module.exports = { createApp, mapErrorToHttp, DEFAULT_ESTADO, MAX_BODY_BYTES };
+module.exports = { createApp, mapErrorToHttp, DEFAULT_ESTADO, MAX_BODY_BYTES, MAX_PROSPECTING_BODY_BYTES };

@@ -73,7 +73,7 @@ test('[CRM-API-ARCH-3] a raiz de composição só chama a fábrica de src/servic
   assert.deepEqual(analise.issues, []);
   assert.deepEqual(
     analise.refs.map((ref) => ref.specifier).sort(),
-    ['../auth', '../services/approvalQueueService', '../services/crmFileService', '../services/crmIntegrationFileService', './app', 'node:fs', 'node:http', 'node:path']
+    ['../auth', '../services/approvalQueueService', '../services/crmFileService', '../services/crmIntegrationFileService', '../services/prospectingFileService', './app', 'node:fs', 'node:http', 'node:path']
   );
   const identificadores = identificadoresDe(analise);
   for (const proibido of ['createCrmService', 'createJsonFileCrmRepository', 'createInMemoryCrmRepository', 'assertValidRepository', 'crmDomain']) {
@@ -88,4 +88,9 @@ test('[CRM-API-ARCH-4] a composição injeta o autorizador de src/auth e o camin
   assert.match(codigo, /createFileBackedCrmService\(\{\s*authorizeOperation: authorizeCrmOperation,\s*filePath: resolveFile\(env\.RIO_X7_CRM_PATH, DEFAULT_CRM_FILE\),?\s*\}\)/);
   assert.match(codigo, /createApp\(\{[^}]*\bcrmService,/);
   assert.match(codigo, /createApp\(\{[^}]*\bcrmIntegrationService,/);
+  assert.match(codigo, /createApp\(\{[^}]*\bprospectingService,/);
+  assert.match(codigo, /createFileBackedProspectingService\(\{\s*authorizeProposer: authorizeProposerForLeadApproval,\s*authorizeOperation: authorizeCrmOperation,/, 'a composição liga as duas pontes certas: PROPOSE e CRM (nunca a de aprovação)');
+  const inicio = codigo.indexOf('createFileBackedProspectingService({');
+  assert.doesNotMatch(codigo.slice(inicio, inicio + 400), /authorizeReviewer/);
+  assert.match(codigo, /createFileBackedProspectingService\(\{[^}]*queuePath: resolveFile\(env\.RIO_X7_QUEUE_PATH, undefined\),\s*crmPath: resolveFile\(env\.RIO_X7_CRM_PATH, DEFAULT_CRM_FILE\),\s*\}\)/, 'os MESMOS arquivos da fila e do CRM que o resto do servidor usa');
 });
