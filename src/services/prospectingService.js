@@ -9,9 +9,11 @@
 //   2) valida o briefing e TODOS os achados brutos (rawFindingSchema — dado não confiável; tudo ou nada);
 //   3) lê o CRM (só leitura) e o traduz para as checagens do Prospector (crmAdapter: o DNC do CRM é reconhecido);
 //   4) roda o discovery JÁ EXISTENTE (identidade, dados, duplicidade, DNC — nada copiado);
-//   5) propõe à Approval Queue SÓ os candidatos elegíveis (nunca DNC, duplicado ou dados insuficientes; nunca uma aprovação);
-//   6) calcula a contabilidade do lote (função pura) e registra o LOTE (entidade separada da fila);
-//   7) devolve um relatório seguro.
+//   5) para cada candidato ELEGÍVEL (nunca DNC, duplicado ou dados insuficientes) monta o DOSSIÊ (fatos traduzidos do achado por
+//      dossierFromFinding, sinais derivados por buildDossier) e prepara a proposta à Approval Queue (nunca uma aprovação);
+//   6) calcula a contabilidade do lote (função pura) e prepara o LOTE (entidade separada da fila e do dossiê);
+//   7) grava, nesta ordem: DOSSIÊS -> FILA -> LOTE (o lote é o registro final);
+//   8) devolve um relatório seguro (a associação lote/dossiê/prospect é só por identificadores).
 //
 // O QUE NÃO FAZ: não aprova, não rejeita, não promove, não escreve no CRM, não pesquisa, não usa IA, não faz rede, não tem rota nem
 // interface, não cria estado novo na fila e não altera o schema dos itens da fila (o lote guarda os ids dos prospects; a fila
@@ -31,9 +33,11 @@
 // fila segue as regras existentes de reentrada (approvalQueue.addProspect: não duplica o item, nunca sobrescreve uma decisão).
 // Nenhuma regra nova de deduplicação foi criada.
 //
-// ORDEM DE ESCRITA: valida e computa TUDO em memória → grava a fila (uma vez) → grava o lote. Falha antes de gravar: nada mudou.
-// Se o lote falha DEPOIS de a fila ter sido gravada, o erro diz quais prospects entraram (repetir a submissão é seguro: a fila
-// não duplica). Não há transação entre os dois arquivos (limite registrado).
+// ORDEM DE ESCRITA: valida e computa TUDO em memória → grava os dossiês → grava a fila (uma vez) → grava o lote. Falha antes de
+// gravar: nada mudou. NÃO HÁ TRANSAÇÃO entre os três arquivos (limite registrado, decisão 0019): uma falha depois de outra gravação
+// deixa o que já foi gravado (nada é apagado nem sobrescrito) e o erro traz só identificadores operacionais (loteId, dossierIds,
+// prospectIds). Dossiê sem lote é um órfão detectável (o lote é o registro final) e inofensivo; repetir a submissão é um NOVO lote
+// (a fila não duplica itens; os dossiês novos têm ids novos).
 //
 // ERROS — sempre ProspectingError com `code` estável e mensagem fixa em português (nunca stack, valor recebido, caminho ou dado do
 // achado); `details` só carrega caminhos e códigos. Os erros de autorização passam intactos (mesma classe, mesma mensagem).
@@ -47,6 +51,9 @@ const discovery = require('../research-prospector/discovery');
 const { toProspectorRecords } = require('../research-prospector/crmAdapter');
 const { computeBatchAccounting, MAX_DESIRED } = require('../research-prospector/batchAccounting');
 const { assertValidBatchRepository, BATCH_ID_PATTERN } = require('../research-prospector/batchRepository');
+const { buildDossier } = require('../research-prospector/dossier');
+const { factsFromFinding } = require('../research-prospector/dossierFromFinding');
+const { assertValidDossierRepository } = require('../research-prospector/dossierRepository');
 const { validateRawFindings, checkText, ERROR: SCHEMA_ERROR, MESSAGES: SCHEMA_MESSAGES, LIMITS: SCHEMA_LIMITS } = require('../research-prospector/rawFindingSchema');
 const { PERMISSION } = require('../auth');
 
@@ -230,16 +237,20 @@ function createProspectingService(dependencies) {
     authorizeOperation,
     crmService,
     batchRepository,
+    dossierRepository,
     approvalQueue = approvalQueueDomain,
     queuePath,
     now = () => new Date(),
     newId = () => `lote:${crypto.randomUUID()}`,
+    newDossierId, // só para os testes fixarem o id do dossiê (o padrão é o do buildDossier)
   } = dependencies || {};
 
   if (typeof authorizeProposer !== 'function') throw new Error('createProspectingService exige { authorizeProposer } (função): sem autorizador injetado o Service não existe');
   if (typeof authorizeOperation !== 'function') throw new Error('createProspectingService exige { authorizeOperation } (função): a leitura do CRM também é autorizada');
   if (!crmService || typeof crmService.listRecords !== 'function') throw new Error('createProspectingService exige { crmService } com listRecords()');
   assertValidBatchRepository(batchRepository);
+  assertValidDossierRepository(dossierRepository);
+  if (newDossierId !== undefined && typeof newDossierId !== 'function') throw new Error('createProspectingService: newDossierId deve ser uma função');
   for (const name of ['createApprovalProposalActions', 'loadQueueFromDisk', 'saveQueueToDisk', 'buildStableId']) {
     if (!approvalQueue || typeof approvalQueue[name] !== 'function') throw new Error(`createProspectingService: a dependência approvalQueue não tem a função ${name}()`);
   }
@@ -314,7 +325,11 @@ function createProspectingService(dependencies) {
       throw new ProspectingError(PROSPECTING_ERROR.CANDIDATE_INVALID);
     }
 
-    // 5) fila: só os elegíveis; tudo em memória, uma gravação no fim
+    // 5) o id do lote é DERIVADO aqui (o cliente nunca o envia) e é conferido antes de qualquer gravação
+    const loteId = newId();
+    if (typeof loteId !== 'string' || !BATCH_ID_PATTERN.test(loteId)) throw new ProspectingError(PROSPECTING_ERROR.PERSISTENCE);
+
+    // 6) fila e dossiês: só os elegíveis; tudo em memória, gravação no fim
     let queue;
     try {
       queue = loadQueueFromDisk(filePath);
@@ -322,6 +337,7 @@ function createProspectingService(dependencies) {
       throw new ProspectingError(PROSPECTING_ERROR.PERSISTENCE);
     }
     const seen = new Set();
+    const dossiers = [];
     const resultados = [];
     let repetidos = 0;
     let adicionados = 0;
@@ -336,7 +352,7 @@ function createProspectingService(dependencies) {
       }
       if (seen.has(prospectId)) {
         repetidos += 1;
-        resultados.push({ indice, empresa: result.empresa, prospectId, estadoOperacional: result.estadoOperacional, estadoLote: null, naFila: false, jaExistiaNaFila: false, estadoFila: null, motivo: REASON_REPEATED, criterios: [] });
+        resultados.push({ indice, empresa: result.empresa, prospectId, estadoOperacional: result.estadoOperacional, estadoLote: null, naFila: false, jaExistiaNaFila: false, estadoFila: null, dossierId: null, motivo: REASON_REPEATED, criterios: [] });
         return;
       }
       seen.add(prospectId);
@@ -350,6 +366,7 @@ function createProspectingService(dependencies) {
         naFila: false,
         jaExistiaNaFila: false,
         estadoFila: null,
+        dossierId: null,
         motivo: BLOCK_REASON[result.estadoOperacional] || null,
         criterios: Array.isArray(result.matchedOn) ? [...result.matchedOn] : [],
       };
@@ -371,15 +388,23 @@ function createProspectingService(dependencies) {
         else adicionados += 1;
         // o que a fila já decidiu para um item que existia vale mais do que a classificação de agora
         if (QUEUE_STATES_THAT_WIN.includes(item.estado)) entry.estadoLote = item.estado;
+        // o dossiê do candidato pesquisado (só elegíveis; sem fatos, sem dossiê): associado por identificadores, nunca dentro da fila
+        const fatos = factsFromFinding(checkedFindings.validos[indice], instant.toISOString().slice(0, 10));
+        if (fatos.length > 0) {
+          const built = buildDossier({ prospectId, loteId, fatos }, { now: instant, ...(newDossierId ? { newId: newDossierId } : {}) });
+          if (!built.ok) throw new ProspectingError(PROSPECTING_ERROR.CANDIDATE_INVALID);
+          dossiers.push(built.value);
+          entry.dossierId = built.value.dossierId;
+        }
       }
       resultados.push(entry);
     });
 
-    // 6) contabilidade (pura) e o lote — todos os valores são derivados aqui
+    // 7) contabilidade (pura) e o lote — todos os valores são derivados aqui
     const counted = resultados.filter((entry) => entry.motivo !== REASON_REPEATED);
     const accounting = computeBatchAccounting({ quantidadeDesejada: briefing.quantidadeDesejada, candidatos: counted.map((entry) => ({ estadoOperacional: entry.estadoLote })) });
     const batch = {
-      loteId: newId(),
+      loteId,
       status: accounting.falta === 0 ? BATCH_STATUS.META_ATINGIDA : BATCH_STATUS.EM_ANDAMENTO,
       criadoPor: author,
       criadoEm: instant.toISOString(),
@@ -390,23 +415,32 @@ function createProspectingService(dependencies) {
       repetidosNaSubmissao: repetidos,
       excluidosPeloBriefing: screened.excluidos.length,
       prospectIds: counted.filter((entry) => entry.naFila).map((entry) => entry.prospectId),
+      dossierIds: dossiers.map((dossier) => dossier.dossierId),
       resultados,
     };
-    if (typeof batch.loteId !== 'string' || !BATCH_ID_PATTERN.test(batch.loteId)) throw new ProspectingError(PROSPECTING_ERROR.PERSISTENCE);
 
-    // 7) grava: a fila (só se algo entrou), depois o lote
+    // 8) grava, sem transação: os dossiês, depois a fila (só se algo entrou), por fim o lote (o registro final)
+    const savedDossierIds = [];
+    for (const dossier of dossiers) {
+      try {
+        dossierRepository.save(dossier);
+      } catch {
+        throw new ProspectingError(PROSPECTING_ERROR.PERSISTENCE, { loteId, dossierIds: savedDossierIds });
+      }
+      savedDossierIds.push(dossier.dossierId);
+    }
     if (adicionados + jaExistiam > 0) {
       try {
         saveQueueToDisk(queue, filePath);
       } catch {
-        throw new ProspectingError(PROSPECTING_ERROR.PERSISTENCE);
+        throw new ProspectingError(PROSPECTING_ERROR.PERSISTENCE, { loteId, dossierIds: savedDossierIds });
       }
     }
     try {
       batchRepository.add(batch);
     } catch (error) {
       if (error && error.code === 'BATCH_CONFLICT') throw new ProspectingError(PROSPECTING_ERROR.CONFLICT);
-      throw new ProspectingError(PROSPECTING_ERROR.PERSISTENCE, { prospectIds: batch.prospectIds });
+      throw new ProspectingError(PROSPECTING_ERROR.PERSISTENCE, { loteId, dossierIds: savedDossierIds, prospectIds: batch.prospectIds });
     }
     return copy(batch);
   }

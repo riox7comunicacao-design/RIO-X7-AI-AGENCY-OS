@@ -112,10 +112,11 @@ function montarAmbiente(t, { usuarios = [BRENO, RAFAEL], queue, authTimeoutMs, s
   // `crm: true`), com o arquivo dos lotes em diretório temporário (`batchPath`); `prospectingService` injeta um double.
   if (prospeccao && !arquivoCrm) throw new Error('montarAmbiente: prospeccao exige crm: true');
   const batchPath = path.join(path.dirname(filePath), 'prospecting-batches.json');
+  const dossierPath = path.join(path.dirname(filePath), 'prospecting-dossiers.json');
   const prospectingService =
     prospeccaoInjetada ||
     (prospeccao
-      ? createFileBackedProspectingService({ authorizeProposer: authorizeProposerForLeadApproval, authorizeOperation: authorizeCrmOperation, queuePath: filePath, crmPath: arquivoCrm, batchPath })
+      ? createFileBackedProspectingService({ authorizeProposer: authorizeProposerForLeadApproval, authorizeOperation: authorizeCrmOperation, queuePath: filePath, crmPath: arquivoCrm, batchPath, dossierPath })
       : undefined);
   const logs = [];
   const publicConfig = { supabaseUrl: FAKE_ENV.SUPABASE_URL, supabaseAnonKey: FAKE_ENV.SUPABASE_ANON_KEY };

@@ -63,5 +63,5 @@ Integração com `submitProspecting` (rawFindings → dossiê → lote → fila)
 
 ## Próximos passos
 
-1. Integrar ao `submitProspecting`: rawFindings → dossiê → lote → Approval Queue (decisão própria, sem mudar a máquina da fila).
+1. (feito na [0019](./0019-prospecting-dossier-ingestion.md)) Integrar ao `submitProspecting`: rawFindings → dossiê → lote → Approval Queue (decisão própria, sem mudar a máquina da fila).
 2. Só depois, expor o dossiê ao revisor (Dashboard) e decidir a persistência definitiva (Supabase/Postgres, candidato, não decidido).

@@ -1,5 +1,16 @@
 # Changelog
 
+## 2026-09-25 — Integração do dossiê ao Prospecting Service (rawFindings → discovery → dossiê → fila → lote)
+
+O `submitProspecting` existente passou a criar o dossiê dos candidatos elegíveis ([decisão 0019](./docs/decisions/0019-prospecting-dossier-ingestion.md)). **Sem rota nova** (a rota só transporta), sem permissão nova, sem CRM write, sem alteração na Approval Queue, no Promotion Service ou no CRM; sem pesquisa web, IA, Dashboard, score ou ranking. Contrato de entrada inalterado: exatamente `{ briefing, rawFindings }`.
+
+- **Fluxo:** autorização → briefing/achados → CRM (leitura) → discovery → `loteId` derivado pelo serviço → dossiê + proposta na fila em memória → contagens (`batchAccounting`) → **grava dossiês → fila → lote** (lote = registro final) → relatório. Tudo o que falha por conteúdo acontece antes de gravar.
+- **Dossiê só para elegíveis** (os que entram na fila); DNC, duplicado e dados insuficientes ficam só no relatório do lote. Fatos vêm do que o achado já traz (`dossierFromFinding.js`, função pura): `site/instagram/facebook/linkedin/youtube/googlePerfil → <campo>.url`, `whatsapp → whatsapp.publico`; DADO só com valor https + URL da fonte + `dataConsulta`, senão NAO_VERIFICADO (nada inventado). Não nascem sinais de atividade do Instagram, CTA, formulário ou anúncios (o achado não os traz; estender o contrato é decisão futura).
+- **Associação só por ids:** o dossiê guarda `prospectId` e `loteId`; o lote guarda `dossierIds`; o relatório ganhou apenas `dossierIds` e `resultados[].dossierId`. A fila não ganhou nenhum campo.
+- **Sem transação entre os três arquivos** (documentado): a falha em qualquer gravação não apaga nem sobrescreve nada, devolve `PROSPECTING_PERSISTENCE` com `{ loteId, dossierIds[, prospectIds] }`; dossiê sem lote é um órfão detectável e inofensivo; repetir é um novo lote seguro.
+- **Composição:** `createFileBackedProspectingService` aceita `dossierPath` (padrão `data/prospecting-dossiers.json`, fora do Git); o serviço exige o repositório de dossiês. **Um servidor em execução precisa ser reiniciado.**
+- **Testes:** 24 novos (integração de serviço com arquivos reais + tradução) — 1100 no total: 1098 passam e 2 pulados com `.env`; 1093 e 7 pulados sem `.env`; 0 falhas. **Mutação:** 62 mutantes, 9 sobreviventes na 1ª rodada: 7 lacunas reais (corrigidas, todas agora detectadas) e 2 equivalentes.
+
 ## 2026-09-25 — Prospecting Dossier + Signals V1 (modelo determinístico)
 
 Cria o dossiê de pesquisa e os sinais do Prospector — **só o modelo e a persistência** ([decisão 0018](./docs/decisions/0018-prospecting-dossier-signals.md)). Sem pesquisa web, IA, navegador, Dashboard, rota, SDR, automação, CRM write; Approval Queue, Promotion Service, CRM e permissões **não foram alterados**; **não integrado ao `submitProspecting`**.

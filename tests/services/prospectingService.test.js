@@ -18,6 +18,7 @@ const { createFileBackedProspectingService } = require('../../src/services/prosp
 const { createProspectingService, ProspectingError, PROSPECTING_ERROR, BRIEFING_LIMITS } = require('../../src/services/prospectingService');
 const { createApprovalQueueService } = require('../../src/services/approvalQueueService');
 const { createJsonFileBatchRepository, createInMemoryBatchRepository } = require('../../src/research-prospector/batchRepository');
+const { createJsonFileDossierRepository, createInMemoryDossierRepository } = require('../../src/research-prospector/dossierRepository');
 const { createFileBackedCrmService } = require('../../src/services/crmFileService');
 const { LIMITS } = require('../../src/research-prospector/rawFindingSchema');
 const queueDomain = require('../../src/research-prospector/approvalQueue');
@@ -35,6 +36,7 @@ function ambiente(t, opcoes = {}) {
   const queuePath = path.join(dir, 'approval-queue.json');
   const crmPath = path.join(dir, 'crm.json');
   const batchPath = path.join(dir, 'prospecting-batches.json');
+  const dossierPath = path.join(dir, 'prospecting-dossiers.json');
   const repositorioCrm = createJsonFileCrmRepository(crmPath);
   for (const { campos, dnc } of opcoes.crm || []) {
     const { record } = crm.createRecord(repositorioCrm, campos, OPERADOR);
@@ -47,6 +49,7 @@ function ambiente(t, opcoes = {}) {
       ...portas,
       crmService: createFileBackedCrmService({ authorizeOperation: portas.authorizeOperation, filePath: crmPath }),
       batchRepository: opcoes.batchRepository || createJsonFileBatchRepository(batchPath),
+      dossierRepository: opcoes.dossierRepository || createJsonFileDossierRepository(dossierPath),
       queuePath,
       now: () => AGORA,
       newId: opcoes.newId || (() => `lote:00000000-0000-4000-8000-${String((contador += 1)).padStart(12, '0')}`),
@@ -56,11 +59,14 @@ function ambiente(t, opcoes = {}) {
     queuePath,
     crmPath,
     batchPath,
+    dossierPath,
     servico: criar(),
     reabrir: criar,
     fila: () => (fs.existsSync(queuePath) ? JSON.parse(fs.readFileSync(queuePath, 'utf8')) : { items: {} }),
     filaExiste: () => fs.existsSync(queuePath),
     lotesExistem: () => fs.existsSync(batchPath),
+    dossiesExistem: () => fs.existsSync(dossierPath),
+    dossies: () => (fs.existsSync(dossierPath) ? JSON.parse(fs.readFileSync(dossierPath, 'utf8')) : {}),
     lotes: () => (fs.existsSync(batchPath) ? JSON.parse(fs.readFileSync(batchPath, 'utf8')) : {}),
     textoCrm: () => (fs.existsSync(crmPath) ? fs.readFileSync(crmPath, 'utf8') : ''),
     serviceDaFila: () => createApprovalQueueService({ authorizeReviewer: authorizeReviewerForApprovalQueue, queuePath }),
@@ -92,6 +98,7 @@ function semEfeitos(env, ctx) {
     conferir(mensagem = '') {
       assert.equal(env.filaExiste(), false, `${mensagem}: a fila não foi criada`);
       assert.equal(env.lotesExistem(), false, `${mensagem}: nenhum lote foi gravado`);
+      assert.equal(env.dossiesExistem(), false, `${mensagem}: nenhum dossiê foi gravado`);
       assert.equal(env.textoCrm(), antesCrm, `${mensagem}: o CRM não mudou`);
     },
   };
@@ -185,7 +192,7 @@ test('[PSV-6] um autorizador defeituoso falha fechado: false, undefined, texto, 
 
 test('[PSV-7] a criação exige tudo: portas, CRM Service com listRecords, repositório de lotes válido, dependências da fila e relógio; a fábrica de arquivo exige o caminho do CRM', (t) => {
   const env = ambiente(t);
-  const base = { authorizeProposer: authorizeProposerForLeadApproval, authorizeOperation: authorizeCrmOperation, crmService: { listRecords() {} }, batchRepository: createInMemoryBatchRepository(), queuePath: env.queuePath };
+  const base = { authorizeProposer: authorizeProposerForLeadApproval, authorizeOperation: authorizeCrmOperation, crmService: { listRecords() {} }, batchRepository: createInMemoryBatchRepository(), dossierRepository: createInMemoryDossierRepository(), queuePath: env.queuePath };
   assert.doesNotThrow(() => createProspectingService(base));
   assert.throws(() => createProspectingService(), /authorizeProposer/);
   assert.throws(() => createProspectingService({ ...base, authorizeProposer: undefined }), /authorizeProposer/);
@@ -501,6 +508,7 @@ test('[PSV-24] um registro do CRM que o adaptador não sabe interpretar recusa a
     authorizeOperation: authorizeCrmOperation,
     crmService: { listRecords: () => [{ empresa: 'Ok', status: 'PROSPECT' }, null] },
     batchRepository: createInMemoryBatchRepository(),
+    dossierRepository: createInMemoryDossierRepository(),
     queuePath: env.queuePath,
   });
   assert.equal(codigoDe(() => servico.submitProspecting(admin(), submissao([achado('X Teste', 'x-teste')]))), PROSPECTING_ERROR.CRM_INVALID);
@@ -551,6 +559,7 @@ test('[PSV-27] a permissão de PROPOSE não aprova: o serviço não oferece nenh
     authorizeOperation: authorizeCrmOperation,
     crmService: createFileBackedCrmService({ authorizeOperation: authorizeCrmOperation, filePath: env.crmPath }),
     batchRepository: createInMemoryBatchRepository(),
+    dossierRepository: createInMemoryDossierRepository(),
     queuePath: env.queuePath,
   });
   espiao.submitProspecting(admin(), submissao([achado('Clínica Alfa Teste', 'alfa-teste')]));

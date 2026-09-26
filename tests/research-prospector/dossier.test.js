@@ -572,8 +572,8 @@ test('[DOS-39] o dossiê é independente do CRM, do disco e da rede: os módulos
   for (const nome of ['dossier.js', 'signalSchema.js']) assert.doesNotMatch(fs.readFileSync(path.join(raiz, 'src', 'research-prospector', nome), 'utf8').replace(/\/\/.*$/gm, ''), /node:fs|node:path/, nome);
   // a Approval Queue não conhece o dossiê (o schema dos itens não mudou)
   assert.doesNotMatch(fs.readFileSync(path.join(raiz, 'src', 'research-prospector', 'approvalQueue.js'), 'utf8'), /dossie|dossier/i);
-  assert.doesNotMatch(fs.readFileSync(path.join(raiz, 'src', 'research-prospector', 'discovery.js'), 'utf8'), /dossie|dossier/i, 'o discovery não foi integrado ao dossiê nesta etapa');
-  assert.doesNotMatch(fs.readFileSync(path.join(raiz, 'src', 'services', 'prospectingService.js'), 'utf8'), /dossie|dossier/i, 'o Prospecting Service não foi integrado ao dossiê nesta etapa');
+  assert.doesNotMatch(fs.readFileSync(path.join(raiz, 'src', 'research-prospector', 'discovery.js'), 'utf8'), /dossie|dossier/i, 'o discovery continua sem conhecer o dossiê');
+  // (a integração ao Prospecting Service veio na decisão 0019 e tem os seus próprios testes)
 });
 
 test('[DOS-40] executar o dossiê não escreve no CRM nem em nenhum arquivo: montar dossiês válidos e inválidos não cria, altera ou lê arquivo algum', () => {
