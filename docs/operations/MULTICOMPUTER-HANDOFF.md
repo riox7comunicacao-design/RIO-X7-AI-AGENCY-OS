@@ -93,8 +93,8 @@ Ensaio feito em 2026-09-24 num diretório temporário, só com os arquivos versi
 | `npm ci` | 9 pacotes instalados (a única dependência direta é `@supabase/supabase-js`), 0 vulnerabilidades, ~10 s |
 | `preflight` **sem** `.env` | **4 falhas e 1 aviso** (`.env` ausente, `SUPABASE_URL`, `SUPABASE_ANON_KEY` e `data/users.json` ausentes; conectividade pulada), código de saída 1 — **esperado**: o computador ainda não está configurado |
 | `preflight` **com** `.env` e `data/users.json` | 14 verificações, **0 falhas**, 0 avisos (inclui uma checagem real, só leitura e sem login, do Supabase) |
-| `npm test` **sem** `.env` | **1148 testes: 1141 passam, 0 falham, 7 pulados** |
-| `npm test` **com** `.env` | **1148 testes: 1146 passam, 0 falham, 2 pulados** |
+| `npm test` **sem** `.env` | **1184 testes: 1177 passam, 0 falham, 7 pulados** |
+| `npm test` **com** `.env` | **1184 testes: 1182 passam, 0 falham, 2 pulados** |
 
 Os pulados são esperados: sem `.env`, 5 testes de conectividade/autenticação contra o Supabase real; o `[REAL-2]` (só roda com `RIO_X7_TEST_ACCESS_TOKEN`, um token real de um usuário de **teste** — opcional); e o `[SRV-SEC-24b]` (symlink, que o Windows sem privilégio não permite). Qualquer **falha** é um problema real, nunca esperado.
 
@@ -173,6 +173,10 @@ O Prospecting Dossier ([0018](../decisions/0018-prospecting-dossier-signals.md))
 ## rawFinding V2 (nota operacional)
 
 O achado aceita o bloco opcional `dossie` ([0020](../decisions/0020-raw-finding-v2.md)); a rota `POST /api/prospecting/submit` agora aceita até **4 MiB** e **150 achados** por submissão. Quem já está com o servidor rodando precisa **reiniciá-lo** (`npm start`) para o novo limite e o bloco. Sem novos arquivos de dados: os dossiês continuam em `data/prospecting-dossiers.json`.
+
+## Adaptadores de pesquisa e smoke test real (nota operacional)
+
+Os adaptadores ([0022](../decisions/0022-researcher-adapters.md)) só acessam a internet no **smoke test manual**: `RIO_X7_SMOKE=1 npm run smoke:researcher` (duas consultas públicas pequenas, nada é gravado; sem a variável ele não faz nada). O `npm test` é 100% offline. Nenhum arquivo de `data/` é criado pelos adaptadores ou pelo smoke.
 
 ## Próxima etapa
 

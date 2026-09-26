@@ -1,5 +1,14 @@
 # Changelog
 
+## 2026-09-26 — Adaptadores reais das portas do Researcher + primeiro smoke test real controlado
+
+Passo 1 da 0021 ([decisão 0022](./docs/decisions/0022-researcher-adapters.md)). **Só** os adaptadores de rede e o smoke test; sem serviço Researcher → `submitProspecting`, fila, lote, CRM, Dashboard, SDR, análises ou lote real. `researcher.js`, `researchPolicy.js`, o contrato V2, o CRM, a fila, o Promotion Service, o Batch e as permissões **não foram alterados**; nenhuma dependência nova.
+
+- **`src/research-adapters/`** (fora do domínio; regras R13/R14 no teste de arquitetura): `netGuard` (só endereços públicos, sem SSRF/DNS rebinding), `httpsTransport` (uma requisição GET, TLS validado, tempo e tamanho limitados), `robots` (RFC 9309, sem regex com retrocesso), `htmlExtract` (extração estática linear, nada executado), `publicWeb` (robots.txt, redirecionamentos seguros, cortesia por host, orçamento, classificação de falhas → `LOGIN`/`CAPTCHA`/`BLOQUEADO`/`ROBOTS`/`TEMPO_ESGOTADO`/…, eventos `REDIRECT_TO_LOGIN` etc.), `nominatimSearch` (porta `search` sobre dados abertos do OSM) e `index` (`createResearchPorts`). **Nunca:** login, credencial, cookie, captcha resolvido, bloqueio/robots contornado, proxy, dado privado, nova tentativa; não existe opção para nada disso. **Sem `lookupAds`** (nenhuma fonte pública adequada).
+- **Smoke test real** (`scripts/smoke-researcher.js`, `RIO_X7_SMOKE=1`, fora do `npm test`, não grava nada): a busca do Nominatim foi **bloqueada pelo robots.txt do provedor** (respeitado; o provedor de busca precisa ser trocado ou hospedado por nós — decisão pendente); o `fetchPage` real sobre uma página pública declarada pelo operador funcionou e o achado passou por `validateRawFindingsV2` (fonte https, data do relógio do Researcher, evidência OFICIAL).
+- **Testes:** 36 novos OFFLINE (`tests/research-adapters/`) — 1184 no total: 1182 passam e 2 pulados com `.env`; 1177 e 7 pulados sem `.env`; 0 falhas. **Mutação:** 140 mutantes, 12 sobreviventes na 1ª rodada: 7 lacunas de teste (corrigidas, todas agora detectadas) e 5 equivalentes/redundantes (documentados).
+- **Limpeza:** um arquivo `data/prospecting-dossiers.json` com 506 dossiês FICTÍCIOS (`example.test`) tinha sido gravado por uma execução intermediária dos testes da integração 0019 (antes de o ambiente de teste do servidor injetar o caminho do dossiê); estava fora do Git, foi conferido (nenhum dado real) e removido. Os testes atuais não escrevem em `data/`.
+
 ## 2026-09-25 — Researcher V1 (só o módulo; nenhuma pesquisa real)
 
 Cria o pesquisador que transforma pesquisa pública em achados rawFinding V2 ([decisão 0021](./docs/decisions/0021-researcher-v1.md)). **Nenhuma pesquisa real foi executada**, nenhum lote foi criado, o `submitProspecting` não é chamado, sem rota, serviço, adaptador de rede ou Dashboard; CRM, Approval Queue, Promotion Service, discovery, dossiê e o contrato V2 **não foram alterados**; nenhuma dependência nova.

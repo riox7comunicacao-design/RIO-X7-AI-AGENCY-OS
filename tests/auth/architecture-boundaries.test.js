@@ -56,6 +56,9 @@ const SDK_IMPORTER = 'src/auth/authAdapter.js';
 const LOADER_BUILTINS = new Set(['module', 'vm']);
 
 const RULES = {
+  // R13-R14 (Researcher V1, decisão 0022): a REDE é um detalhe dos adaptadores; o domínio não a conhece e os adaptadores não conhecem a aplicação.
+  R13: 'src/research-prospector/ não pode importar src/research-adapters/ (o domínio do Researcher é independente da rede).',
+  R14: 'src/research-adapters/ não pode importar src/auth/, src/crm/, src/services/ nem src/server/ (o adaptador de rede não conhece autorização, CRM, fila, lote nem serviço).',
   R1: 'Somente src/auth/userResolver.js e src/auth/authorizationContext.js podem importar o emissor interno src/auth/internal/contextIssuer.js.',
   R2: 'src/ não pode depender de tests/ (nem de qualquer arquivo fora de src/).',
   R3: 'src/research-prospector/ e src/crm/ não podem importar src/auth/ (o domínio recebe a autorização por injeção).',
@@ -77,6 +80,8 @@ const RULES = {
 
 // Detalhe de uma aresta (arquivo -> alvo) que viola uma regra; usado no grafo estático e no de execução.
 const EDGE_DETAIL = {
+  R13: 'o domínio research-prospector não pode importar src/research-adapters (a rede é um detalhe dos adaptadores)',
+  R14: 'src/research-adapters não pode importar auth, crm, services nem server',
   R1: 'importa diretamente o emissor interno de AuthorizationContext, reservado a userResolver.js e authorizationContext.js',
   R2: 'src/ não pode depender de tests/ nem de nada fora de src/',
   R3: 'os domínios research-prospector e crm não podem importar src/auth',
@@ -104,6 +109,8 @@ function edgeRules(fromRel, toRel) {
   if ((from.startsWith('src/auth/') || from.startsWith('src/research-prospector/') || from.startsWith('src/crm/')) && (to.startsWith('src/services/') || to.startsWith('src/server/'))) rules.push('R9');
   if (from.startsWith('src/server/') && to.startsWith('src/research-prospector/')) rules.push('R10');
   if (to.startsWith('src/crm/') && !from.startsWith('src/crm/') && !from.startsWith('src/services/')) rules.push('R12');
+  if (from.startsWith('src/research-prospector/') && to.startsWith('src/research-adapters/')) rules.push('R13');
+  if (from.startsWith('src/research-adapters/') && (to.startsWith('src/auth/') || to.startsWith('src/crm/') || to.startsWith('src/services/') || to.startsWith('src/server/'))) rules.push('R14');
   return rules;
 }
 

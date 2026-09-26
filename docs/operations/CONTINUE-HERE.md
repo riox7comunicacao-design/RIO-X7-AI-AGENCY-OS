@@ -45,8 +45,8 @@ npm start
 
 | Onde | Total | Passam | Falham | Pulados |
 |---|---|---|---|---|
-| Neste computador, com `.env` | 1148 | 1146 | 0 | 2 |
-| Sem `.env` e sem `data/*.json` (um clone limpo) | 1148 | 1141 | 0 | 7 |
+| Neste computador, com `.env` | 1184 | 1182 | 0 | 2 |
+| Sem `.env` e sem `data/*.json` (um clone limpo) | 1184 | 1177 | 0 | 7 |
 
 Nenhuma falha. Os pulados são esperados: sem `.env` (5 testes de conectividade/autenticação contra o Supabase real), o `[REAL-2]` (só roda com `RIO_X7_TEST_ACCESS_TOKEN`, um token real de teste) e o `[SRV-SEC-24b]` (symlink, que o Windows sem privilégio não permite). O preflight sem `.env` **falha de propósito** (`.env` e `data/users.json` ausentes; conectividade pulada) — é o comportamento correto de um computador ainda não configurado.
 
@@ -84,6 +84,7 @@ A API não informa as transições permitidas (a tela oferece os outros status e
 - documentação e handoff para outro computador: concluídos e ensaiados com um clone limpo do `origin/main`
 - CRM-INTEGRATION: **concluído** (decisão 0016) — serviço, rota `POST /api/approvals/:id/promote` e ação "Promover para CRM" no Dashboard
 - **Dashboard V1 — Central Operacional: concluído** (só UX/UI): menu lateral agrupado (áreas ainda inexistentes desabilitadas, "Em desenvolvimento"), Visão Geral com indicadores/pipeline/atividade **reais**, Central de Agentes IA (`#/agentes`, só estrutura visual). Nenhuma regra, permissão ou API mudou; ver o [CHANGELOG.md](../../CHANGELOG.md)
+- **Adaptadores reais das portas do Researcher: concluídos** ([0022](../decisions/0022-researcher-adapters.md)) — `src/research-adapters/` (`search` sobre o OSM Nominatim, `fetchPage` HTTPS público com robots.txt, redirecionamentos seguros, timeout/tamanho/requisições limitados, guarda de rede pública; **sem `lookupAds`**: não há fonte pública adequada). **Smoke real** (`RIO_X7_SMOKE=1 npm run smoke:researcher`, fora do `npm test`): a busca do Nominatim é **bloqueada pelo robots.txt** do provedor (respeitado, nada forçado) — falta escolher um provedor de busca utilizável; o `fetchPage` real funcionou numa página pública e o achado passou no V2. **Não ligado ao `submitProspecting`**; nada persistido
 - **Researcher V1: concluído (só o módulo, sem execução real)** ([0021](../decisions/0021-researcher-v1.md)) — `src/research-prospector/researcher.js` + `researchPolicy.js`: briefing → portas injetadas de busca/página/anúncios → achados rawFinding V2 validados, só DADO e NAO_VERIFICADO (com `motivo`), fontes públicas https, nada inferido/contornado/decidido, nada cortado em silêncio. **Nenhuma pesquisa real, nenhum adaptador de rede, nenhum serviço/rota, não ligado ao `submitProspecting`.** Próximo passo: o adaptador de portas com rede (robots, taxa, timeout) e um primeiro teste real controlado — decisão própria
 - **rawFinding V2: concluído** ([0020](../decisions/0020-raw-finding-v2.md)) — bloco opcional `dossie` no achado (observações do Instagram/CTA/formulário/anúncios, `motivo`, análises/hipóteses), validado pelo `buildDossier` antes de qualquer gravação; `campos` continua sendo a identidade; rota 4 MiB e 150 achados por submissão; nunca corta em silêncio. **Sem pesquisa web.** Reinicie o servidor para o novo limite. Próximo passo: a pesquisa web real (fora deste contrato)
 - **Integração do dossiê ao Prospecting Service: concluída** ([0019](../decisions/0019-prospecting-dossier-ingestion.md)) — `submitProspecting` grava dossiês → fila → lote (sem transação, documentado); dossiê só para elegíveis; fatos traduzidos do achado; sem rota/permissão/CRM write novos. Próximo passo sugerido: decidir se o achado passa a trazer Instagram-atividade/CTA/anúncios/análises (mudança de contrato)
