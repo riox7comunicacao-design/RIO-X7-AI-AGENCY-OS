@@ -26,7 +26,8 @@ const nbsp = (text) => text.split(String.fromCharCode(160)).join(' ');
 async function subir(t, { usuario = BRENO, hash = '', usuarios = [BRENO, RAFAEL], sementes = [], token } = {}) {
   const env = montarAmbiente(t, { usuarios, crm: true });
   const repositorio = createJsonFileCrmRepository(env.crmFilePath);
-  const semeados = sementes.map((campos) => crm.createRecord(repositorio, campos, { actor: 'HUMAN', reviewedBy: { userId: 'user-semente', name: 'Semente', role: 'ADMIN' }, motivo: 'semente do teste' }).record);
+  const semeados = [];
+  for (const campos of sementes) semeados.push((await crm.createRecord(repositorio, campos, { actor: 'HUMAN', reviewedBy: { userId: 'user-semente', name: 'Semente', role: 'ADMIN' }, motivo: 'semente do teste' })).record);
 
   const { startDashboard } = await import('../../dashboard/main.mjs');
   const { browserNavigation } = await import('../../dashboard/router.mjs');
@@ -141,8 +142,8 @@ test('[DASH-FULL-1] ADMIN pela interface, contra a API REAL: criar -> editar -> 
 test('[DASH-FULL-2] as regras do domínio chegam à tela pela API real: transição proibida (409 INVALID_TRANSITION), identidade duplicada (409 DUPLICATE_RECORD) e identidade BLOQUEADA (409 DNC_BLOCKED) mostram a frase certa, sem gravar nada', async (t) => {
   const s = await subir(t, { sementes: [ALFA, BETA] });
   const [alfa, beta] = s.semeados;
-  crm.markDoNotContact(s.repositorio, beta.id, { actor: 'HUMAN', reviewedBy: { userId: 'user-semente', name: 'Semente', role: 'ADMIN' }, motivo: 'semente' });
-  crm.moveStatus(s.repositorio, alfa.id, 'WON', { actor: 'HUMAN', reviewedBy: { userId: 'user-semente', name: 'Semente', role: 'ADMIN' }, motivo: 'semente' });
+  await crm.markDoNotContact(s.repositorio, beta.id, { actor: 'HUMAN', reviewedBy: { userId: 'user-semente', name: 'Semente', role: 'ADMIN' }, motivo: 'semente' });
+  await crm.moveStatus(s.repositorio, alfa.id, 'WON', { actor: 'HUMAN', reviewedBy: { userId: 'user-semente', name: 'Semente', role: 'ADMIN' }, motivo: 'semente' });
 
   // WON -> PROSPECT: o domínio recusa (só WON -> DO_NOT_CONTACT)
   s.browser.window.location.hash = `#/crm/registro/${encodeURIComponent(alfa.id)}`;
@@ -170,7 +171,7 @@ test('[DASH-FULL-2] as regras do domínio chegam à tela pela API real: transiç
   s.browser.window.location.hash = `#/crm/registro/${encodeURIComponent(alfa.id)}`;
   await s.browser.flush();
   await clicar(s, 'Editar');
-  crm.markDoNotContact(s.repositorio, alfa.id, { actor: 'HUMAN', reviewedBy: { userId: 'user-outro', name: 'Outro', role: 'ADMIN' }, motivo: 'por baixo' });
+  await crm.markDoNotContact(s.repositorio, alfa.id, { actor: 'HUMAN', reviewedBy: { userId: 'user-outro', name: 'Outro', role: 'ADMIN' }, motivo: 'por baixo' });
   s.browser.type(s.browser.by.label(s.browser.root, 'Cidade'), 'Outra cidade');
   await clicar(s, 'Salvar alterações');
   assert.match(textoDaTela(s.browser), /bloqueado como "Não contatar"/);

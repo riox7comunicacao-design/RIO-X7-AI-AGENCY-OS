@@ -54,11 +54,11 @@ const achado = (nome, slug, extras = {}) => ({
 });
 const corpo = (achados, briefing = {}) => ({ briefing: { nicho: 'Psicologia', quantidadeDesejada: 3, regiao: 'Petrópolis/RJ', ...briefing }, rawFindings: achados });
 
-const sementeCrm = (env, especificacoes) => {
+const sementeCrm = async (env, especificacoes) => {
   const repositorio = createJsonFileCrmRepository(env.crmFilePath);
   for (const { campos, dnc } of especificacoes) {
-    const { record } = crm.createRecord(repositorio, campos, OPERADOR);
-    if (dnc) crm.markDoNotContact(repositorio, record.id, OPERADOR);
+    const { record } = await crm.createRecord(repositorio, campos, OPERADOR);
+    if (dnc) await crm.markDoNotContact(repositorio, record.id, OPERADOR);
   }
 };
 const arquivo = (caminho) => (fs.existsSync(caminho) ? fs.readFileSync(caminho, 'utf8') : null);
@@ -105,7 +105,7 @@ test('[PRO-API-2] o ADMIN autenticado submete: 201 com o relatório do serviço,
 
 test('[PRO-API-3] o COMMERCIAL_CLOSER (sem PROPOSE:LEAD_APPROVAL): 403 com a mensagem fixa e NADA é lido nem gravado', async (t) => {
   const env = ambiente(t);
-  sementeCrm(env, [{ campos: { empresa: 'Registro Existente', site: 'existente.example.test' } }]);
+  await sementeCrm(env, [{ campos: { empresa: 'Registro Existente', site: 'existente.example.test' } }]);
   const efeitos = semEfeitos(env);
   const resposta = await chamar(env, RAFAEL, { body: corpo([achado('Clínica Alfa Teste', 'alfa-teste')]) });
   assert.equal(resposta.status, 403);
@@ -362,7 +362,7 @@ test('[PRO-API-16] sem o serviço injetado a rota NÃO existe (404), como antes 
 
 test('[PRO-API-17] DNC do CRM real pela rota: o registro em DO_NOT_CONTACT NUNCA vira item da fila (o relatório o mostra como DNC), e o CRM não é escrito', async (t) => {
   const env = ambiente(t);
-  sementeCrm(env, [{ campos: { empresa: 'Bloqueada Um', site: 'bloqueada-um.example.test', telefone: '24 90000-3333' }, dnc: true }]);
+  await sementeCrm(env, [{ campos: { empresa: 'Bloqueada Um', site: 'bloqueada-um.example.test', telefone: '24 90000-3333' }, dnc: true }]);
   const crmAntes = arquivo(env.crmFilePath);
   const resposta = await chamar(env, BRENO, { body: corpo([achado('Nome Diferente', 'bloqueada-um'), achado('Clínica Livre', 'livre-teste')]) });
   assert.equal(resposta.status, 201);

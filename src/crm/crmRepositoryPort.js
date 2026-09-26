@@ -8,18 +8,16 @@
 // valida o repositório que recebe) dependa só dele — nunca do código de um adapter específico. As implementações
 // (memória, arquivo JSON) vivem em crmRepository.js, que reexporta estes dois nomes.
 //
-// A porta é SÍNCRONA nesta versão, como o Approval Queue e o Service que já existem: cada operação de domínio lê,
-// decide e grava dentro de um único turno do processo, e isso é o que a torna indivisível sem trava. Um adapter que
-// fale com uma rede (Supabase/Postgres — candidato registrado em 0012, NÃO decidido) é assíncrono; usá-lo exige
-// tornar o domínio e o Service `async` — uma mudança mecânica de assinatura, a fazer junto da decisão desse adapter
-// (ver decisão 0014). Até lá, um repositório declarado `async` é recusado aqui com uma mensagem clara, em vez de
-// falhar no meio de uma operação com um erro opaco (o domínio receberia uma Promise no lugar de um registro).
-// A checagem só enxerga funções declaradas `async`: uma função comum que devolve uma Promise não é detectável antes
-// da chamada — limite conhecido, documentado.
+// A porta ACEITA implementações síncronas E assíncronas (decisão 0023): o domínio faz `await` de cada chamada, e `await` de um valor que
+// não é uma Promise devolve o próprio valor — então o adapter de arquivo e o de memória continuam síncronos, sem mudar, e um adapter
+// remoto (Supabase/Postgres — candidato registrado em 0012, NÃO implementado) pode devolver Promises. O contrato dos dados é o mesmo:
+//   list()      -> array de registros (ou Promise dele), na ordem estável do armazenamento;
+//   getById(id) -> um registro ou null (ou Promise);
+//   save(record)-> insere ou substitui por `record.id`; o que devolver é ignorado (ou Promise que resolve quando gravou).
+// O domínio serializa as ESCRITAS de um mesmo repositório dentro do processo (crmDomain.js); a proteção entre processos/servidores
+// (transação, restrição única, RPC) é responsabilidade da persistência remota e NÃO existe aqui — ver a decisão 0023.
 
 const REQUIRED_REPOSITORY_METHODS = Object.freeze(['list', 'getById', 'save']);
-
-const isAsyncFunction = (fn) => Object.prototype.toString.call(fn) === '[object AsyncFunction]';
 
 // Falha cedo e com uma mensagem clara se o objeto injetado não for um repositório válido — nunca falha no meio de
 // uma operação de domínio por um método faltando.
@@ -30,11 +28,6 @@ function assertValidRepository(repository) {
   for (const method of REQUIRED_REPOSITORY_METHODS) {
     if (typeof repository[method] !== 'function') {
       throw new Error(`CRM: repositório inválido — falta o método ${method}()`);
-    }
-  }
-  for (const method of REQUIRED_REPOSITORY_METHODS) {
-    if (isAsyncFunction(repository[method])) {
-      throw new Error(`CRM: repositório inválido — ${method}() é assíncrono, mas a porta de persistência é síncrona nesta versão (decisão 0014)`);
     }
   }
   return repository;

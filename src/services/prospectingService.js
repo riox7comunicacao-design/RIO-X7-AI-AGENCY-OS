@@ -41,8 +41,8 @@
 //
 // ERROS — sempre ProspectingError com `code` estável e mensagem fixa em português (nunca stack, valor recebido, caminho ou dado do
 // achado); `details` só carrega caminhos e códigos. Os erros de autorização passam intactos (mesma classe, mesma mensagem).
-// LIMITES honestos: o serviço obedece aos autorizadores que recebe (fronteira interna confiável, não criptografia); síncrono, como
-// os demais; sem trava entre processos (um servidor por pasta de dados); o CRM lido é o de agora (a fila e o CRM podem mudar depois).
+// LIMITES honestos: o serviço obedece aos autorizadores que recebe (fronteira interna confiável, não criptografia); assíncrono só na leitura do CRM (decisão 0023; a autorização continua síncrona);
+// sem trava entre processos (um servidor por pasta de dados); o CRM lido é o de agora (a fila e o CRM podem mudar depois).
 
 const crypto = require('node:crypto');
 
@@ -278,9 +278,9 @@ function createProspectingService(dependencies) {
     return values;
   }
 
-  function loadCrmRecords(context) {
+  async function loadCrmRecords(context) {
     try {
-      const records = crmService.listRecords(context);
+      const records = await crmService.listRecords(context);
       toProspectorRecords(records); // valida a forma agora: um registro ilegível recusa a submissão inteira (falha fechada)
       return records;
     } catch {
@@ -290,7 +290,7 @@ function createProspectingService(dependencies) {
     }
   }
 
-  function submitProspecting(context, submission) {
+  async function submitProspecting(context, submission) {
     // 1) autorização
     const author = authorizeSubmitter(context);
     // 2) a forma da submissão, o briefing e os achados (tudo ou nada)
@@ -307,7 +307,7 @@ function createProspectingService(dependencies) {
     }
 
     // 3) CRM (só leitura) — sem ele o DNC não pode ser verificado: recusa em vez de seguir "sem DNC"
-    const crmRecords = loadCrmRecords(context);
+    const crmRecords = await loadCrmRecords(context);
 
     // 4) discovery existente. O bloco `dossie` (rawFinding V2) NÃO chega ao discovery: ele não decide identidade, duplicidade, DNC nem
     // elegibilidade. As exclusões do briefing são aplicadas pela função existente, preservando o índice de cada achado.

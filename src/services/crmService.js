@@ -42,15 +42,15 @@
 // (etapas CRM-API/CRM-DASHBOARD); a promoção de um prospect aprovado (etapa CRM-INTEGRATION); qualquer coisa de IA.
 //
 // PERSISTÊNCIA: o Service recebe o repositório (a porta de src/crm/crmRepositoryPort.js) e NUNCA conhece um adapter
-// nem um arquivo — trocar o adapter não muda o Service (sujeito à ressalva de sincronia da porta, decisão 0014).
+// nem um arquivo — trocar o adapter não muda o Service: as operações são assíncronas (`async`) e fazem `await` do domínio, então a porta pode ser síncrona ou assíncrona (decisão 0023).
 //
 // ERROS: os do domínio e os da autorização passam intactos, sem tradução — mesma classe, mesma mensagem. Só a
 // validação de entrada do próprio Service lança erros novos (Error simples, prefixo "CRM: ", como o domínio).
 //
 // LIMITES honestos: o Service obedece ao autorizador que recebe na criação (quem o compõe escolhe o autorizador —
 // fronteira arquitetural interna confiável, não criptografia); a persistência atual é um arquivo sem trava entre
-// processos (dentro de um processo cada operação é síncrona e, portanto, indivisível); o Service é síncrono, como o
-// domínio; e editar campos comuns (updateRecord) NÃO gera entrada de histórico — o domínio audita só a criação e as
+// processos (dentro de um processo o domínio serializa as escritas de um mesmo repositório — decisão 0023); as operações do Service são
+// assíncronas (a autorização continua síncrona: o autorizador nunca devolve uma Promise); e editar campos comuns (updateRecord) NÃO gera entrada de histórico — o domínio audita só a criação e as
 // mudanças de status (auditoria de edição de campos é uma decisão futura, registrada em 0014).
 
 const crmDomainDefault = require('../crm/crmDomain');
@@ -250,33 +250,33 @@ function createCrmService(dependencies) {
   // de OUTRO id. Um resultado que não é o registro do id pedido nunca sai como se fosse.
   const isRecordOf = (record, id) => isPlainObject(record) && record.id === id;
 
-  function findRecord(recordId) {
-    const record = domainGetRecord(repository, recordId);
+  async function findRecord(recordId) {
+    const record = await domainGetRecord(repository, recordId);
     return isRecordOf(record, recordId) ? record : null;
   }
 
-  function listRecords(context, options) {
+  async function listRecords(context, options) {
     authorize(context, 'listRecords');
     readOptions(options, []);
-    return domainListRecords(repository).map(toPublicRecord);
+    return (await domainListRecords(repository)).map(toPublicRecord);
   }
 
-  function getRecord(context, id) {
+  async function getRecord(context, id) {
     authorize(context, 'getRecord');
-    const record = findRecord(id);
+    const record = await findRecord(id);
     return record === null ? null : toPublicRecord(record);
   }
 
-  function getHistory(context, id) {
+  async function getHistory(context, id) {
     authorize(context, 'getHistory');
-    const record = findRecord(id);
+    const record = await findRecord(id);
     if (record === null) throw new Error(`CRM: registro não encontrado: ${id}`);
     return toPublicRecord(record).historico;
   }
 
   // Escrever: autoriza -> valida a entrada de aplicação -> chama o domínio, com a identidade DO AUTORIZADOR ->
   // devolve a projeção. O domínio persiste; qualquer erro dele passa intacto, e nada é gravado quando ele lança.
-  function createRecord(context, input, options) {
+  async function createRecord(context, input, options) {
     const operator = authorize(context, 'createRecord');
     const fields = requireFields(input, 'input');
     const known = readOptions(options, ['status', 'reason']);
@@ -284,7 +284,7 @@ function createCrmService(dependencies) {
     if (status !== undefined && status !== null && !isText(status)) {
       throw new Error('CRM: status deve ser um texto');
     }
-    const result = domainCreateRecord(repository, fields, {
+    const result = await domainCreateRecord(repository, fields, {
       ...(status === undefined || status === null ? {} : { status }),
       actor: ACTOR.HUMAN,
       reviewedBy: operator,
@@ -293,22 +293,22 @@ function createCrmService(dependencies) {
     return { record: toPublicRecord(result.record), duplicidade: toPublicDuplicidade(result.duplicidade) };
   }
 
-  function updateRecord(context, id, patch) {
+  async function updateRecord(context, id, patch) {
     authorize(context, 'updateRecord');
-    return toPublicRecord(domainUpdateRecord(repository, id, requireFields(patch, 'patch')));
+    return toPublicRecord(await domainUpdateRecord(repository, id, requireFields(patch, 'patch')));
   }
 
-  function moveStatus(context, id, to, options) {
+  async function moveStatus(context, id, to, options) {
     const operator = authorize(context, 'moveStatus');
     if (!isText(to)) throw new Error('CRM: o status de destino deve ser um texto');
     const reason = readReason(readOptions(options, ['reason']));
-    return toPublicRecord(domainMoveStatus(repository, id, to, { actor: ACTOR.HUMAN, reviewedBy: operator, motivo: reason }));
+    return toPublicRecord(await domainMoveStatus(repository, id, to, { actor: ACTOR.HUMAN, reviewedBy: operator, motivo: reason }));
   }
 
-  function markDoNotContact(context, id, options) {
+  async function markDoNotContact(context, id, options) {
     const operator = authorize(context, 'markDoNotContact');
     const reason = readReason(readOptions(options, ['reason']));
-    return toPublicRecord(domainMarkDoNotContact(repository, id, { actor: ACTOR.HUMAN, reviewedBy: operator, motivo: reason }));
+    return toPublicRecord(await domainMarkDoNotContact(repository, id, { actor: ACTOR.HUMAN, reviewedBy: operator, motivo: reason }));
   }
 
   return Object.freeze({ listRecords, getRecord, getHistory, createRecord, updateRecord, moveStatus, markDoNotContact });

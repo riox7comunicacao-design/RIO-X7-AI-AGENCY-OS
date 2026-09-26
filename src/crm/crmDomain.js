@@ -80,8 +80,8 @@ function requireRecordId(id) {
   return id;
 }
 
-function requireRecord(repository, id) {
-  const record = repository.getById(requireRecordId(id));
+async function requireRecord(repository, id) {
+  const record = await repository.getById(requireRecordId(id));
   if (!record) {
     throw new Error(`CRM: registro não encontrado: ${id}`);
   }
@@ -188,8 +188,7 @@ function buildRecordId() {
 // Um match só por nome+cidade (POSSIVEL_DUPLICADO) NUNCA bloqueia a criação — só é informado no
 // retorno, para o chamador (futuro Service/UI) alertar um humano. Preferir falso negativo a falso
 // positivo, como pedido explicitamente para este domínio.
-function createRecord(repository, input, options = {}) {
-  requireRepository(repository);
+async function createRecordUnlocked(repository, input, options = {}) {
   const fields = sanitizeWritableInput(input, { context: 'createRecord' });
   if (!isNonEmptyString(fields.empresa)) {
     throw new Error('CRM: createRecord exige "empresa" (texto não vazio)');
@@ -201,7 +200,7 @@ function createRecord(repository, input, options = {}) {
     throw new Error(`CRM: status desconhecido: ${status}`);
   }
 
-  const { dnc, duplicidade } = checkIdentity(fields, repository.list());
+  const { dnc, duplicidade } = checkIdentity(fields, await repository.list());
   if (dnc) {
     throw new Error(`CRM: não é possível criar — identidade já bloqueada como DO_NOT_CONTACT (registro existente: ${dnc.id})`);
   }
@@ -219,19 +218,19 @@ function createRecord(repository, input, options = {}) {
     dataDeEntrada: now,
     historico: [{ timestamp: now, from: null, to: status, actor: requireActor(ownOption(options, 'actor')), reviewedBy: ownOption(options, 'reviewedBy') || null, motivo: ownOption(options, 'motivo') || null }],
   };
-  repository.save(record);
+  await repository.save(record);
   return { record: structuredClone(record), duplicidade: duplicidade && duplicidade.status === DUPLICATE_STATUS.POSSIVEL_DUPLICADO ? duplicidade : null };
 }
 
-function getRecord(repository, id) {
+async function getRecord(repository, id) {
   requireRepository(repository);
-  const record = repository.getById(requireRecordId(id));
+  const record = await repository.getById(requireRecordId(id));
   return record ? structuredClone(record) : null;
 }
 
-function listRecords(repository) {
+async function listRecords(repository) {
   requireRepository(repository);
-  return repository.list().map((record) => structuredClone(record));
+  return (await repository.list()).map((record) => structuredClone(record));
 }
 
 // Atualiza campos comuns (nunca status/id/historico/dataDeEntrada — esses têm suas próprias
@@ -243,9 +242,8 @@ function listRecords(repository) {
 // com a de um registro bloqueado (DO_NOT_CONTACT) nem com a de outro registro (identidade forte idêntica). Sem isso,
 // bastaria editar o site de um lead ativo para o de um bloqueado para contornar a barreira. Um match só por
 // nome+cidade (POSSIVEL_DUPLICADO) não bloqueia, como na criação. `empresa` nunca fica vazia.
-function updateRecord(repository, id, patch) {
-  requireRepository(repository);
-  const record = requireRecord(repository, id);
+async function updateRecordUnlocked(repository, id, patch) {
+  const record = await requireRecord(repository, id);
   if (record.status === CRM_STATUS.DO_NOT_CONTACT) {
     throw new Error(`CRM: registro bloqueado (DO_NOT_CONTACT) não pode ser atualizado: ${id}`);
   }
@@ -256,7 +254,7 @@ function updateRecord(repository, id, patch) {
   }
   const identityChanged = IDENTITY_FIELDS.some((field) => Object.prototype.hasOwnProperty.call(fields, field) && fields[field] !== record[field]);
   if (identityChanged) {
-    const { dnc, duplicidade } = checkIdentity(updated, repository.list().filter((other) => other.id !== record.id));
+    const { dnc, duplicidade } = checkIdentity(updated, (await repository.list()).filter((other) => other.id !== record.id));
     if (dnc) {
       throw new Error(`CRM: não é possível atualizar — a nova identidade coincide com a de um registro bloqueado como DO_NOT_CONTACT (registro existente: ${dnc.id})`);
     }
@@ -266,7 +264,7 @@ function updateRecord(repository, id, patch) {
       );
     }
   }
-  repository.save(updated);
+  await repository.save(updated);
   return structuredClone(updated);
 }
 
@@ -284,12 +282,11 @@ function assertTransitionAllowed(from, to) {
 // checagem de transição permitida). Gera SEMPRE uma entrada de histórico — nenhuma mudança de
 // status é silenciosa. `reviewedBy`/`motivo` são dados de auditoria fornecidos pelo chamador (ver
 // o limite honesto no cabeçalho do arquivo).
-function moveStatus(repository, id, to, meta = {}) {
-  requireRepository(repository);
+async function moveStatusUnlocked(repository, id, to, meta = {}) {
   if (!Object.values(CRM_STATUS).includes(to)) {
     throw new Error(`CRM: status desconhecido: ${to}`);
   }
-  const record = requireRecord(repository, id);
+  const record = await requireRecord(repository, id);
   assertTransitionAllowed(record.status, to);
 
   const timestamp = new Date().toISOString();
@@ -298,7 +295,7 @@ function moveStatus(repository, id, to, meta = {}) {
     status: to,
     historico: [...record.historico, { timestamp, from: record.status, to, actor: requireActor(ownOption(meta, 'actor')), reviewedBy: ownOption(meta, 'reviewedBy') || null, motivo: ownOption(meta, 'motivo') || null }],
   };
-  repository.save(updated);
+  await repository.save(updated);
   return structuredClone(updated);
 }
 
@@ -309,6 +306,36 @@ function moveStatus(repository, id, to, meta = {}) {
 // qualquer status de funil, WON e LOST pela mesma tabela de transições.
 function markDoNotContact(repository, id, meta = {}) {
   return moveStatus(repository, id, CRM_STATUS.DO_NOT_CONTACT, meta);
+}
+
+// ---------------------------------------------------------------------------------------------------------------------------------
+// SERIALIZAÇÃO das operações de ESCRITA (decisão 0023). Cada escrita é LER -> DECIDIR -> GRAVAR. Com a porta síncrona isso era
+// indivisível porque nada cedia a vez ao meio; com uma porta assíncrona (um repositório remoto) cada `await` cede a vez, e duas
+// escritas do MESMO repositório poderiam intercalar (as duas veriam "não existe" e as duas criariam). Por isso as escritas de um
+// mesmo repositório rodam UMA POR VEZ, na ordem de chegada, dentro deste processo. Leituras não esperam.
+// LIMITE HONESTO: a trava vale por OBJETO repositório e por PROCESSO. Dois repositórios sobre o mesmo armazenamento (ou dois
+// servidores) continuam sem proteção entre si — é o pressuposto de uma única instância; a proteção entre processos (transação,
+// restrição única, RPC) é da persistência remota e NÃO está implementada aqui.
+const writeTails = new WeakMap();
+function serialized(repository, task) {
+  const run = (writeTails.get(repository) || Promise.resolve()).then(task);
+  writeTails.set(repository, run.then(() => undefined, () => undefined));
+  return run;
+}
+
+async function createRecord(repository, input, options = {}) {
+  requireRepository(repository);
+  return serialized(repository, () => createRecordUnlocked(repository, input, options));
+}
+
+async function updateRecord(repository, id, patch) {
+  requireRepository(repository);
+  return serialized(repository, () => updateRecordUnlocked(repository, id, patch));
+}
+
+async function moveStatus(repository, id, to, meta = {}) {
+  requireRepository(repository);
+  return serialized(repository, () => moveStatusUnlocked(repository, id, to, meta));
 }
 
 module.exports = {

@@ -314,7 +314,7 @@ test('[DASH-PROMO-13] o filtro Pendentes/Aprovados: pendentes pedem a lista padr
 // ---------------------------------------------------------------------------
 async function subir(t, { usuario = BRENO, hash = '#/aprovacoes', semear } = {}) {
   const env = montarAmbiente(t, { usuarios: [BRENO, RAFAEL], crm: true, integracao: true });
-  if (semear) semear(env);
+  if (semear) await semear(env);
   const { startDashboard } = await import('../../dashboard/main.mjs');
   const { browserNavigation } = await import('../../dashboard/router.mjs');
   const { createFakeSdk, bridgeFetch } = await loadFixtures();
@@ -403,12 +403,12 @@ test('[DASH-PROMO-15] o closer aprova pela tela mas NÃO vê "Promover para CRM"
 
 test('[DASH-PROMO-16] duplicidade e restrição de contato no CRM aparecem como frases claras na tela, e nada é criado', async (t) => {
   const s = await subir(t, {
-    semear: (env) => {
+    semear: async (env) => {
       const repositorio = createJsonFileCrmRepository(env.crmFilePath);
       const operador = { actor: 'HUMAN', reviewedBy: { userId: 'user-semente', name: 'Semente', role: 'ADMIN' }, motivo: 'semente do teste' };
-      crm.createRecord(repositorio, { empresa: 'Já Existe', site: 'consultorio-alfa.example.test' }, operador);
-      const bloqueada = crm.createRecord(repositorio, { empresa: 'Bloqueada', site: 'consultorio-beta.example.test' }, operador).record;
-      crm.markDoNotContact(repositorio, bloqueada.id, operador);
+      await crm.createRecord(repositorio, { empresa: 'Já Existe', site: 'consultorio-alfa.example.test' }, operador);
+      const bloqueada = (await crm.createRecord(repositorio, { empresa: 'Bloqueada', site: 'consultorio-beta.example.test' }, operador)).record;
+      await crm.markDoNotContact(repositorio, bloqueada.id, operador);
     },
   });
   await aprovarPelaTela(s, 'Consultório Alfa');

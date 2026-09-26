@@ -26,9 +26,9 @@ const { mapErrorToHttp } = require('../../src/server/app');
 
 const REPO_ROOT = path.resolve(__dirname, '..', '..');
 
-function erroDe(fn) {
+async function erroDe(fn) {
   try {
-    fn();
+    await fn();
   } catch (erro) {
     return erro;
   }
@@ -62,13 +62,13 @@ const FIXAS = Object.freeze({
 });
 const invalido = (message) => ({ status: 400, code: 'INVALID_REQUEST', message });
 
-test('[CRM-ERRMAP-1] "registro não encontrado" (domínio e Service, em todas as operações que buscam por id) -> 404 NOT_FOUND com mensagem fixa, sem repetir o id', () => {
+test('[CRM-ERRMAP-1] "registro não encontrado" (domínio e Service, em todas as operações que buscam por id) -> 404 NOT_FOUND com mensagem fixa, sem repetir o id', async () => {
   const { service, ctx } = ambiente();
   const erros = [
-    erroDe(() => service.getHistory(ctx, 'crm:inexistente')),
-    erroDe(() => service.updateRecord(ctx, 'crm:inexistente', {})),
-    erroDe(() => service.moveStatus(ctx, 'crm:inexistente', 'RESEARCH')),
-    erroDe(() => service.markDoNotContact(ctx, 'crm:inexistente')),
+    await erroDe(async () => await service.getHistory(ctx, 'crm:inexistente')),
+    await erroDe(async () => await service.updateRecord(ctx, 'crm:inexistente', {})),
+    await erroDe(async () => await service.moveStatus(ctx, 'crm:inexistente', 'RESEARCH')),
+    await erroDe(async () => await service.markDoNotContact(ctx, 'crm:inexistente')),
   ];
   for (const erro of erros) {
     assert.match(erro.message, /^CRM: registro não encontrado/);
@@ -77,14 +77,14 @@ test('[CRM-ERRMAP-1] "registro não encontrado" (domínio e Service, em todas as
   }
 });
 
-test('[CRM-ERRMAP-2] identidade já bloqueada (DNC) na criação e na edição -> 409 DNC_BLOCKED; identidade já existente na criação e na edição -> 409 DUPLICATE_RECORD; nenhum id sai', () => {
+test('[CRM-ERRMAP-2] identidade já bloqueada (DNC) na criação e na edição -> 409 DNC_BLOCKED; identidade já existente na criação e na edição -> 409 DUPLICATE_RECORD; nenhum id sai', async () => {
   const { service, ctx } = ambiente();
-  const bloqueado = service.createRecord(ctx, ALFA).record;
-  service.markDoNotContact(ctx, bloqueado.id);
-  const beta = service.createRecord(ctx, BETA).record;
+  const bloqueado = (await service.createRecord(ctx, ALFA)).record;
+  await service.markDoNotContact(ctx, bloqueado.id);
+  const beta = (await service.createRecord(ctx, BETA)).record;
 
-  const dncNaCriacao = erroDe(() => service.createRecord(ctx, { empresa: 'Outro Nome', site: ALFA.site }));
-  const dncNaEdicao = erroDe(() => service.updateRecord(ctx, beta.id, { site: ALFA.site }));
+  const dncNaCriacao = await erroDe(async () => await service.createRecord(ctx, { empresa: 'Outro Nome', site: ALFA.site }));
+  const dncNaEdicao = await erroDe(async () => await service.updateRecord(ctx, beta.id, { site: ALFA.site }));
   assert.match(dncNaCriacao.message, /^CRM: não é possível criar — identidade já bloqueada/);
   assert.match(dncNaEdicao.message, /^CRM: não é possível atualizar — a nova identidade coincide com a de um registro bloqueado/);
   for (const erro of [dncNaCriacao, dncNaEdicao]) {
@@ -93,9 +93,9 @@ test('[CRM-ERRMAP-2] identidade já bloqueada (DNC) na criação e na edição -
     assert.ok(!mapErrorToHttp(erro).message.includes('crm:'), 'a mensagem mapeada não cita id nenhum');
   }
 
-  const gama = service.createRecord(ctx, { empresa: 'Gama Teste', site: 'gama.example.test' }).record;
-  const duplicadoNaCriacao = erroDe(() => service.createRecord(ctx, { empresa: 'Outro Nome', site: 'gama.example.test' }));
-  const duplicadoNaEdicao = erroDe(() => service.updateRecord(ctx, beta.id, { site: 'gama.example.test' }));
+  const gama = (await service.createRecord(ctx, { empresa: 'Gama Teste', site: 'gama.example.test' })).record;
+  const duplicadoNaCriacao = await erroDe(async () => await service.createRecord(ctx, { empresa: 'Outro Nome', site: 'gama.example.test' }));
+  const duplicadoNaEdicao = await erroDe(async () => await service.updateRecord(ctx, beta.id, { site: 'gama.example.test' }));
   assert.match(duplicadoNaCriacao.message, /^CRM: não é possível criar — já existe um registro com a mesma identidade/);
   assert.match(duplicadoNaEdicao.message, /^CRM: não é possível atualizar — a nova identidade coincide com a de outro registro/);
   for (const erro of [duplicadoNaCriacao, duplicadoNaEdicao]) {
@@ -105,20 +105,20 @@ test('[CRM-ERRMAP-2] identidade já bloqueada (DNC) na criação e na edição -
   }
 });
 
-test('[CRM-ERRMAP-3] editar um registro DO_NOT_CONTACT -> 409 RECORD_LOCKED; transição não permitida (a partir de WON, de DO_NOT_CONTACT) -> 409 INVALID_TRANSITION, sem repetir os status', () => {
+test('[CRM-ERRMAP-3] editar um registro DO_NOT_CONTACT -> 409 RECORD_LOCKED; transição não permitida (a partir de WON, de DO_NOT_CONTACT) -> 409 INVALID_TRANSITION, sem repetir os status', async () => {
   const { service, ctx } = ambiente();
-  const bloqueado = service.createRecord(ctx, ALFA).record;
-  service.markDoNotContact(ctx, bloqueado.id);
-  const editar = erroDe(() => service.updateRecord(ctx, bloqueado.id, { cidade: 'Outra' }));
+  const bloqueado = (await service.createRecord(ctx, ALFA)).record;
+  await service.markDoNotContact(ctx, bloqueado.id);
+  const editar = await erroDe(async () => await service.updateRecord(ctx, bloqueado.id, { cidade: 'Outra' }));
   assert.match(editar.message, /^CRM: registro bloqueado \(DO_NOT_CONTACT\) não pode ser atualizado/);
   assert.deepEqual(mapeado(editar), FIXAS.travado);
 
-  const ganho = service.createRecord(ctx, BETA).record;
-  service.moveStatus(ctx, ganho.id, 'WON');
+  const ganho = (await service.createRecord(ctx, BETA)).record;
+  await service.moveStatus(ctx, ganho.id, 'WON');
   for (const erro of [
-    erroDe(() => service.moveStatus(ctx, ganho.id, 'PROSPECT')),
-    erroDe(() => service.moveStatus(ctx, bloqueado.id, 'PROSPECT')),
-    erroDe(() => service.markDoNotContact(ctx, bloqueado.id)),
+    await erroDe(async () => await service.moveStatus(ctx, ganho.id, 'PROSPECT')),
+    await erroDe(async () => await service.moveStatus(ctx, bloqueado.id, 'PROSPECT')),
+    await erroDe(async () => await service.markDoNotContact(ctx, bloqueado.id)),
   ]) {
     assert.match(erro.message, /^CRM: transição não permitida/);
     assert.deepEqual(mapeado(erro), FIXAS.transicao);
@@ -126,52 +126,52 @@ test('[CRM-ERRMAP-3] editar um registro DO_NOT_CONTACT -> 409 RECORD_LOCKED; tra
   }
 });
 
-test('[CRM-ERRMAP-4] entrada inválida (id, campos, valores, empresa, status, motivo) -> 400 INVALID_REQUEST com a mensagem fixa de cada caso', () => {
+test('[CRM-ERRMAP-4] entrada inválida (id, campos, valores, empresa, status, motivo) -> 400 INVALID_REQUEST com a mensagem fixa de cada caso', async () => {
   const { service, ctx } = ambiente();
-  const alfa = service.createRecord(ctx, ALFA).record;
+  const alfa = (await service.createRecord(ctx, ALFA)).record;
   const CAMPOS = invalido('Campos não permitidos na requisição.');
   const VALOR = invalido('Valor inválido em um dos campos.');
   const STATUS = invalido('Status inválido.');
   const casos = [
-    [() => service.getRecord(ctx, '   '), invalido('Identificador inválido.'), /^CRM: id deve ser um texto não vazio/],
-    [() => service.getHistory(ctx, ''), invalido('Identificador inválido.'), /^CRM: id deve ser um texto não vazio/],
-    [() => service.createRecord(ctx, { empresa: 'X', campoInventado: 1 }), CAMPOS, /^CRM: createRecord tem campos desconhecidos/],
-    [() => service.updateRecord(ctx, alfa.id, { campoInventado: 1 }), CAMPOS, /^CRM: updateRecord tem campos desconhecidos/],
-    [() => service.createRecord(ctx, { empresa: 'X', id: 'crm:forjado' }), CAMPOS, /^CRM: createRecord não aceita campos gerenciados/],
-    [() => service.updateRecord(ctx, alfa.id, { status: 'WON' }), CAMPOS, /^CRM: updateRecord não aceita campos gerenciados/],
-    [() => service.createRecord(ctx, { empresa: 'X', valorProposta: 'muito' }), VALOR, /^CRM: createRecord — campo "valorProposta"/],
-    [() => service.updateRecord(ctx, alfa.id, { valorTotal: -1 }), VALOR, /^CRM: updateRecord — campo "valorTotal"/],
-    [() => service.createRecord(ctx, {}), invalido('Informe a empresa.'), /^CRM: createRecord exige "empresa"/],
-    [() => service.updateRecord(ctx, alfa.id, { empresa: '  ' }), invalido('A empresa não pode ficar vazia.'), /^CRM: updateRecord não pode deixar "empresa" vazia/],
-    [() => service.createRecord(ctx, { empresa: 'X' }, { status: 'NAO_EXISTE' }), STATUS, /^CRM: status desconhecido/],
-    [() => service.moveStatus(ctx, alfa.id, 'NAO_EXISTE'), STATUS, /^CRM: status desconhecido/],
-    [() => service.createRecord(ctx, { empresa: 'X' }, { status: 42 }), STATUS, /^CRM: status deve ser um texto/],
-    [() => service.moveStatus(ctx, alfa.id, undefined), STATUS, /^CRM: o status de destino deve ser um texto/],
-    [() => service.moveStatus(ctx, alfa.id, 'RESEARCH', { reason: 42 }), invalido('O motivo deve ser um texto.'), /^CRM: reason deve ser um texto/],
-    [() => service.markDoNotContact(ctx, alfa.id, { reason: {} }), invalido('O motivo deve ser um texto.'), /^CRM: reason deve ser um texto/],
+    [async () => await service.getRecord(ctx, '   '), invalido('Identificador inválido.'), /^CRM: id deve ser um texto não vazio/],
+    [async () => await service.getHistory(ctx, ''), invalido('Identificador inválido.'), /^CRM: id deve ser um texto não vazio/],
+    [async () => await service.createRecord(ctx, { empresa: 'X', campoInventado: 1 }), CAMPOS, /^CRM: createRecord tem campos desconhecidos/],
+    [async () => await service.updateRecord(ctx, alfa.id, { campoInventado: 1 }), CAMPOS, /^CRM: updateRecord tem campos desconhecidos/],
+    [async () => await service.createRecord(ctx, { empresa: 'X', id: 'crm:forjado' }), CAMPOS, /^CRM: createRecord não aceita campos gerenciados/],
+    [async () => await service.updateRecord(ctx, alfa.id, { status: 'WON' }), CAMPOS, /^CRM: updateRecord não aceita campos gerenciados/],
+    [async () => await service.createRecord(ctx, { empresa: 'X', valorProposta: 'muito' }), VALOR, /^CRM: createRecord — campo "valorProposta"/],
+    [async () => await service.updateRecord(ctx, alfa.id, { valorTotal: -1 }), VALOR, /^CRM: updateRecord — campo "valorTotal"/],
+    [async () => await service.createRecord(ctx, {}), invalido('Informe a empresa.'), /^CRM: createRecord exige "empresa"/],
+    [async () => await service.updateRecord(ctx, alfa.id, { empresa: '  ' }), invalido('A empresa não pode ficar vazia.'), /^CRM: updateRecord não pode deixar "empresa" vazia/],
+    [async () => await service.createRecord(ctx, { empresa: 'X' }, { status: 'NAO_EXISTE' }), STATUS, /^CRM: status desconhecido/],
+    [async () => await service.moveStatus(ctx, alfa.id, 'NAO_EXISTE'), STATUS, /^CRM: status desconhecido/],
+    [async () => await service.createRecord(ctx, { empresa: 'X' }, { status: 42 }), STATUS, /^CRM: status deve ser um texto/],
+    [async () => await service.moveStatus(ctx, alfa.id, undefined), STATUS, /^CRM: o status de destino deve ser um texto/],
+    [async () => await service.moveStatus(ctx, alfa.id, 'RESEARCH', { reason: 42 }), invalido('O motivo deve ser um texto.'), /^CRM: reason deve ser um texto/],
+    [async () => await service.markDoNotContact(ctx, alfa.id, { reason: {} }), invalido('O motivo deve ser um texto.'), /^CRM: reason deve ser um texto/],
   ];
   for (const [fn, esperado, origem] of casos) {
-    const erro = erroDe(fn);
+    const erro = await erroDe(fn);
     assert.match(erro.message, origem);
     assert.deepEqual(mapeado(erro), esperado, erro.message);
   }
 });
 
-test('[CRM-ERRMAP-5] a autorização do CRM (ponte real): usuário inativo -> 403 INACTIVE; contexto sem a permissão -> 403 FORBIDDEN', (t) => {
+test('[CRM-ERRMAP-5] a autorização do CRM (ponte real): usuário inativo -> 403 INACTIVE; contexto sem a permissão -> 403 FORBIDDEN', async (t) => {
   const inativo = createAuthorizationContext(usuario({ userId: 'u2', authUserId: 'a2', status: USER_STATUS.INACTIVE }));
   const { service } = ambiente();
-  const erroInativo = erroDe(() => service.listRecords(inativo));
+  const erroInativo = await erroDe(async () => await service.listRecords(inativo));
   assert.deepEqual(mapeado(erroInativo), { status: 403, code: 'INACTIVE', message: 'Esta conta não possui acesso a esta área.' });
 
   const derivacao = t.mock.method(constants, 'getRolePermissions', () => Object.freeze([PERMISSION.APPROVE_LEAD_APPROVAL]));
   const semPermissao = createAuthorizationContext(usuario({ userId: 'u3', authUserId: 'a3' }));
   derivacao.mock.restore();
-  for (const erro of [erroDe(() => service.listRecords(semPermissao)), erroDe(() => service.createRecord(semPermissao, ALFA))]) {
+  for (const erro of [await erroDe(async () => await service.listRecords(semPermissao)), await erroDe(async () => await service.createRecord(semPermissao, ALFA))]) {
     assert.deepEqual(mapeado(erro), { status: 403, code: 'FORBIDDEN', message: 'Esta conta não possui acesso a esta área.' });
   }
 });
 
-test('[CRM-ERRMAP-6] o que é INTERNO por desenho -> 500 genérico: arquivo corrompido, registro inválido no armazenamento, autorizador defeituoso, permissão que a ponte não suporta, opções que a API nunca envia', (t) => {
+test('[CRM-ERRMAP-6] o que é INTERNO por desenho -> 500 genérico: arquivo corrompido, registro inválido no armazenamento, autorizador defeituoso, permissão que a ponte não suporta, opções que a API nunca envia', async (t) => {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'crm-errmap-'));
   t.after(() => fs.rmSync(dir, { recursive: true, force: true }));
   const { ctx } = ambiente();
@@ -179,26 +179,26 @@ test('[CRM-ERRMAP-6] o que é INTERNO por desenho -> 500 genérico: arquivo corr
   const arquivo = path.join(dir, 'crm.json');
   fs.writeFileSync(arquivo, '{ "trecho-do-conteudo": ');
   const doArquivo = createFileBackedCrmService({ authorizeOperation: authorizeCrmOperation, filePath: arquivo });
-  const corrompido = erroDe(() => doArquivo.listRecords(ctx));
+  const corrompido = await erroDe(async () => await doArquivo.listRecords(ctx));
   assert.match(corrompido.message, /^CRM: arquivo de dados corrompido/);
   assert.ok(corrompido.message.includes('trecho-do-conteudo') || corrompido.message.includes(arquivo), 'sanidade: a mensagem ORIGINAL cita conteúdo ou caminho — por isso nunca vai à resposta');
   fs.writeFileSync(arquivo, '[]');
-  const estruturaInvalida = erroDe(() => doArquivo.listRecords(ctx));
+  const estruturaInvalida = await erroDe(async () => await doArquivo.listRecords(ctx));
   assert.match(estruturaInvalida.message, /^CRM: arquivo de dados corrompido/);
 
   const adulterado = createCrmService({ authorizeOperation: authorizeCrmOperation, repository: { list: () => [{ semId: true }], getById: () => null, save() {} } });
-  const registroInvalido = erroDe(() => adulterado.listRecords(ctx));
+  const registroInvalido = await erroDe(async () => await adulterado.listRecords(ctx));
   assert.match(registroInvalido.message, /^CRM: registro inválido no armazenamento/);
 
   const defeituoso = createCrmService({ authorizeOperation: () => undefined, repository: createInMemoryCrmRepository() });
-  const autorizadorDefeituoso = erroDe(() => defeituoso.listRecords(ctx));
+  const autorizadorDefeituoso = await erroDe(async () => await defeituoso.listRecords(ctx));
   assert.match(autorizadorDefeituoso.message, /^autorização recusada/);
 
-  const naoSuportada = erroDe(() => authorizeCrmOperation(ctx, PERMISSION.WRITE_CRM.replace('WRITE', 'DELETE')));
+  const naoSuportada = await erroDe(() => authorizeCrmOperation(ctx, PERMISSION.WRITE_CRM.replace('WRITE', 'DELETE')));
   assert.match(naoSuportada.message, /^ponte do CRM só autoriza/);
 
   const { service } = ambiente();
-  const opcoes = erroDe(() => service.listRecords(ctx, { filtro: 'x' }));
+  const opcoes = await erroDe(async () => await service.listRecords(ctx, { filtro: 'x' }));
   assert.match(opcoes.message, /^CRM: opções não reconhecidas/);
 
   for (const erro of [corrompido, estruturaInvalida, registroInvalido, autorizadorDefeituoso, naoSuportada, opcoes]) {
@@ -206,15 +206,15 @@ test('[CRM-ERRMAP-6] o que é INTERNO por desenho -> 500 genérico: arquivo corr
   }
 });
 
-test('[CRM-ERRMAP-7] nenhuma resposta mapeada repete texto da mensagem original: o que o cliente controla (um id, um status, um nome de campo) nunca sai', () => {
+test('[CRM-ERRMAP-7] nenhuma resposta mapeada repete texto da mensagem original: o que o cliente controla (um id, um status, um nome de campo) nunca sai', async () => {
   const { service, ctx } = ambiente();
   const hostil = 'crm:<script>alert(1)</script>';
   const erros = [
-    erroDe(() => service.getHistory(ctx, hostil)),
-    erroDe(() => service.updateRecord(ctx, hostil, {})),
-    erroDe(() => service.createRecord(ctx, { empresa: 'X' }, { status: '<img src=x onerror=alert(1)>' })),
-    erroDe(() => service.createRecord(ctx, { empresa: 'X', '<b>campo</b>': 1 })),
-    erroDe(() => service.moveStatus(ctx, hostil, 'RESEARCH')),
+    await erroDe(async () => await service.getHistory(ctx, hostil)),
+    await erroDe(async () => await service.updateRecord(ctx, hostil, {})),
+    await erroDe(async () => await service.createRecord(ctx, { empresa: 'X' }, { status: '<img src=x onerror=alert(1)>' })),
+    await erroDe(async () => await service.createRecord(ctx, { empresa: 'X', '<b>campo</b>': 1 })),
+    await erroDe(async () => await service.moveStatus(ctx, hostil, 'RESEARCH')),
   ];
   for (const erro of erros) {
     assert.ok(/script|<img|<b>/.test(erro.message), 'sanidade: a mensagem ORIGINAL contém o texto hostil');
@@ -300,14 +300,14 @@ test('[CRM-ERRMAP-8] VARREDURA: toda mensagem "CRM: ..." que o domínio, o repos
   assert.deepEqual(obsoletas, [], 'toda declaração "interna por desenho" precisa ainda existir no código-fonte');
 });
 
-test('[CRM-ERRMAP-9] todo código de erro do CRM que o app.js emite tem status de cliente (4xx) ou 500, mensagem fixa e nenhum campo extra', () => {
+test('[CRM-ERRMAP-9] todo código de erro do CRM que o app.js emite tem status de cliente (4xx) ou 500, mensagem fixa e nenhum campo extra', async () => {
   const { service, ctx } = ambiente();
-  const alfa = service.createRecord(ctx, ALFA).record;
+  const alfa = (await service.createRecord(ctx, ALFA)).record;
   const erros = [
-    erroDe(() => service.getHistory(ctx, 'crm:x')),
-    erroDe(() => service.createRecord(ctx, { empresa: 'X', site: ALFA.site })),
-    erroDe(() => service.moveStatus(ctx, alfa.id, 'NAO_EXISTE')),
-    erroDe(() => service.updateRecord(ctx, alfa.id, { id: 'x' })),
+    await erroDe(async () => await service.getHistory(ctx, 'crm:x')),
+    await erroDe(async () => await service.createRecord(ctx, { empresa: 'X', site: ALFA.site })),
+    await erroDe(async () => await service.moveStatus(ctx, alfa.id, 'NAO_EXISTE')),
+    await erroDe(async () => await service.updateRecord(ctx, alfa.id, { id: 'x' })),
     new Error('qualquer coisa não catalogada'),
   ];
   for (const erro of erros) {

@@ -13,8 +13,8 @@
 // não tem regra de negócio e não escolhe caminho — sem padrão escondido: quem compõe resolve o caminho e o passa
 // explícito. O arquivo só é lido/escrito quando uma operação roda (o adapter é preguiçoso): um arquivo corrompido
 // aparece no primeiro uso, como erro do CRM, sem derrubar o resto do servidor. Trocar a persistência (Supabase/Postgres
-// — candidato, não decidido) é criar outro módulo como este; o Service não muda (sujeito à ressalva de sincronia da
-// porta, decisão 0014).
+// — candidato, não decidido) é criar outro módulo como este; o Service não muda (a porta aceita
+// métodos assíncronos desde a decisão 0023).
 
 const { createCrmService } = require('./crmService');
 const { createJsonFileCrmRepository } = require('../crm/crmRepository');

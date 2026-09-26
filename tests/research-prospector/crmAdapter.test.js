@@ -18,13 +18,13 @@ const { CRM_DNC_STATUS, identityViews, toProspectorRecords, isDoNotContactRecord
 const OPERADOR = { actor: 'HUMAN', reviewedBy: { userId: 'user-teste', name: 'Teste', role: 'ADMIN' }, motivo: 'teste' };
 
 // Registros REAIS do domínio do CRM (sem nenhum campo doNotContact). `dnc: true` os move para DO_NOT_CONTACT.
-function crmComRegistros(especificacoes) {
+async function crmComRegistros(especificacoes) {
   const repository = crm.createInMemoryCrmRepository();
   for (const { campos, dnc } of especificacoes) {
-    const { record } = crm.createRecord(repository, campos, OPERADOR);
-    if (dnc) crm.markDoNotContact(repository, record.id, OPERADOR);
+    const { record } = await crm.createRecord(repository, campos, OPERADOR);
+    if (dnc) await crm.markDoNotContact(repository, record.id, OPERADOR);
   }
-  return crm.listRecords(repository);
+  return await crm.listRecords(repository);
 }
 
 const evidencia = (valor, tipoFonte = SOURCE_TYPE.OFICIAL) => ({ valor, fonte: 'Fonte de teste', tipoFonte });
@@ -39,8 +39,8 @@ test('[CRM-ADAPT-1] o literal do status DO_NOT_CONTACT do adaptador é o do dom�
   assert.equal(CRM_DNC_STATUS, CRM_STATUS.DO_NOT_CONTACT);
 });
 
-test('[CRM-ADAPT-2] o problema real: um registro do CRM em DO_NOT_CONTACT não tem `doNotContact`, e a checagem existente, sem tradução, o IGNORA — com o adaptador ele é reconhecido', () => {
-  const registros = crmComRegistros([{ campos: { empresa: 'Bloqueada Teste', telefone: '24 90000-1111', cidade: 'Petrópolis' }, dnc: true }]);
+test('[CRM-ADAPT-2] o problema real: um registro do CRM em DO_NOT_CONTACT não tem `doNotContact`, e a checagem existente, sem tradução, o IGNORA — com o adaptador ele é reconhecido', async () => {
+  const registros = await crmComRegistros([{ campos: { empresa: 'Bloqueada Teste', telefone: '24 90000-1111', cidade: 'Petrópolis' }, dnc: true }]);
   assert.equal(registros[0].status, 'DO_NOT_CONTACT');
   assert.equal('doNotContact' in registros[0], false, 'o CRM não grava o booleano');
 
@@ -64,8 +64,8 @@ test('[CRM-ADAPT-3] status DO_NOT_CONTACT bloqueia; PROSPECT e qualquer outro st
   assert.equal(isDoNotContactRecord({ status: 'PROSPECT' }), false);
 });
 
-test('[CRM-ADAPT-4] pelo discovery real, com registros CRUS do CRM: cada identidade (site, telefone, WhatsApp, Instagram, nome+cidade) de um DO_NOT_CONTACT leva o candidato a DNC', () => {
-  const registros = crmComRegistros([
+test('[CRM-ADAPT-4] pelo discovery real, com registros CRUS do CRM: cada identidade (site, telefone, WhatsApp, Instagram, nome+cidade) de um DO_NOT_CONTACT leva o candidato a DNC', async () => {
+  const registros = await crmComRegistros([
     {
       campos: { empresa: 'Bloqueada Um', site: 'bloqueada-um.example.test', telefone: '24 90000-3333', whatsapp: '24 90000-4444', instagram: '@bloqueada_um', cidade: 'Petrópolis' },
       dnc: true,
@@ -87,8 +87,8 @@ test('[CRM-ADAPT-4] pelo discovery real, com registros CRUS do CRM: cada identid
   assert.equal(porNome.statusDNC, DNC_STATUS.BLOQUEADO, 'nome + cidade também bloqueia (não se contorna o DNC trocando de canal)');
 });
 
-test('[CRM-ADAPT-5] o MESMO registro em PROSPECT nunca é tratado como DNC: vira DUPLICADO (identidade forte) ou POSSIVEL_DUPLICADO (só nome+cidade), e um registro só com o nome não casa com nada', () => {
-  const registros = crmComRegistros([
+test('[CRM-ADAPT-5] o MESMO registro em PROSPECT nunca é tratado como DNC: vira DUPLICADO (identidade forte) ou POSSIVEL_DUPLICADO (só nome+cidade), e um registro só com o nome não casa com nada', async () => {
+  const registros = await crmComRegistros([
     { campos: { empresa: 'Normal Um', telefone: '24 90000-5555', cidade: 'Petrópolis' } },
     { campos: { empresa: 'Só Nome Teste' } },
     { campos: { empresa: 'Nome e Cidade Teste', cidade: 'Teresópolis' } },
@@ -106,8 +106,8 @@ test('[CRM-ADAPT-5] o MESMO registro em PROSPECT nunca é tratado como DNC: vira
   assert.equal(semNada.statusDuplicidade, 'NOVO');
 });
 
-test('[CRM-ADAPT-6] um número guardado no campo "errado" nunca escapa: registro com telefone A e WhatsApp B, e candidato com telefone C e WhatsApp B (os dois validados) — ainda é bloqueado', () => {
-  const registros = crmComRegistros([{ campos: { empresa: 'Duas Linhas', telefone: '24 90000-6001', whatsapp: '24 90000-6002', cidade: 'Petrópolis' }, dnc: true }]);
+test('[CRM-ADAPT-6] um número guardado no campo "errado" nunca escapa: registro com telefone A e WhatsApp B, e candidato com telefone C e WhatsApp B (os dois validados) — ainda é bloqueado', async () => {
+  const registros = await crmComRegistros([{ campos: { empresa: 'Duas Linhas', telefone: '24 90000-6001', whatsapp: '24 90000-6002', cidade: 'Petrópolis' }, dnc: true }]);
   // o candidato tem dois números; só um deles é o do registro (o WhatsApp B do CRM)
   const resultado = descobrir({ telefone: [evidencia('24900007777')], whatsapp: [evidencia('24900006002')] }, registros, { empresa: 'Sem Relação Alguma' });
   assert.equal(resultado.statusDNC, DNC_STATUS.BLOQUEADO, 'o número do WhatsApp do candidato bate com o WhatsApp do CRM');
@@ -121,8 +121,8 @@ test('[CRM-ADAPT-6] um número guardado no campo "errado" nunca escapa: registro
   assert.equal(livre.statusDNC, DNC_STATUS.NAO_ENCONTRADO);
 });
 
-test('[CRM-ADAPT-7] a duplicidade também vê o segundo número (a mesma correção): candidato com dois números, um deles é o WhatsApp de um registro comum, vira DUPLICADO', () => {
-  const registros = crmComRegistros([{ campos: { empresa: 'Comum Duas Linhas', telefone: '24 90000-7001', whatsapp: '24 90000-7002', cidade: 'Petrópolis' } }]);
+test('[CRM-ADAPT-7] a duplicidade também vê o segundo número (a mesma correção): candidato com dois números, um deles é o WhatsApp de um registro comum, vira DUPLICADO', async () => {
+  const registros = await crmComRegistros([{ campos: { empresa: 'Comum Duas Linhas', telefone: '24 90000-7001', whatsapp: '24 90000-7002', cidade: 'Petrópolis' } }]);
   const resultado = descobrir({ telefone: [evidencia('24900008001')], whatsapp: [evidencia('24900007002')] }, registros, { empresa: 'Sem Relação' });
   assert.equal(resultado.statusDuplicidade, 'DUPLICADO');
   assert.deepEqual(resultado.matchedOn, ['telefone']);
@@ -151,8 +151,8 @@ test('[CRM-ADAPT-9] falha fechada: entrada que o adaptador não sabe interpretar
   assert.equal(runDncCheck(candidato, [null], false).status, DNC_STATUS.NAO_VERIFICADO);
 });
 
-test('[CRM-ADAPT-10] os registros do CRM nunca são alterados, e o resultado não carrega campos comerciais do registro (só a identidade, o bloqueio e o id)', () => {
-  const registros = crmComRegistros([{ campos: { empresa: 'Sigilo Teste', telefone: '24 90000-8001', email: 'reservado@example.test', valorProposta: 1234, observacoes: 'não sair' }, dnc: true }]);
+test('[CRM-ADAPT-10] os registros do CRM nunca são alterados, e o resultado não carrega campos comerciais do registro (só a identidade, o bloqueio e o id)', async () => {
+  const registros = await crmComRegistros([{ campos: { empresa: 'Sigilo Teste', telefone: '24 90000-8001', email: 'reservado@example.test', valorProposta: 1234, observacoes: 'não sair' }, dnc: true }]);
   const antes = JSON.stringify(registros);
   const traduzidos = toProspectorRecords(registros);
   assert.equal(JSON.stringify(registros), antes);

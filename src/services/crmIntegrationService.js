@@ -42,9 +42,9 @@
 //      não atualizada") é recuperável e detectada (regra 3b). Um registro apontado pela fila que não existe no CRM (ou
 //      que não é o desta promoção) é INCONSISTENTE: nada é alterado e o erro é claro.
 //
-// CONCORRÊNCIA — honesto: dentro de UM processo, promoteProspect é síncrona de ponta a ponta (ler a fila, olhar o CRM,
-// criar, gravar a fila) e, portanto, indivisível: duas chamadas quase simultâneas se enfileiram e a segunda vê a
-// primeira (JA_PROMOVIDO). Os arquivos, porém, não têm trava nem transação entre PROCESSOS: dois servidores sobre os
+// CONCORRÊNCIA — honesto: dentro de UM processo, promoteProspect é indivisível de ponta a ponta (ler a fila, olhar o CRM,
+// criar, gravar a fila): o CRM é assíncrono desde a decisão 0023, então as promoções de um mesmo serviço rodam UMA POR VEZ, na
+// ordem de chegada (fila de promessas), e a segunda vê a primeira (JA_PROMOVIDO). Os arquivos, porém, não têm trava nem transação entre PROCESSOS: dois servidores sobre os
 // mesmos arquivos podem intercalar as etapas. Para prospects com identidade forte (site, telefone, WhatsApp,
 // Instagram) o domínio do CRM ainda barra a segunda criação; para um prospect só com nome (sem nenhum identificador
 // forte) NÃO existe essa barreira, e uma corrida entre processos poderia criar dois registros. Não há trava de
@@ -242,18 +242,27 @@ function createCrmIntegrationService(dependencies) {
 
   // O registro do CRM que a fila diz ter sido promovido tem de EXISTIR e ser o desta promoção; senão é uma
   // inconsistência clara, e nada é alterado.
-  function alreadyPromoted(context, prospectId, prospect, approval) {
+  async function alreadyPromoted(context, prospectId, prospect, approval) {
     const promocao = prospect.promocao;
     const inconsistent = (why) =>
       promotionError(PROMOTION_ERROR.INCONSISTENT, `a fila diz que este prospect já foi promovido, mas ${why} — nada foi alterado`);
     if (!isPlainObject(promocao) || !isText(promocao.crmRecordId)) throw inconsistent('o resumo da promoção na fila está inválido');
-    const record = getRecord(context, promocao.crmRecordId);
+    const record = await getRecord(context, promocao.crmRecordId);
     if (record === null || record === undefined) throw inconsistent('o registro do CRM não existe');
     if (!carriesMarker(record, prospectId)) throw inconsistent('o registro do CRM apontado não foi criado por esta promoção');
     return result(PROMOTION_OUTCOME.JA_PROMOVIDO, prospectId, record, approval, promocao, null);
   }
 
+  // As promoções de UM serviço rodam uma por vez, na ordem de chegada: a operação inteira (ler a fila, olhar o CRM, criar, gravar a
+  // fila) continua indivisível dentro do processo, agora que o CRM é assíncrono e cada `await` cederia a vez (decisão 0023).
+  let promotionTail = Promise.resolve();
   function promoteProspect(context, prospectId, options) {
+    const run = promotionTail.then(() => promoteProspectUnlocked(context, prospectId, options));
+    promotionTail = run.then(() => undefined, () => undefined);
+    return run;
+  }
+
+  async function promoteProspectUnlocked(context, prospectId, options) {
     requireCrmWrite(context);
     const id = requireProspectId(prospectId);
     requireNoOptions(options);
@@ -275,10 +284,10 @@ function createCrmIntegrationService(dependencies) {
     }
 
     // 2) já promovido? só conferir — nada é gravado
-    if (hasOwn(prospect, 'promocao') && prospect.promocao) return alreadyPromoted(context, id, prospect, approval);
+    if (hasOwn(prospect, 'promocao') && prospect.promocao) return await alreadyPromoted(context, id, prospect, approval);
 
     // 3) recuperação: um registro deste prospect que o CRM já tem (criado antes de uma falha ao gravar a fila)
-    const previous = listRecords(context).filter((record) => carriesMarker(record, id));
+    const previous = (await listRecords(context)).filter((record) => carriesMarker(record, id));
     if (previous.length > 1) {
       throw promotionError(PROMOTION_ERROR.INCONSISTENT, 'mais de um registro do CRM aponta para este prospect — nada foi alterado');
     }
@@ -299,7 +308,7 @@ function createCrmIntegrationService(dependencies) {
     // 6) criar no CRM (o CRM Service autoriza WRITE:CRM; o DOMÍNIO decide identidade, duplicidade e DNC)
     let created;
     try {
-      created = createRecord(context, fields, { reason: buildReason(id, approval) });
+      created = await createRecord(context, fields, { reason: buildReason(id, approval) });
     } catch (error) {
       const message = error instanceof Error ? error.message : '';
       if (CRM_DNC_REFUSAL.test(message)) {

@@ -3,8 +3,8 @@
 // assertValidRepository — vive em crmRepositoryPort.js, sem `fs` e sem nenhum adapter; este arquivo o reexporta
 // para quem já importa daqui. O domínio (crmDomain.js) nunca importa `fs` nem qualquer SDK de banco: ele só chama
 // os três métodos, em QUALQUER repositório que os implemente. Uma implementação futura sobre Supabase/Postgres (NÃO
-// decidida, NÃO implementada — ver decisões 0012 e 0014) precisa satisfazer o mesmo contrato, que é síncrono nesta
-// versão (ver o cabeçalho de crmRepositoryPort.js).
+// decidida, NÃO implementada — ver decisões 0012 e 0014) precisa satisfazer o mesmo contrato, que aceita métodos síncronos
+// OU assíncronos desde a decisão 0023 (ver o cabeçalho de crmRepositoryPort.js). Estes dois adapters seguem síncronos.
 //
 // As duas implementações abaixo são as ÚNICAS, ambas de desenvolvimento/teste:
 //   - createInMemoryCrmRepository(): só memória, para testes — nunca toca em disco.

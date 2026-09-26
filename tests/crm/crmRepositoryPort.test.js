@@ -25,12 +25,14 @@ test('[CRM-PORT-2] um repositório com os três métodos síncronos é aceito e 
   assert.equal(assertValidRepository(repositorio), repositorio);
 });
 
-test('[CRM-PORT-3] a porta é SÍNCRONA nesta versão: um método declarado async é recusado na composição, com uma mensagem que nomeia o método — nunca no meio de uma operação, com um erro opaco', () => {
+test('[CRM-PORT-3] a porta ACEITA métodos assíncronos (decisão 0023): um método declarado async não é recusado — o domínio faz await de cada chamada', () => {
   for (const metodo of REQUIRED_REPOSITORY_METHODS) {
     const repositorio = { list: () => [], getById: () => null, save: () => {} };
     repositorio[metodo] = async () => (metodo === 'list' ? [] : null);
-    assert.throws(() => assertValidRepository(repositorio), new RegExp(`${metodo}\\(\\) é assíncrono`));
+    assert.equal(assertValidRepository(repositorio), repositorio, metodo);
   }
+  const todoAssincrono = { list: async () => [], getById: async () => null, save: async () => {} };
+  assert.equal(assertValidRepository(todoAssincrono), todoAssincrono);
 });
 
 test('[CRM-PORT-4] métodos ausentes ou não-funções são recusados nomeando o método; entradas que nem são um objeto também', () => {

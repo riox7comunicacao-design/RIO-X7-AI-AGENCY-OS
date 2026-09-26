@@ -68,14 +68,14 @@ const CAMPOS_PUBLICOS = ['id', ...crm.CRM_WRITABLE_FIELDS, 'status', 'dataDeEntr
 const ERRO_INTERNO = 'Erro interno. Tente novamente em instantes.';
 
 // Grava um registro direto pelo domínio, sobre o MESMO arquivo que a API usa (semente do teste).
-function semear(env, campos, status) {
+async function semear(env, campos, status) {
   const repositorio = createJsonFileCrmRepository(env.crmFilePath);
-  return crm.createRecord(repositorio, campos, {
+  return (await crm.createRecord(repositorio, campos, {
     ...(status ? { status } : {}),
     actor: 'HUMAN',
     reviewedBy: { userId: 'user-semente', name: 'Semente', role: 'ADMIN' },
     motivo: 'semente do teste',
-  }).record;
+  })).record;
 }
 
 const bytes = (env) => (fs.existsSync(env.crmFilePath) ? fs.readFileSync(env.crmFilePath, 'utf8') : null);
@@ -106,7 +106,7 @@ function criarServicoDuplo(chamadas, { falhar = {} } = {}) {
 // ===========================================================================
 test('[CRM-API-1] sem Authorization -> 401 em TODAS as 7 rotas, e nada é lido nem gravado', async (t) => {
   const env = montarAmbiente(t, { crm: true });
-  const alfa = semear(env, ALFA);
+  const alfa = await semear(env, ALFA);
   const antes = bytes(env);
   for (const requisicao of rotasCrm(alfa.id)) {
     const resposta = await chamar(env, null, requisicao);
@@ -178,7 +178,7 @@ test('[CRM-API-4] token válido, mas SEM usuário cadastrado no store -> 403 NO_
 
 test('[CRM-API-5] usuário INACTIVE -> 403 em todas as rotas, mesmo com token válido, e nada é gravado', async (t) => {
   const env = montarAmbiente(t, { usuarios: [BRENO, EX_COLABORADOR], crm: true });
-  const alfa = semear(env, ALFA);
+  const alfa = await semear(env, ALFA);
   const antes = bytes(env);
   for (const requisicao of rotasCrm(alfa.id)) {
     const resposta = await chamar(env, EX_COLABORADOR, requisicao);
@@ -190,7 +190,7 @@ test('[CRM-API-5] usuário INACTIVE -> 403 em todas as rotas, mesmo com token v�
 
 test('[CRM-API-6] usuário ativo, com contexto legítimo, mas SEM READ:CRM/WRITE:CRM -> 403 em todas as rotas; um id existente e um inexistente recebem a MESMA resposta (nada sobre a existência de um registro vaza para quem não tem acesso)', async (t) => {
   const env = montarAmbiente(t, { usuarios: [BRENO], crm: true });
-  const alfa = semear(env, ALFA);
+  const alfa = await semear(env, ALFA);
   const antes = bytes(env);
   const derivacao = t.mock.method(constants, 'getRolePermissions', () => Object.freeze([PERMISSION.APPROVE_LEAD_APPROVAL]));
   try {
@@ -214,8 +214,8 @@ test('[CRM-API-6] usuário ativo, com contexto legítimo, mas SEM READ:CRM/WRITE
 // ===========================================================================
 test('[CRM-API-7] GET /api/crm autenticado -> 200 { items }, para ADMIN e para COMMERCIAL_CLOSER (READ:CRM), com o formato público exato de cada registro', async (t) => {
   const env = montarAmbiente(t, { usuarios: [BRENO, RAFAEL], crm: true });
-  const alfa = semear(env, ALFA);
-  const beta = semear(env, BETA);
+  const alfa = await semear(env, ALFA);
+  const beta = await semear(env, BETA);
   for (const usuario of [BRENO, RAFAEL]) {
     const resposta = await chamar(env, usuario, { url: '/api/crm' });
     assert.equal(resposta.status, 200, usuario.userId);
@@ -228,7 +228,7 @@ test('[CRM-API-7] GET /api/crm autenticado -> 200 { items }, para ADMIN e para C
 
 test('[CRM-API-8] GET /api/crm/:id e /api/crm/:id/history -> 200 com o registro e a trilha de auditoria; registro inexistente -> 404 com mensagem fixa', async (t) => {
   const env = montarAmbiente(t, { usuarios: [BRENO, RAFAEL], crm: true });
-  const alfa = semear(env, ALFA);
+  const alfa = await semear(env, ALFA);
 
   const um = await chamar(env, RAFAEL, { url: rota(alfa.id) });
   assert.equal(um.status, 200);
@@ -298,7 +298,7 @@ test('[CRM-API-10] POST /api/crm com { status, reason }: status inicial e motivo
 
 test('[CRM-API-11] PATCH /api/crm/:id (ADMIN) -> 200, muda só os campos enviados e nunca o status, o id nem o histórico; um corpo vazio é um no-op', async (t) => {
   const env = montarAmbiente(t, { usuarios: [BRENO], crm: true });
-  const alfa = semear(env, ALFA);
+  const alfa = await semear(env, ALFA);
   const resposta = await chamar(env, BRENO, { method: 'PATCH', url: rota(alfa.id), body: { cidade: 'Teresópolis', temperatura: 'Quente' } });
   assert.equal(resposta.status, 200);
   const { item } = resposta.json();
@@ -317,7 +317,7 @@ test('[CRM-API-11] PATCH /api/crm/:id (ADMIN) -> 200, muda só os campos enviado
 
 test('[CRM-API-12] POST /api/crm/:id/status (ADMIN) -> 200, muda o status e acrescenta a entrada de histórico com o motivo e o reviewedBy do CONTEXTO; transição proibida -> 409; destino desconhecido, ausente ou que não é texto -> 400', async (t) => {
   const env = montarAmbiente(t, { usuarios: [BRENO], crm: true });
-  const alfa = semear(env, ALFA);
+  const alfa = await semear(env, ALFA);
   const mover = (corpo) => chamar(env, BRENO, { method: 'POST', url: rota(alfa.id, '/status'), body: corpo });
 
   const ok = await mover({ to: 'CONTACTED', reason: 'Primeiro contato feito' });
@@ -344,7 +344,7 @@ test('[CRM-API-12] POST /api/crm/:id/status (ADMIN) -> 200, muda o status e acre
 
 test('[CRM-API-13] POST /api/crm/:id/dnc (ADMIN) -> 200 DO_NOT_CONTACT; depois o registro é TERMINAL: editar -> 409 RECORD_LOCKED, mudar de status ou marcar de novo -> 409 INVALID_TRANSITION', async (t) => {
   const env = montarAmbiente(t, { usuarios: [BRENO], crm: true });
-  const alfa = semear(env, ALFA);
+  const alfa = await semear(env, ALFA);
   const bloqueio = await chamar(env, BRENO, { method: 'POST', url: rota(alfa.id, '/dnc'), body: { reason: 'Pediu para não ser contatado' } });
   assert.equal(bloqueio.status, 200);
   assert.equal(bloqueio.json().item.status, 'DO_NOT_CONTACT');
@@ -373,7 +373,7 @@ test('[CRM-API-13] POST /api/crm/:id/dnc (ADMIN) -> 200 DO_NOT_CONTACT; depois o
 // ===========================================================================
 test('[CRM-API-14] COMMERCIAL_CLOSER: criar, editar, mudar status e marcar DNC -> 403 FORBIDDEN, e o arquivo não muda um byte; as leituras seguem funcionando', async (t) => {
   const env = montarAmbiente(t, { usuarios: [RAFAEL], crm: true });
-  const alfa = semear(env, ALFA);
+  const alfa = await semear(env, ALFA);
   const antes = bytes(env);
   const escritas = rotasCrm(alfa.id).filter((requisicao) => requisicao.method !== 'GET');
   assert.equal(escritas.length, 4);
@@ -393,7 +393,7 @@ test('[CRM-API-14] COMMERCIAL_CLOSER: criar, editar, mudar status e marcar DNC -
 // ===========================================================================
 test('[CRM-API-15] duplicidade: a mesma identidade (site ou telefone) -> 409 DUPLICATE_RECORD com mensagem fixa, sem gravar; só nome+cidade iguais é um AVISO (201 com duplicidade)', async (t) => {
   const env = montarAmbiente(t, { usuarios: [BRENO], crm: true });
-  const alfa = semear(env, ALFA);
+  const alfa = await semear(env, ALFA);
   const criar = (corpo) => chamar(env, BRENO, { method: 'POST', url: '/api/crm', body: corpo });
 
   for (const corpo of [
@@ -418,9 +418,9 @@ test('[CRM-API-15] duplicidade: a mesma identidade (site ou telefone) -> 409 DUP
 
 test('[CRM-API-16] identidade BLOQUEADA (DO_NOT_CONTACT): criar com ela -> 409 DNC_BLOCKED; editar outro registro para ela -> 409 DNC_BLOCKED; editar para a de um registro ativo -> 409 DUPLICATE_RECORD; nada muda', async (t) => {
   const env = montarAmbiente(t, { usuarios: [BRENO], crm: true });
-  const bloqueado = semear(env, ALFA, 'DO_NOT_CONTACT');
-  const beta = semear(env, BETA);
-  const gama = semear(env, GAMA);
+  const bloqueado = await semear(env, ALFA, 'DO_NOT_CONTACT');
+  const beta = await semear(env, BETA);
+  const gama = await semear(env, GAMA);
   const antes = bytes(env);
 
   for (const corpo of [{ empresa: 'Nome Diferente', site: ALFA.site }, { empresa: 'Nome Diferente', telefone: ALFA.telefone }]) {
@@ -446,7 +446,7 @@ test('[CRM-API-16] identidade BLOQUEADA (DO_NOT_CONTACT): criar com ela -> 409 D
 // ===========================================================================
 test('[CRM-API-17] payload inválido no POST/PATCH -> 400 com mensagem FIXA, sem gravar: empresa ausente ou em branco, campo desconhecido, campo gerenciado (id, status, historico, dataDeEntrada), tipo errado, valor negativo', async (t) => {
   const env = montarAmbiente(t, { usuarios: [BRENO], crm: true });
-  const alfa = semear(env, ALFA);
+  const alfa = await semear(env, ALFA);
   const antes = bytes(env);
   const CAMPOS = 'Campos não permitidos na requisição.';
   const VALOR = 'Valor inválido em um dos campos.';
@@ -488,7 +488,7 @@ test('[CRM-API-17] payload inválido no POST/PATCH -> 400 com mensagem FIXA, sem
 
 test('[CRM-API-18] JSON inválido, vazio ou que não é um OBJETO (lista, texto, número, null) -> 400 em toda rota com corpo, sem gravar', async (t) => {
   const env = montarAmbiente(t, { usuarios: [BRENO], crm: true });
-  const alfa = semear(env, ALFA);
+  const alfa = await semear(env, ALFA);
   const antes = bytes(env);
   const comCorpo = rotasCrm(alfa.id).filter((requisicao) => requisicao.body !== undefined);
   assert.equal(comCorpo.length, 4);
@@ -515,7 +515,7 @@ test('[CRM-API-18] JSON inválido, vazio ou que não é um OBJETO (lista, texto,
 
 test('[CRM-API-19] Content-Type diferente de application/json (ou ausente) -> 415; um corpo grande demais (declarado ou em streaming) -> 413; nada é gravado', async (t) => {
   const env = montarAmbiente(t, { usuarios: [BRENO], crm: true });
-  const alfa = semear(env, ALFA);
+  const alfa = await semear(env, ALFA);
   const antes = bytes(env);
   const escritas = rotasCrm(alfa.id).filter((requisicao) => requisicao.body !== undefined);
 
@@ -542,7 +542,7 @@ test('[CRM-API-19] Content-Type diferente de application/json (ou ausente) -> 41
 
 test('[CRM-API-20] método errado -> 405 com o cabeçalho Allow exato, antes de qualquer outra coisa (inclusive sem autenticação); não existe exclusão, e um DELETE nunca apaga nada', async (t) => {
   const env = montarAmbiente(t, { usuarios: [BRENO], crm: true });
-  const alfa = semear(env, ALFA);
+  const alfa = await semear(env, ALFA);
   const antes = bytes(env);
   const casos = [
     ['DELETE', rota(alfa.id), 'GET, PATCH'],
@@ -577,7 +577,7 @@ test('[CRM-API-20] método errado -> 405 com o cabeçalho Allow exato, antes de 
 
 test('[CRM-API-21] query string -> 400 em toda rota (a API não tem filtros nem busca); userId/role/permissions/authUserId na query nunca são lidos', async (t) => {
   const env = montarAmbiente(t, { usuarios: [BRENO, RAFAEL], crm: true });
-  const alfa = semear(env, ALFA);
+  const alfa = await semear(env, ALFA);
   const antes = bytes(env);
   const consultas = ['?empresa=Alfa', '?cidade=Petropolis&estado=RJ', '?userId=user-breno', '?role=ADMIN', '?permissions=WRITE:CRM', '?authUserId=auth-breno', '?reviewedBy=x', '?x=1'];
   for (const consulta of consultas) {
@@ -594,7 +594,7 @@ test('[CRM-API-21] query string -> 400 em toda rota (a API não tem filtros nem 
 
 test('[CRM-API-22] rotas que não existem sob /api/crm -> 404 (sem revelar nada), com ou sem autenticação', async (t) => {
   const env = montarAmbiente(t, { usuarios: [BRENO], crm: true });
-  const alfa = semear(env, ALFA);
+  const alfa = await semear(env, ALFA);
   const urls = ['/api/crm/', `${rota(alfa.id)}/`, `${rota(alfa.id)}/desconhecida`, `${rota(alfa.id, '/status')}/extra`, '/api/crmx', '/api/CRM', `/api/crm/${encodeURIComponent(alfa.id)}/HISTORY`, '/api/crm//x', '/api/crm/a/b/c/d'];
   for (const url of urls) {
     for (const usuario of [null, BRENO]) {
@@ -619,7 +619,7 @@ const FORJADOS = Object.freeze({
 
 test('[CRM-API-23] userId, authUserId, role, permissions, reviewedBy e actor enviados pelo navegador -> 400 em toda escrita (mesmo por um ADMIN), sem gravar; e o histórico legítimo traz SEMPRE a identidade do token', async (t) => {
   const env = montarAmbiente(t, { usuarios: [BRENO], crm: true });
-  const alfa = semear(env, ALFA);
+  const alfa = await semear(env, ALFA);
   const antes = bytes(env);
 
   for (const [chave, valor] of Object.entries(FORJADOS)) {
@@ -652,7 +652,7 @@ test('[CRM-API-23] userId, authUserId, role, permissions, reviewedBy e actor env
 
 test('[CRM-API-24] ESCALADA DE PRIVILÉGIO: um COMMERCIAL_CLOSER que envia role ADMIN / permissions / cabeçalhos de identidade continua sem escrever (403); o arquivo não muda e /api/me segue mostrando a role real', async (t) => {
   const env = montarAmbiente(t, { usuarios: [RAFAEL], crm: true });
-  const alfa = semear(env, ALFA);
+  const alfa = await semear(env, ALFA);
   const antes = bytes(env);
   const cabecalhosForjados = { 'X-Role': 'ADMIN', 'X-User-Id': 'user-breno', 'X-Permissions': 'WRITE:CRM', 'X-Auth-User-Id': 'auth-breno', 'X-Forwarded-User': 'user-breno' };
 
@@ -683,7 +683,7 @@ test('[CRM-API-24] ESCALADA DE PRIVILÉGIO: um COMMERCIAL_CLOSER que envia role 
 
 test('[CRM-API-25] POLUIÇÃO DE PROTÓTIPO por payload: "__proto__", "constructor" e "prototype" no corpo -> 400 em POST e PATCH, nada é gravado, e Object.prototype continua intacto', async (t) => {
   const env = montarAmbiente(t, { usuarios: [BRENO], crm: true });
-  const alfa = semear(env, ALFA);
+  const alfa = await semear(env, ALFA);
   const antes = bytes(env);
   const corpos = [
     '{"__proto__":{"empresa":"Poluida","status":"WON","polluted":true}}',
@@ -717,7 +717,7 @@ test('[CRM-API-25b] POLUIÇÃO em tempo de execução: com Object.prototype polu
   // Sem o SDK do Supabase no caminho: uma identidade JÁ verificada (real), para que só o código da API e do CRM rode poluído.
   const identidade = await verifiedIdentityFor(t, { authUserId: BRENO.authUserId, email: BRENO.email });
   const env = montarAmbiente(t, { usuarios: [BRENO], crm: true });
-  const alfa = semear(env, ALFA);
+  const alfa = await semear(env, ALFA);
   const app = createApp({
     verifyAccessToken: async () => identidade,
     userStore: createUserStore([defineUser(BRENO)]),
@@ -770,7 +770,7 @@ test('[CRM-API-25b] POLUIÇÃO em tempo de execução: com Object.prototype polu
 // ===========================================================================
 test('[CRM-API-26] ids perigosos na URL (__proto__, constructor, path traversal, NUL, só espaço, encoding inválido, gigante) -> 404 ou 400, NUNCA 500, e nada é criado nem alterado', async (t) => {
   const env = montarAmbiente(t, { usuarios: [BRENO], crm: true });
-  const alfa = semear(env, ALFA);
+  const alfa = await semear(env, ALFA);
   const antes = bytes(env);
   const ids404 = ['__proto__', 'constructor', 'prototype', 'hasOwnProperty', 'toString', '../../etc/passwd', '..\\..\\windows', 'a/b', 'crm:x" OR "1"="1', '\u0000', '💥', 'a'.repeat(3000), 'crm:%'];
   const ids400 = ['   '];
@@ -829,7 +829,7 @@ test('[CRM-API-26b] os mesmos ids perigosos sobre um repositório EM MEMÓRIA (o
 
 test('[CRM-API-27] payloads inesperados que não são registros (aninhamento profundo, números gigantes, unicode, chaves vazias) -> 400, nunca 500', async (t) => {
   const env = montarAmbiente(t, { usuarios: [BRENO], crm: true });
-  const alfa = semear(env, ALFA);
+  const alfa = await semear(env, ALFA);
   const antes = bytes(env);
   const fundo = `${'['.repeat(4000)}${']'.repeat(4000)}`;
   const corpos = [
@@ -860,7 +860,7 @@ test('[CRM-API-27] payloads inesperados que não são registros (aninhamento pro
 // ===========================================================================
 test('[CRM-API-28] o access token nunca aparece em nenhuma resposta nem cabeçalho nem linha de log do CRM — sucesso, recusa e erro', async (t) => {
   const env = montarAmbiente(t, { usuarios: [BRENO, RAFAEL], crm: true });
-  const alfa = semear(env, ALFA);
+  const alfa = await semear(env, ALFA);
   const tokenBreno = env.tokenFor(BRENO.userId);
   const tokenRafael = env.tokenFor(RAFAEL.userId);
   const tokenForjado = 'token-forjado-nao-deveria-aparecer-em-lugar-algum';
@@ -890,7 +890,7 @@ test('[CRM-API-28] o access token nunca aparece em nenhuma resposta nem cabeçal
 
 test('[CRM-API-29] authUserId, e-mail de login e dados internos NUNCA saem — nem quando o arquivo do CRM foi adulterado com campos que não existem no modelo', async (t) => {
   const env = montarAmbiente(t, { usuarios: [BRENO], crm: true });
-  const alfa = semear(env, ALFA);
+  const alfa = await semear(env, ALFA);
   // Adultera o arquivo: campos internos no registro e na identidade do histórico.
   const dados = JSON.parse(fs.readFileSync(env.crmFilePath, 'utf8'));
   dados[alfa.id].authUserId = 'auth-vazado-no-registro';
@@ -921,7 +921,7 @@ test('[CRM-API-29] authUserId, e-mail de login e dados internos NUNCA saem — n
 
 test('[CRM-API-30] falhas internas -> 500 GENÉRICO, sem stack, caminho, nome de arquivo nem a mensagem original; o LOG do servidor recebe o diagnóstico (e a dica do arquivo corrompido não repete o conteúdo)', async (t) => {
   const env = montarAmbiente(t, { usuarios: [BRENO], crm: true });
-  const alfa = semear(env, ALFA);
+  const alfa = await semear(env, ALFA);
   const generico = { error: { code: 'INTERNAL', message: ERRO_INTERNO } };
 
   // 1. Arquivo do CRM corrompido (um pedaço do conteúdo é citado na mensagem original do adapter).
@@ -958,7 +958,7 @@ test('[CRM-API-30] falhas internas -> 500 GENÉRICO, sem stack, caminho, nome de
 
 test('[CRM-API-31] uma resposta de ERRO nunca traz mais que { error: { code, message } } — nenhuma chave extra, nenhum detalhe do erro original', async (t) => {
   const env = montarAmbiente(t, { usuarios: [BRENO, RAFAEL], crm: true });
-  const alfa = semear(env, ALFA);
+  const alfa = await semear(env, ALFA);
   const respostas = [
     await chamar(env, null, { url: '/api/crm' }),
     await chamar(env, RAFAEL, { method: 'POST', url: '/api/crm', body: { empresa: 'X' } }),
@@ -983,7 +983,7 @@ test('[CRM-API-31] uma resposta de ERRO nunca traz mais que { error: { code, mes
 // ===========================================================================
 test('[CRM-API-32] toda resposta do CRM (sucesso e erro) sai com application/json, no-store, CSP e os cabeçalhos de segurança — e NUNCA com cabeçalhos CORS, mesmo com um Origin estrangeiro', async (t) => {
   const env = montarAmbiente(t, { usuarios: [BRENO, RAFAEL], crm: true });
-  const alfa = semear(env, ALFA);
+  const alfa = await semear(env, ALFA);
   const estrangeiro = { Origin: 'https://site-malicioso.example.test' };
   const respostas = [
     await chamar(env, BRENO, { url: '/api/crm', headers: estrangeiro }),
@@ -1011,7 +1011,7 @@ test('[CRM-API-32] toda resposta do CRM (sucesso e erro) sai com application/jso
 
 test('[CRM-API-33] o log de operação registra só método, rota com :id, status e userId — nunca o id do registro, o corpo, o nome de uma empresa nem um campo', async (t) => {
   const env = montarAmbiente(t, { usuarios: [BRENO], crm: true });
-  const alfa = semear(env, ALFA);
+  const alfa = await semear(env, ALFA);
   await chamar(env, BRENO, { method: 'POST', url: '/api/crm', body: { empresa: 'Empresa Que Nao Pode Ir Ao Log', email: 'nao-logar@example.test' } });
   await chamar(env, BRENO, { url: rota(alfa.id) });
   await chamar(env, BRENO, { method: 'PATCH', url: rota(alfa.id), body: { observacoes: 'texto-sigiloso-de-teste' } });

@@ -53,20 +53,20 @@ test('[CRM-FILE-3] devolve o Service completo e congelado — as 7 operações, 
   for (const operacao of OPERACOES) assert.equal(typeof service[operacao], 'function');
 });
 
-test('[CRM-FILE-4] compor NÃO toca no disco: o arquivo (e o diretório dele) só passam a existir na primeira escrita — uma leitura em arquivo ausente é uma lista vazia', (t) => {
+test('[CRM-FILE-4] compor NÃO toca no disco: o arquivo (e o diretório dele) só passam a existir na primeira escrita — uma leitura em arquivo ausente é uma lista vazia', async (t) => {
   const dir = path.join(novoDiretorio(t), 'ainda-nao-existe');
   const filePath = path.join(dir, 'crm.json');
   const service = createFileBackedCrmService({ authorizeOperation: authorizeCrmOperation, filePath });
   assert.equal(fs.existsSync(dir), false, 'compor não criou o diretório');
-  assert.deepEqual(service.listRecords(contexto()), []);
+  assert.deepEqual(await service.listRecords(contexto()), []);
   assert.equal(fs.existsSync(dir), false, 'ler não criou nada');
 
-  const { record } = service.createRecord(contexto(), EMPRESA);
+  const { record } = await service.createRecord(contexto(), EMPRESA);
   assert.equal(fs.existsSync(filePath), true, 'a primeira escrita cria o arquivo');
   assert.deepEqual(Object.keys(JSON.parse(fs.readFileSync(filePath, 'utf8'))), [record.id]);
 });
 
-test('[CRM-FILE-5] o autorizador INJETADO é quem decide: um autorizador que recusa impede toda operação e nada é gravado; um que aceita é chamado com o contexto e a permissão da operação (READ:CRM / WRITE:CRM)', (t) => {
+test('[CRM-FILE-5] o autorizador INJETADO é quem decide: um autorizador que recusa impede toda operação e nada é gravado; um que aceita é chamado com o contexto e a permissão da operação (READ:CRM / WRITE:CRM)', async (t) => {
   const filePath = path.join(novoDiretorio(t), 'crm.json');
   const ctx = contexto();
 
@@ -76,8 +76,8 @@ test('[CRM-FILE-5] o autorizador INJETADO é quem decide: um autorizador que rec
     },
     filePath,
   });
-  assert.throws(() => recusa.createRecord(ctx, EMPRESA), /acesso negado/);
-  assert.throws(() => recusa.listRecords(ctx), /acesso negado/);
+  await assert.rejects(async () => await recusa.createRecord(ctx, EMPRESA), /acesso negado/);
+  await assert.rejects(async () => await recusa.listRecords(ctx), /acesso negado/);
   assert.equal(fs.existsSync(filePath), false, 'nada foi gravado');
 
   const chamadas = [];
@@ -88,30 +88,30 @@ test('[CRM-FILE-5] o autorizador INJETADO é quem decide: um autorizador que rec
     },
     filePath,
   });
-  const { record } = aceita.createRecord(ctx, EMPRESA);
-  aceita.listRecords(ctx);
+  const { record } = await aceita.createRecord(ctx, EMPRESA);
+  await aceita.listRecords(ctx);
   assert.deepEqual(chamadas.map((chamada) => chamada.permissao), [PERMISSION.WRITE_CRM, PERMISSION.READ_CRM]);
   assert.ok(chamadas.every((chamada) => chamada.contextoRecebido === ctx));
   assert.deepEqual(JSON.parse(fs.readFileSync(filePath, 'utf8'))[record.id].historico[0].reviewedBy, { userId: 'u9', name: 'Operador', role: 'ADMIN' }, 'a identidade gravada é a que o autorizador devolveu');
 });
 
-test('[CRM-FILE-6] persistência real: outro Service sobre o MESMO arquivo lê o que o primeiro gravou, com o histórico e o bloqueio DNC; e um arquivo corrompido aparece como erro, nunca como "vazio"', (t) => {
+test('[CRM-FILE-6] persistência real: outro Service sobre o MESMO arquivo lê o que o primeiro gravou, com o histórico e o bloqueio DNC; e um arquivo corrompido aparece como erro, nunca como "vazio"', async (t) => {
   const filePath = path.join(novoDiretorio(t), 'crm.json');
   const ctx = contexto();
   const primeiro = createFileBackedCrmService({ authorizeOperation: authorizeCrmOperation, filePath });
-  const { record } = primeiro.createRecord(ctx, EMPRESA);
-  primeiro.moveStatus(ctx, record.id, 'CONTACTED', { reason: 'primeiro contato' });
-  primeiro.markDoNotContact(ctx, record.id, { reason: 'pediu para sair' });
+  const { record } = await primeiro.createRecord(ctx, EMPRESA);
+  await primeiro.moveStatus(ctx, record.id, 'CONTACTED', { reason: 'primeiro contato' });
+  await primeiro.markDoNotContact(ctx, record.id, { reason: 'pediu para sair' });
 
   const segundo = createFileBackedCrmService({ authorizeOperation: authorizeCrmOperation, filePath });
-  const lido = segundo.getRecord(ctx, record.id);
+  const lido = await segundo.getRecord(ctx, record.id);
   assert.equal(lido.status, 'DO_NOT_CONTACT');
   assert.deepEqual(lido.historico.map((entrada) => entrada.to), ['PROSPECT', 'CONTACTED', 'DO_NOT_CONTACT']);
-  assert.throws(() => segundo.createRecord(ctx, { empresa: 'Outro Nome', site: EMPRESA.site }), /identidade já bloqueada/);
+  await assert.rejects(async () => await segundo.createRecord(ctx, { empresa: 'Outro Nome', site: EMPRESA.site }), /identidade já bloqueada/);
 
   fs.writeFileSync(filePath, '{ "meio-de-um-json": ');
-  assert.throws(() => segundo.listRecords(ctx), /^Error: CRM: arquivo de dados corrompido/);
-  assert.throws(() => segundo.createRecord(ctx, { empresa: 'Nova' }), /arquivo de dados corrompido/);
+  await assert.rejects(async () => await segundo.listRecords(ctx), /^Error: CRM: arquivo de dados corrompido/);
+  await assert.rejects(async () => await segundo.createRecord(ctx, { empresa: 'Nova' }), /arquivo de dados corrompido/);
 });
 
 test('[CRM-FILE-7] a fábrica só conhece o Service e o adapter de arquivo: a lista de importações é fechada e não há I/O, rede nem execução dinâmica no código', () => {

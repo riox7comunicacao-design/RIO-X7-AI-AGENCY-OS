@@ -560,29 +560,29 @@ function createApp(dependencies) {
   async function dispatchCrm(req, url, route, context) {
     readQuery(url, []); // sem filtros nem busca: o Service não os tem
     if (route.name === 'crm-collection') {
-      if (req.method === 'GET') return respond(200, { items: crmService.listRecords(context) });
+      if (req.method === 'GET') return respond(200, { items: await crmService.listRecords(context) });
       const { fields, options } = splitCreateBody(await readJsonBody(req));
-      const created = crmService.createRecord(context, fields, options);
+      const created = await crmService.createRecord(context, fields, options);
       return respond(201, { item: created.record, duplicidade: created.duplicidade });
     }
 
     const id = decodeId(route.rawId);
-    if (route.name === 'crm-history') return respond(200, { historico: crmService.getHistory(context, id) });
+    if (route.name === 'crm-history') return respond(200, { historico: await crmService.getHistory(context, id) });
     if (route.name === 'crm-item') {
       if (req.method === 'GET') {
-        const item = crmService.getRecord(context, id);
+        const item = await crmService.getRecord(context, id);
         if (item === null) throw new HttpError('NOT_FOUND');
         return respond(200, { item });
       }
-      return respond(200, { item: crmService.updateRecord(context, id, await readJsonBody(req)) });
+      return respond(200, { item: await crmService.updateRecord(context, id, await readJsonBody(req)) });
     }
     if (route.name === 'crm-status') {
       const picked = readActionBody(await readJsonBody(req), ['to', 'reason']);
       const options = hasOwn(picked, 'reason') ? { reason: picked.reason } : {};
-      return respond(200, { item: crmService.moveStatus(context, id, picked.to, options) });
+      return respond(200, { item: await crmService.moveStatus(context, id, picked.to, options) });
     }
     if (route.name === 'crm-dnc') {
-      return respond(200, { item: crmService.markDoNotContact(context, id, readActionBody(await readJsonBody(req), ['reason'])) });
+      return respond(200, { item: await crmService.markDoNotContact(context, id, readActionBody(await readJsonBody(req), ['reason'])) });
     }
     // Inalcançável: matchRoute só produz as cinco rotas acima. Existe para que uma rota nova, ainda sem tratamento aqui,
     // nunca caia por omissão numa operação de escrita (marcar DO_NOT_CONTACT).

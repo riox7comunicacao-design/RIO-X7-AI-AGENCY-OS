@@ -52,7 +52,7 @@ const OPERADOR_ADMIN = { userId: ADMIN_USER.userId, name: ADMIN_USER.name, role:
 const criarServico = (repository, extras = {}) => createCrmService({ authorizeOperation: authorizeCrmOperation, repository, ...extras });
 
 // Semeia um registro pelo próprio Service (ADMIN) e devolve o id.
-const semear = (servico, campos = { empresa: 'Semente Ltda', site: 'semente.example.test' }) => servico.createRecord(admin(), campos).record.id;
+const semear = async (servico, campos = { empresa: 'Semente Ltda', site: 'semente.example.test' }) => (await servico.createRecord(admin(), campos)).record.id;
 
 // Um repositório que DELEGA ao real e só registra as chamadas — para provar o que foi (ou não) tocado.
 function repositorioObservado(interno = createInMemoryCrmRepository()) {
@@ -94,13 +94,13 @@ function dominioObservado(chamadas) {
 
 // As 7 operações do Service, com argumentos típicos — para exercitar todas de uma vez. `permissao`: a que cada uma exige.
 const operacoes = (servico, id) => [
-  ['listRecords', READ, (ctx) => servico.listRecords(ctx)],
-  ['getRecord', READ, (ctx) => servico.getRecord(ctx, id)],
-  ['getHistory', READ, (ctx) => servico.getHistory(ctx, id)],
-  ['createRecord', WRITE, (ctx) => servico.createRecord(ctx, { empresa: 'Nova Empresa', site: 'nova.example.test' })],
-  ['updateRecord', WRITE, (ctx) => servico.updateRecord(ctx, id, { observacoes: 'nota' })],
-  ['moveStatus', WRITE, (ctx) => servico.moveStatus(ctx, id, CRM_STATUS.RESEARCH)],
-  ['markDoNotContact', WRITE, (ctx) => servico.markDoNotContact(ctx, id)],
+  ['listRecords', READ, async (ctx) => await servico.listRecords(ctx)],
+  ['getRecord', READ, async (ctx) => await servico.getRecord(ctx, id)],
+  ['getHistory', READ, async (ctx) => await servico.getHistory(ctx, id)],
+  ['createRecord', WRITE, async (ctx) => await servico.createRecord(ctx, { empresa: 'Nova Empresa', site: 'nova.example.test' })],
+  ['updateRecord', WRITE, async (ctx) => await servico.updateRecord(ctx, id, { observacoes: 'nota' })],
+  ['moveStatus', WRITE, async (ctx) => await servico.moveStatus(ctx, id, CRM_STATUS.RESEARCH)],
+  ['markDoNotContact', WRITE, async (ctx) => await servico.markDoNotContact(ctx, id)],
 ];
 
 // Contextos que NÃO são um AuthorizationContext emitido: a antiga identidade simples, literais, cópias, clones e
@@ -130,9 +130,9 @@ function contextosNaoEmitidos() {
 }
 
 // Executa `fn` e devolve o erro lançado (ou null).
-function erroDe(fn) {
+async function erroDe(fn) {
   try {
-    fn();
+    await fn();
   } catch (erro) {
     return erro;
   }
@@ -157,48 +157,48 @@ test('[CRM-SVC-1] o Service expõe exatamente as 7 operações, congelado — e 
   }
 });
 
-test('[CRM-SVC-2] sem autorizador injetado o Service não existe: ausente, não-função e função async são recusados na criação', () => {
+test('[CRM-SVC-2] sem autorizador injetado o Service não existe: ausente, não-função e função async são recusados na criação', async () => {
   const repository = createInMemoryCrmRepository();
   for (const ruim of [undefined, null, 'ponte', {}, [], 42]) {
-    assert.match(erroDe(() => createCrmService({ authorizeOperation: ruim, repository })).message, /exige \{ authorizeOperation \}/, String(ruim));
+    assert.match((await erroDe(() => createCrmService({ authorizeOperation: ruim, repository }))).message, /exige \{ authorizeOperation \}/, String(ruim));
   }
-  assert.match(erroDe(() => createCrmService({ authorizeOperation: async () => ({}), repository })).message, /síncrono/);
-  assert.match(erroDe(() => createCrmService()).message, /exige \{ authorizeOperation \}/);
-  assert.match(erroDe(() => createCrmService(null)).message, /exige \{ authorizeOperation \}/);
+  assert.match((await erroDe(() => createCrmService({ authorizeOperation: async () => ({}), repository }))).message, /síncrono/);
+  assert.match((await erroDe(() => createCrmService())).message, /exige \{ authorizeOperation \}/);
+  assert.match((await erroDe(() => createCrmService(null))).message, /exige \{ authorizeOperation \}/);
 });
 
-test('[CRM-SVC-3] sem repositório válido o Service não existe: o Service NUNCA escolhe um adapter (sem padrão, sem arquivo), e uma porta assíncrona é recusada', () => {
+test('[CRM-SVC-3] sem repositório válido o Service não existe: o Service NUNCA escolhe um adapter (sem padrão, sem arquivo); e uma porta ASSÍNCRONA é aceita (decisão 0023)', async () => {
   for (const ausente of [undefined, null]) {
-    assert.match(erroDe(() => createCrmService({ authorizeOperation: authorizeCrmOperation, repository: ausente })).message, /exige \{ repository \}/);
+    assert.match((await erroDe(() => createCrmService({ authorizeOperation: authorizeCrmOperation, repository: ausente }))).message, /exige \{ repository \}/);
   }
-  assert.match(erroDe(() => createCrmService({ authorizeOperation: authorizeCrmOperation })).message, /exige \{ repository \}/);
+  assert.match((await erroDe(() => createCrmService({ authorizeOperation: authorizeCrmOperation }))).message, /exige \{ repository \}/);
   for (const invalido of ['arquivo.json', 42, [], {}, { list: () => [] }, { list() {}, getById() {} }]) {
-    assert.ok(erroDe(() => criarServico(invalido)), `${JSON.stringify(invalido)} deveria ser recusado`);
+    assert.ok(await erroDe(() => criarServico(invalido)), `${JSON.stringify(invalido)} deveria ser recusado`);
   }
-  assert.match(erroDe(() => criarServico({ list: async () => [], getById: () => null, save: () => {} })).message, /list\(\) é assíncrono/);
+  assert.ok(criarServico({ list: async () => [], getById: async () => null, save: async () => {} }), 'um repositório assíncrono é aceito: o Service faz await de cada chamada');
 });
 
-test('[CRM-SVC-4] um domínio incompleto injetado falha na criação, nomeando a função que falta — nunca no meio de uma operação', () => {
+test('[CRM-SVC-4] um domínio incompleto injetado falha na criação, nomeando a função que falta — nunca no meio de uma operação', async () => {
   for (const funcao of ['createRecord', 'getRecord', 'listRecords', 'updateRecord', 'moveStatus', 'markDoNotContact']) {
     const incompleto = { ...crmDomain };
     delete incompleto[funcao];
-    assert.match(erroDe(() => criarServico(createInMemoryCrmRepository(), { crm: incompleto })).message, new RegExp(`não tem a função ${funcao}\\(\\)`));
+    assert.match((await erroDe(() => criarServico(createInMemoryCrmRepository(), { crm: incompleto }))).message, new RegExp(`não tem a função ${funcao}\\(\\)`));
   }
-  assert.match(erroDe(() => criarServico(createInMemoryCrmRepository(), { crm: 'domínio' })).message, /deve ser o domínio do CRM/);
+  assert.match((await erroDe(() => criarServico(createInMemoryCrmRepository(), { crm: 'domínio' }))).message, /deve ser o domínio do CRM/);
 });
 
-test('[CRM-SVC-5] as funções do domínio ficam CAPTURADAS na criação: substituir uma delas no objeto injetado depois não muda o Service', () => {
+test('[CRM-SVC-5] as funções do domínio ficam CAPTURADAS na criação: substituir uma delas no objeto injetado depois não muda o Service', async () => {
   const chamadas = [];
   const dominio = dominioObservado(chamadas);
   const servico = criarServico(createInMemoryCrmRepository(), { crm: dominio });
   dominio.createRecord = () => {
     throw new Error('substituída depois da criação — nunca deveria ser chamada');
   };
-  assert.doesNotThrow(() => servico.createRecord(admin(), { empresa: 'Capturada Ltda' }));
+  await assert.doesNotReject(async () => await servico.createRecord(admin(), { empresa: 'Capturada Ltda' }));
   assert.equal(chamadas.filter(([nome]) => nome === 'createRecord').length, 1);
 });
 
-test('[CRM-SVC-6] o Service depende só do contrato: um repositório PRÓPRIO (nem memória, nem arquivo) que satisfaça { list, getById, save } funciona igual', () => {
+test('[CRM-SVC-6] o Service depende só do contrato: um repositório PRÓPRIO (nem memória, nem arquivo) que satisfaça { list, getById, save } funciona igual', async () => {
   const guardados = new Map();
   const repositorioProprio = {
     list: () => [...guardados.values()].map((registro) => structuredClone(registro)),
@@ -206,9 +206,9 @@ test('[CRM-SVC-6] o Service depende só do contrato: um repositório PRÓPRIO (n
     save: (registro) => void guardados.set(registro.id, structuredClone(registro)),
   };
   const servico = criarServico(repositorioProprio);
-  const id = semear(servico);
-  assert.equal(servico.getRecord(closer(), id).empresa, 'Semente Ltda');
-  assert.equal(servico.moveStatus(admin(), id, CRM_STATUS.RESEARCH).status, CRM_STATUS.RESEARCH);
+  const id = await semear(servico);
+  assert.equal((await servico.getRecord(closer(), id)).empresa, 'Semente Ltda');
+  assert.equal((await servico.moveStatus(admin(), id, CRM_STATUS.RESEARCH)).status, CRM_STATUS.RESEARCH);
   assert.equal(guardados.get(id).status, CRM_STATUS.RESEARCH, 'gravou no repositório INJETADO');
 });
 
@@ -230,14 +230,14 @@ test('[CRM-SVC-7] o código do Service não conhece adapter nem disco: só impor
 // ===========================================================================
 // 2) Autorização — quem pode o quê (READ:CRM x WRITE:CRM), decidido pelo autorizador injetado
 // ===========================================================================
-test('[CRM-SVC-8] cada operação pede ao autorizador EXATAMENTE a permissão certa (READ:CRM ou WRITE:CRM), uma vez, com o contexto recebido', () => {
+test('[CRM-SVC-8] cada operação pede ao autorizador EXATAMENTE a permissão certa (READ:CRM ou WRITE:CRM), uma vez, com o contexto recebido', async () => {
   const chamadas = [];
   const observado = (context, permission) => {
     chamadas.push([context, permission]);
     return authorizeCrmOperation(context, permission);
   };
   const servico = criarServico(createInMemoryCrmRepository(), { authorizeOperation: observado });
-  const id = semear(servico);
+  const id = await semear(servico);
   for (const [nome, permissao, executar] of operacoes(servico, id)) {
     chamadas.length = 0;
     const ctx = admin();
@@ -248,26 +248,26 @@ test('[CRM-SVC-8] cada operação pede ao autorizador EXATAMENTE a permissão ce
   }
 });
 
-test('[CRM-SVC-9] ADMIN executa as 7 operações (escrita e leitura)', () => {
+test('[CRM-SVC-9] ADMIN executa as 7 operações (escrita e leitura)', async () => {
   const servico = criarServico(createInMemoryCrmRepository());
-  const id = semear(servico);
+  const id = await semear(servico);
   for (const [nome, , executar] of operacoes(servico, id)) {
-    assert.doesNotThrow(() => executar(admin()), nome);
+    await assert.doesNotReject(() => executar(admin()), nome);
   }
 });
 
-test('[CRM-SVC-10] COMMERCIAL_CLOSER LÊ (as 3 leituras), mas NÃO escreve: as 4 escritas são recusadas com "acesso negado" e a persistência não é tocada', () => {
+test('[CRM-SVC-10] COMMERCIAL_CLOSER LÊ (as 3 leituras), mas NÃO escreve: as 4 escritas são recusadas com "acesso negado" e a persistência não é tocada', async () => {
   const inicial = createInMemoryCrmRepository();
-  const id = semear(criarServico(inicial));
+  const id = await semear(criarServico(inicial));
   const repo = repositorioObservado(inicial);
   const servico = criarServico(repo);
 
   for (const [nome, permissao, executar] of operacoes(servico, id)) {
     repo.chamadas.length = 0;
     if (permissao === READ) {
-      assert.doesNotThrow(() => executar(closer()), `${nome}: o closer lê`);
+      await assert.doesNotReject(() => executar(closer()), `${nome}: o closer lê`);
     } else {
-      const erro = erroDe(() => executar(closer()));
+      const erro = await erroDe(() => executar(closer()));
       assert.ok(erro, `${nome}: o closer NÃO escreve`);
       assert.match(erro.message, /acesso negado/, nome);
       assert.match(erro.message, /WRITE:CRM/, nome);
@@ -278,14 +278,14 @@ test('[CRM-SVC-10] COMMERCIAL_CLOSER LÊ (as 3 leituras), mas NÃO escreve: as 4
   assert.equal(inicial.getById(id).observacoes, null);
 });
 
-test('[CRM-SVC-11] um usuário INACTIVE é recusado em TODAS as 7 operações, ADMIN ou CLOSER, sem tocar a persistência', () => {
+test('[CRM-SVC-11] um usuário INACTIVE é recusado em TODAS as 7 operações, ADMIN ou CLOSER, sem tocar a persistência', async () => {
   const inicial = createInMemoryCrmRepository();
-  const id = semear(criarServico(inicial));
+  const id = await semear(criarServico(inicial));
   for (const base of [ADMIN_USER, CLOSER_USER]) {
     const repo = repositorioObservado(inicial);
     const servico = criarServico(repo);
     for (const [nome, , executar] of operacoes(servico, id)) {
-      const erro = erroDe(() => executar(inativo(base)));
+      const erro = await erroDe(() => executar(inativo(base)));
       assert.ok(erro, `${base.role} inativo: ${nome}`);
       assert.match(erro.message, /usuário inativo/, `${base.role}: ${nome}`);
     }
@@ -293,67 +293,67 @@ test('[CRM-SVC-11] um usuário INACTIVE é recusado em TODAS as 7 operações, A
   }
 });
 
-test('[CRM-SVC-12] só um AuthorizationContext EMITIDO atravessa: contexto forjado, cópia, clone, identidade simples e não-objetos são recusados em TODAS as operações, sem tocar a persistência', () => {
+test('[CRM-SVC-12] só um AuthorizationContext EMITIDO atravessa: contexto forjado, cópia, clone, identidade simples e não-objetos são recusados em TODAS as operações, sem tocar a persistência', async () => {
   const inicial = createInMemoryCrmRepository();
-  const id = semear(criarServico(inicial));
+  const id = await semear(criarServico(inicial));
   const repo = repositorioObservado(inicial);
   const servico = criarServico(repo);
   for (const [descricao, falso] of contextosNaoEmitidos()) {
     for (const [nome, , executar] of operacoes(servico, id)) {
-      assert.ok(erroDe(() => executar(falso)), `${descricao} deveria ser recusado em ${nome}`);
+      assert.ok(await erroDe(() => executar(falso)), `${descricao} deveria ser recusado em ${nome}`);
     }
   }
   assert.deepEqual(repo.chamadas, [], 'nenhum contexto falso chegou perto da persistência');
   assert.equal(inicial.list().length, 1, 'nenhum registro foi criado');
 });
 
-test('[CRM-SVC-13] a autorização vem ANTES da validação da entrada: quem não pode escrever recebe "acesso negado", nunca uma pista sobre o formato esperado', () => {
+test('[CRM-SVC-13] a autorização vem ANTES da validação da entrada: quem não pode escrever recebe "acesso negado", nunca uma pista sobre o formato esperado', async () => {
   const servico = criarServico(createInMemoryCrmRepository());
-  const id = semear(servico);
+  const id = await semear(servico);
   const lixo = [
-    () => servico.createRecord(closer(), 'lixo', { opcaoInventada: 1 }),
-    () => servico.updateRecord(closer(), 42, [1, 2, 3]),
-    () => servico.moveStatus(closer(), {}, 999),
-    () => servico.markDoNotContact(closer(), null, 'texto'),
-    () => servico.getRecord(inativo(CLOSER_USER), {}),
-    () => servico.listRecords(closer({ status: USER_STATUS.INACTIVE }), 'lixo'),
-    () => servico.getHistory('forjado', id),
+    async () => await servico.createRecord(closer(), 'lixo', { opcaoInventada: 1 }),
+    async () => await servico.updateRecord(closer(), 42, [1, 2, 3]),
+    async () => await servico.moveStatus(closer(), {}, 999),
+    async () => await servico.markDoNotContact(closer(), null, 'texto'),
+    async () => await servico.getRecord(inativo(CLOSER_USER), {}),
+    async () => await servico.listRecords(closer({ status: USER_STATUS.INACTIVE }), 'lixo'),
+    async () => await servico.getHistory('forjado', id),
   ];
   for (const chamar of lixo) {
-    const erro = erroDe(chamar);
+    const erro = await erroDe(chamar);
     assert.ok(erro);
     assert.match(erro.message, /acesso negado|usuário inativo|AuthorizationContext inválido/);
     assert.doesNotMatch(erro.message, /deve ser um|opções/);
   }
 });
 
-test('[CRM-SVC-14] ROLE != PERMISSION: um contexto com a role ADMIN mas só READ:CRM não escreve; e um sem nenhuma permissão de CRM não lê — a decisão é sempre das permissions do contexto', (t) => {
+test('[CRM-SVC-14] ROLE != PERMISSION: um contexto com a role ADMIN mas só READ:CRM não escreve; e um sem nenhuma permissão de CRM não lê — a decisão é sempre das permissions do contexto', async (t) => {
   const inicial = createInMemoryCrmRepository();
-  const id = semear(criarServico(inicial));
+  const id = await semear(criarServico(inicial));
   const servico = criarServico(inicial);
 
   const derivacao = t.mock.method(constants, 'getRolePermissions', () => Object.freeze([READ]));
   const adminSoLeitura = admin();
   assert.equal(adminSoLeitura.role, ROLE.ADMIN);
-  assert.doesNotThrow(() => servico.getRecord(adminSoLeitura, id));
+  await assert.doesNotReject(async () => await servico.getRecord(adminSoLeitura, id));
   for (const [nome, permissao, executar] of operacoes(servico, id)) {
-    if (permissao === WRITE) assert.match(erroDe(() => executar(adminSoLeitura)).message, /acesso negado/, nome);
+    if (permissao === WRITE) assert.match((await erroDe(() => executar(adminSoLeitura))).message, /acesso negado/, nome);
   }
 
   derivacao.mock.restore();
   t.mock.method(constants, 'getRolePermissions', () => Object.freeze([PERMISSION.MANAGE_USERS]));
   const adminSemCrm = admin();
   for (const [nome, , executar] of operacoes(servico, id)) {
-    assert.match(erroDe(() => executar(adminSemCrm)).message, /acesso negado/, `${nome}: sem permissão de CRM nem a leitura passa`);
+    assert.match((await erroDe(() => executar(adminSemCrm))).message, /acesso negado/, `${nome}: sem permissão de CRM nem a leitura passa`);
   }
 });
 
 // ===========================================================================
 // 3) Escalada de privilégio e identidade vinda do consumidor
 // ===========================================================================
-test('[CRM-SVC-15] userId/role/permissions/reviewedBy/authUserId/actor NUNCA são aceitos do consumidor: nem nos campos, nem nas opções — recusados, sem gravar nada', () => {
+test('[CRM-SVC-15] userId/role/permissions/reviewedBy/authUserId/actor NUNCA são aceitos do consumidor: nem nos campos, nem nas opções — recusados, sem gravar nada', async () => {
   const inicial = createInMemoryCrmRepository();
-  const id = semear(criarServico(inicial));
+  const id = await semear(criarServico(inicial));
   const repo = repositorioObservado(inicial);
   const servico = criarServico(repo);
   const antes = JSON.stringify(inicial.list());
@@ -362,28 +362,28 @@ test('[CRM-SVC-15] userId/role/permissions/reviewedBy/authUserId/actor NUNCA sã
   for (const [campo, valor] of Object.entries(injetados)) {
     // Sempre um contexto que PODERIA escrever (ADMIN): a recusa tem que ser da ENTRADA, nunca da autorização.
     const alvo = admin();
-    assert.match(erroDe(() => servico.createRecord(alvo, { empresa: 'Injetada', [campo]: valor })).message, /campos desconhecidos/, `createRecord campo ${campo}`);
-    assert.match(erroDe(() => servico.updateRecord(alvo, id, { [campo]: valor })).message, /campos desconhecidos/, `updateRecord campo ${campo}`);
-    assert.match(erroDe(() => servico.createRecord(alvo, { empresa: 'Injetada' }, { [campo]: valor })).message, /opções não reconhecidas/, `createRecord opção ${campo}`);
-    assert.match(erroDe(() => servico.moveStatus(alvo, id, CRM_STATUS.RESEARCH, { [campo]: valor })).message, /opções não reconhecidas/, `moveStatus opção ${campo}`);
-    assert.match(erroDe(() => servico.markDoNotContact(alvo, id, { [campo]: valor })).message, /opções não reconhecidas/, `markDoNotContact opção ${campo}`);
+    assert.match((await erroDe(async () => await servico.createRecord(alvo, { empresa: 'Injetada', [campo]: valor }))).message, /campos desconhecidos/, `createRecord campo ${campo}`);
+    assert.match((await erroDe(async () => await servico.updateRecord(alvo, id, { [campo]: valor }))).message, /campos desconhecidos/, `updateRecord campo ${campo}`);
+    assert.match((await erroDe(async () => await servico.createRecord(alvo, { empresa: 'Injetada' }, { [campo]: valor }))).message, /opções não reconhecidas/, `createRecord opção ${campo}`);
+    assert.match((await erroDe(async () => await servico.moveStatus(alvo, id, CRM_STATUS.RESEARCH, { [campo]: valor }))).message, /opções não reconhecidas/, `moveStatus opção ${campo}`);
+    assert.match((await erroDe(async () => await servico.markDoNotContact(alvo, id, { [campo]: valor }))).message, /opções não reconhecidas/, `markDoNotContact opção ${campo}`);
   }
   assert.equal(JSON.stringify(inicial.list()), antes, 'nada foi gravado por nenhuma tentativa');
   assert.equal(gravacoes(repo), 0);
 
   // Leituras também não aceitam opções (nenhuma é conhecida): identidade na "consulta" é recusada.
   for (const campo of Object.keys(injetados)) {
-    assert.match(erroDe(() => servico.listRecords(admin(), { [campo]: injetados[campo] })).message, /opções não reconhecidas/, `listRecords ${campo}`);
+    assert.match((await erroDe(async () => await servico.listRecords(admin(), { [campo]: injetados[campo] }))).message, /opções não reconhecidas/, `listRecords ${campo}`);
   }
 });
 
-test('[CRM-SVC-16] o `reviewedBy` e o `actor` do histórico vêm SÓ do autorizador: o operador autenticado, nunca um valor do consumidor — e o domínio recebe exatamente { actor, reviewedBy, motivo } (mais `status` só se pedido)', () => {
+test('[CRM-SVC-16] o `reviewedBy` e o `actor` do histórico vêm SÓ do autorizador: o operador autenticado, nunca um valor do consumidor — e o domínio recebe exatamente { actor, reviewedBy, motivo } (mais `status` só se pedido)', async () => {
   const chamadas = [];
   const servico = criarServico(createInMemoryCrmRepository(), { crm: dominioObservado(chamadas) });
   const ctx = admin();
-  const { record } = servico.createRecord(ctx, { empresa: 'Auditada Ltda' }, { status: CRM_STATUS.RESEARCH, reason: '  primeiro contato  ' });
-  servico.moveStatus(ctx, record.id, CRM_STATUS.CONTACTED, { reason: 'ligou' });
-  servico.markDoNotContact(ctx, record.id);
+  const { record } = await servico.createRecord(ctx, { empresa: 'Auditada Ltda' }, { status: CRM_STATUS.RESEARCH, reason: '  primeiro contato  ' });
+  await servico.moveStatus(ctx, record.id, CRM_STATUS.CONTACTED, { reason: 'ligou' });
+  await servico.markDoNotContact(ctx, record.id);
 
   const [criar, mover, bloquear] = chamadas.filter(([nome]) => ['createRecord', 'moveStatus', 'markDoNotContact'].includes(nome));
   assert.deepEqual(Object.keys(criar[1][2]).sort(), ['actor', 'motivo', 'reviewedBy', 'status']);
@@ -392,24 +392,24 @@ test('[CRM-SVC-16] o `reviewedBy` e o `actor` do histórico vêm SÓ do autoriza
   assert.deepEqual(mover[1][3], { actor: ACTOR.HUMAN, reviewedBy: OPERADOR_ADMIN, motivo: 'ligou' });
   assert.deepEqual(bloquear[1][2], { actor: ACTOR.HUMAN, reviewedBy: OPERADOR_ADMIN, motivo: undefined });
 
-  const historico = servico.getHistory(ctx, record.id);
+  const historico = await servico.getHistory(ctx, record.id);
   assert.deepEqual(historico.map((entrada) => entrada.reviewedBy), [OPERADOR_ADMIN, OPERADOR_ADMIN, OPERADOR_ADMIN]);
   assert.deepEqual(historico.map((entrada) => entrada.actor), [ACTOR.HUMAN, ACTOR.HUMAN, ACTOR.HUMAN]);
 });
 
-test('[CRM-SVC-17] o histórico guarda o operador de CADA escrita (ADMIN diferente por operação): nunca o do último, nunca o do primeiro', () => {
+test('[CRM-SVC-17] o histórico guarda o operador de CADA escrita (ADMIN diferente por operação): nunca o do último, nunca o do primeiro', async () => {
   const servico = criarServico(createInMemoryCrmRepository());
   const outroAdmin = { userId: 'user-admin-2', authUserId: 'auth-admin-2', name: 'Outro Administrador', email: 'admin2-crm@example.test', role: ROLE.ADMIN };
-  const { record } = servico.createRecord(admin(), { empresa: 'Duas Mãos Ltda' });
-  servico.moveStatus(createAuthorizationContext(usuario(outroAdmin)), record.id, CRM_STATUS.RESEARCH);
-  const historico = servico.getHistory(admin(), record.id);
+  const { record } = await servico.createRecord(admin(), { empresa: 'Duas Mãos Ltda' });
+  await servico.moveStatus(createAuthorizationContext(usuario(outroAdmin)), record.id, CRM_STATUS.RESEARCH);
+  const historico = await servico.getHistory(admin(), record.id);
   assert.equal(historico[0].reviewedBy.userId, ADMIN_USER.userId);
   assert.equal(historico[1].reviewedBy.userId, 'user-admin-2');
 });
 
-test('[CRM-SVC-18] um autorizador DEFEITUOSO nunca autoriza: false, undefined, texto, lista, Promise, campos a mais (permissions/authUserId), campos faltando/vazios e a role SYSTEM são recusas — em todas as operações, sem tocar a persistência', () => {
+test('[CRM-SVC-18] um autorizador DEFEITUOSO nunca autoriza: false, undefined, texto, lista, Promise, campos a mais (permissions/authUserId), campos faltando/vazios e a role SYSTEM são recusas — em todas as operações, sem tocar a persistência', async () => {
   const inicial = createInMemoryCrmRepository();
-  const id = semear(criarServico(inicial));
+  const id = await semear(criarServico(inicial));
   const identidadeOk = { userId: 'u', name: 'n', role: 'ADMIN' };
   const defeituosos = [
     ['false', () => false],
@@ -433,13 +433,13 @@ test('[CRM-SVC-18] um autorizador DEFEITUOSO nunca autoriza: false, undefined, t
     const repo = repositorioObservado(inicial);
     const servico = criarServico(repo, { authorizeOperation: autorizador });
     for (const [operacao, , executar] of operacoes(servico, id)) {
-      assert.match(erroDe(() => executar(admin())).message, /autorização recusada/, `${nome}: ${operacao}`);
+      assert.match((await erroDe(() => executar(admin()))).message, /autorização recusada/, `${nome}: ${operacao}`);
     }
     assert.deepEqual(repo.chamadas, [], `${nome}: a persistência não foi tocada`);
   }
 });
 
-test('[CRM-SVC-19] o erro de um autorizador que LANÇA passa intacto (mesma classe, mesma mensagem), e a identidade devolvida é COPIADA: alterar o objeto do autorizador depois não muda o histórico', () => {
+test('[CRM-SVC-19] o erro de um autorizador que LANÇA passa intacto (mesma classe, mesma mensagem), e a identidade devolvida é COPIADA: alterar o objeto do autorizador depois não muda o histórico', async () => {
   class ErroDeAutorizacao extends Error {}
   const inicial = createInMemoryCrmRepository();
   const negador = criarServico(inicial, {
@@ -447,69 +447,69 @@ test('[CRM-SVC-19] o erro de um autorizador que LANÇA passa intacto (mesma clas
       throw new ErroDeAutorizacao('negado pela política do autorizador');
     },
   });
-  const erro = erroDe(() => negador.listRecords(admin()));
+  const erro = await erroDe(async () => await negador.listRecords(admin()));
   assert.ok(erro instanceof ErroDeAutorizacao);
   assert.equal(erro.message, 'negado pela política do autorizador');
 
   const compartilhada = { userId: 'user-compartilhado', name: 'Compartilhado', role: 'ADMIN' };
   const servico = criarServico(inicial, { authorizeOperation: () => compartilhada });
-  const { record } = servico.createRecord(admin(), { empresa: 'Cópia Ltda' });
+  const { record } = await servico.createRecord(admin(), { empresa: 'Cópia Ltda' });
   compartilhada.role = 'ALTERADA-DEPOIS';
   compartilhada.userId = 'outro-usuario';
-  assert.deepEqual(servico.getHistory(admin(), record.id)[0].reviewedBy, { userId: 'user-compartilhado', name: 'Compartilhado', role: 'ADMIN' });
+  assert.deepEqual((await servico.getHistory(admin(), record.id))[0].reviewedBy, { userId: 'user-compartilhado', name: 'Compartilhado', role: 'ADMIN' });
 });
 
-test('[CRM-SVC-20] LIMITE documentado: o Service obedece ao autorizador que recebe (quem o compõe o escolhe) — um autorizador permissivo autoriza tudo; por isso a composição real usa só a ponte de src/auth', () => {
+test('[CRM-SVC-20] LIMITE documentado: o Service obedece ao autorizador que recebe (quem o compõe o escolhe) — um autorizador permissivo autoriza tudo; por isso a composição real usa só a ponte de src/auth', async () => {
   const servico = criarServico(createInMemoryCrmRepository(), { authorizeOperation: () => ({ userId: 'qualquer', name: 'Qualquer', role: 'ADMIN' }) });
-  assert.doesNotThrow(() => servico.createRecord('não é um contexto', { empresa: 'Permissiva Ltda' }));
+  await assert.doesNotReject(async () => await servico.createRecord('não é um contexto', { empresa: 'Permissiva Ltda' }));
 });
 
 // ===========================================================================
 // 4) Leituras
 // ===========================================================================
-test('[CRM-SVC-21] listRecords devolve TODOS os registros como projeções (incluindo os bloqueados), vazio quando não há nenhum, e só aceita "nenhuma opção"', () => {
+test('[CRM-SVC-21] listRecords devolve TODOS os registros como projeções (incluindo os bloqueados), vazio quando não há nenhum, e só aceita "nenhuma opção"', async () => {
   const servico = criarServico(createInMemoryCrmRepository());
-  assert.deepEqual(servico.listRecords(closer()), []);
-  const a = semear(servico, { empresa: 'A', site: 'a.example.test' });
-  semear(servico, { empresa: 'B', site: 'b.example.test' });
-  servico.markDoNotContact(admin(), a);
-  const lista = servico.listRecords(closer());
+  assert.deepEqual(await servico.listRecords(closer()), []);
+  const a = await semear(servico, { empresa: 'A', site: 'a.example.test' });
+  await semear(servico, { empresa: 'B', site: 'b.example.test' });
+  await servico.markDoNotContact(admin(), a);
+  const lista = await servico.listRecords(closer());
   assert.equal(lista.length, 2);
   assert.deepEqual(lista.map((registro) => registro.empresa).sort(), ['A', 'B']);
   assert.equal(lista.find((registro) => registro.empresa === 'A').status, CRM_STATUS.DO_NOT_CONTACT);
 
-  for (const semOpcao of [undefined, null, {}]) assert.doesNotThrow(() => servico.listRecords(closer(), semOpcao));
+  for (const semOpcao of [undefined, null, {}]) await assert.doesNotReject(async () => await servico.listRecords(closer(), semOpcao));
   for (const invalida of ['texto', 42, [], { estado: 'PROSPECT' }, { status: 'PROSPECT' }]) {
-    assert.ok(erroDe(() => servico.listRecords(closer(), invalida)), JSON.stringify(invalida));
+    assert.ok(await erroDe(async () => await servico.listRecords(closer(), invalida)), JSON.stringify(invalida));
   }
 });
 
-test('[CRM-SVC-22] getRecord devolve a projeção do registro, null para um id inexistente, e uma CÓPIA: alterar o retorno nunca muda o que está guardado', () => {
+test('[CRM-SVC-22] getRecord devolve a projeção do registro, null para um id inexistente, e uma CÓPIA: alterar o retorno nunca muda o que está guardado', async () => {
   const inicial = createInMemoryCrmRepository();
   const servico = criarServico(inicial);
-  const id = semear(servico);
-  assert.equal(servico.getRecord(closer(), 'crm:nao-existe'), null);
+  const id = await semear(servico);
+  assert.equal(await servico.getRecord(closer(), 'crm:nao-existe'), null);
 
-  const lido = servico.getRecord(closer(), id);
+  const lido = await servico.getRecord(closer(), id);
   assert.equal(lido.id, id);
   assert.equal(lido.empresa, 'Semente Ltda');
   lido.empresa = 'Adulterada';
   lido.historico.push({ falso: true });
   lido.historico[0].reviewedBy.role = 'ADULTERADA';
-  assert.equal(servico.getRecord(closer(), id).empresa, 'Semente Ltda');
-  assert.equal(servico.getRecord(closer(), id).historico.length, 1);
-  assert.equal(servico.getRecord(closer(), id).historico[0].reviewedBy.role, ROLE.ADMIN);
-  assert.notEqual(servico.getRecord(closer(), id), servico.getRecord(closer(), id), 'cada leitura é um objeto novo');
+  assert.equal((await servico.getRecord(closer(), id)).empresa, 'Semente Ltda');
+  assert.equal((await servico.getRecord(closer(), id)).historico.length, 1);
+  assert.equal((await servico.getRecord(closer(), id)).historico[0].reviewedBy.role, ROLE.ADMIN);
+  assert.notEqual(await servico.getRecord(closer(), id), await servico.getRecord(closer(), id), 'cada leitura é um objeto novo');
 });
 
-test('[CRM-SVC-23] getHistory devolve a trilha (uma entrada por criação/mudança de status, em ordem, só crescendo) e recusa um registro inexistente', () => {
+test('[CRM-SVC-23] getHistory devolve a trilha (uma entrada por criação/mudança de status, em ordem, só crescendo) e recusa um registro inexistente', async () => {
   const servico = criarServico(createInMemoryCrmRepository());
-  const id = semear(servico);
-  servico.moveStatus(admin(), id, CRM_STATUS.RESEARCH, { reason: 'começou' });
-  servico.updateRecord(admin(), id, { observacoes: 'editar campos não gera histórico (limite documentado)' });
-  servico.moveStatus(admin(), id, CRM_STATUS.CONTACTED);
+  const id = await semear(servico);
+  await servico.moveStatus(admin(), id, CRM_STATUS.RESEARCH, { reason: 'começou' });
+  await servico.updateRecord(admin(), id, { observacoes: 'editar campos não gera histórico (limite documentado)' });
+  await servico.moveStatus(admin(), id, CRM_STATUS.CONTACTED);
 
-  const historico = servico.getHistory(closer(), id);
+  const historico = await servico.getHistory(closer(), id);
   assert.deepEqual(historico.map((entrada) => [entrada.from, entrada.to]), [[null, 'PROSPECT'], ['PROSPECT', 'RESEARCH'], ['RESEARCH', 'CONTACTED']]);
   assert.equal(historico[1].motivo, 'começou');
   assert.equal(historico[2].motivo, null);
@@ -517,30 +517,30 @@ test('[CRM-SVC-23] getHistory devolve a trilha (uma entrada por criação/mudan�
     assert.deepEqual(Object.keys(entrada).sort(), ['actor', 'from', 'motivo', 'reviewedBy', 'timestamp', 'to']);
     assert.ok(!Number.isNaN(Date.parse(entrada.timestamp)), 'timestamp ISO');
   }
-  assert.match(erroDe(() => servico.getHistory(closer(), 'crm:nao-existe')).message, /registro não encontrado/);
+  assert.match((await erroDe(async () => await servico.getHistory(closer(), 'crm:nao-existe'))).message, /registro não encontrado/);
   historico.push({ falso: true });
-  assert.equal(servico.getHistory(closer(), id).length, 3, 'cópia: alterar o retorno não muda o histórico');
+  assert.equal((await servico.getHistory(closer(), id)).length, 3, 'cópia: alterar o retorno não muda o histórico');
 });
 
-test('[CRM-SVC-24] as leituras NUNCA gravam: nenhuma das 3 leituras chama save() na persistência', () => {
+test('[CRM-SVC-24] as leituras NUNCA gravam: nenhuma das 3 leituras chama save() na persistência', async () => {
   const inicial = createInMemoryCrmRepository();
-  const id = semear(criarServico(inicial));
+  const id = await semear(criarServico(inicial));
   const repo = repositorioObservado(inicial);
   const servico = criarServico(repo);
-  servico.listRecords(closer());
-  servico.getRecord(closer(), id);
-  servico.getHistory(closer(), id);
-  servico.getRecord(closer(), 'crm:nao-existe');
+  await servico.listRecords(closer());
+  await servico.getRecord(closer(), id);
+  await servico.getHistory(closer(), id);
+  await servico.getRecord(closer(), 'crm:nao-existe');
   assert.equal(gravacoes(repo), 0);
 });
 
 // ===========================================================================
 // 5) Escritas — criar, atualizar, mover status, DNC
 // ===========================================================================
-test('[CRM-SVC-25] createRecord (ADMIN): grava no repositório, devolve a projeção com EXATAMENTE os campos do modelo, e a primeira entrada do histórico traz o operador e o motivo (sem espaços nas pontas)', () => {
+test('[CRM-SVC-25] createRecord (ADMIN): grava no repositório, devolve a projeção com EXATAMENTE os campos do modelo, e a primeira entrada do histórico traz o operador e o motivo (sem espaços nas pontas)', async () => {
   const inicial = createInMemoryCrmRepository();
   const servico = criarServico(inicial);
-  const { record, duplicidade } = servico.createRecord(admin(), { empresa: 'Consultório Novo', cidade: 'Petrópolis', valorProposta: 1500 }, { reason: ' abertura do lead ' });
+  const { record, duplicidade } = await servico.createRecord(admin(), { empresa: 'Consultório Novo', cidade: 'Petrópolis', valorProposta: 1500 }, { reason: ' abertura do lead ' });
   assert.equal(duplicidade, null);
   assert.deepEqual(Object.keys(record).sort(), ['id', ...CRM_WRITABLE_FIELDS, 'status', 'dataDeEntrada', 'historico'].sort());
   assert.match(record.id, /^crm:/);
@@ -552,15 +552,15 @@ test('[CRM-SVC-25] createRecord (ADMIN): grava no repositório, devolve a proje�
   assert.equal(inicial.getById(record.id).empresa, 'Consultório Novo', 'gravou de fato');
 });
 
-test('[CRM-SVC-26] createRecord: o status inicial é opcional e validado pelo domínio; o motivo só aceita texto; entradas que não são um objeto simples são recusadas ANTES de tocar a persistência', () => {
+test('[CRM-SVC-26] createRecord: o status inicial é opcional e validado pelo domínio; o motivo só aceita texto; entradas que não são um objeto simples são recusadas ANTES de tocar a persistência', async () => {
   const inicial = createInMemoryCrmRepository();
   const repo = repositorioObservado(inicial);
   const servico = criarServico(repo);
-  assert.equal(servico.createRecord(admin(), { empresa: 'X1' }, { status: CRM_STATUS.QUALIFIED_PROSPECT }).record.status, CRM_STATUS.QUALIFIED_PROSPECT);
-  assert.equal(servico.createRecord(admin(), { empresa: 'X2' }, { status: null }).record.status, CRM_STATUS.PROSPECT);
-  assert.match(erroDe(() => servico.createRecord(admin(), { empresa: 'X3' }, { status: 'INVENTADO' })).message, /status desconhecido/);
-  assert.match(erroDe(() => servico.createRecord(admin(), { empresa: 'X4' }, { status: 42 })).message, /status deve ser um texto/);
-  assert.match(erroDe(() => servico.createRecord(admin(), { empresa: 'X5' }, { reason: 42 })).message, /reason deve ser um texto/);
+  assert.equal((await servico.createRecord(admin(), { empresa: 'X1' }, { status: CRM_STATUS.QUALIFIED_PROSPECT })).record.status, CRM_STATUS.QUALIFIED_PROSPECT);
+  assert.equal((await servico.createRecord(admin(), { empresa: 'X2' }, { status: null })).record.status, CRM_STATUS.PROSPECT);
+  assert.match((await erroDe(async () => await servico.createRecord(admin(), { empresa: 'X3' }, { status: 'INVENTADO' }))).message, /status desconhecido/);
+  assert.match((await erroDe(async () => await servico.createRecord(admin(), { empresa: 'X4' }, { status: 42 }))).message, /status deve ser um texto/);
+  assert.match((await erroDe(async () => await servico.createRecord(admin(), { empresa: 'X5' }, { reason: 42 }))).message, /reason deve ser um texto/);
 
   repo.chamadas.length = 0;
   class Modelo { constructor() { this.empresa = 'Instância de classe'; } }
@@ -568,34 +568,34 @@ test('[CRM-SVC-26] createRecord: o status inicial é opcional e validado pelo do
   // (Um Proxy de um objeto simples NÃO entra aqui: é indistinguível de um objeto simples e inofensivo — o domínio lê
   // cada campo uma única vez e valida o valor lido; o que uma armadilha devolver numa segunda leitura nunca é usado.)
   for (const invalida of [undefined, null, 'texto', 42, [], [{ empresa: 'x' }], new Modelo(), heranca, () => ({})]) {
-    const erro = erroDe(() => servico.createRecord(admin(), invalida));
+    const erro = await erroDe(async () => await servico.createRecord(admin(), invalida));
     assert.ok(erro, `${String(invalida)} deveria ser recusado`);
     assert.match(erro.message, /input deve ser um objeto simples/);
   }
   for (const opcoesInvalidas of ['texto', 42, [], new Modelo(), Object.create({ reason: 'herdada' })]) {
-    assert.match(erroDe(() => servico.createRecord(admin(), { empresa: 'X6' }, opcoesInvalidas)).message, /opções devem ser um objeto simples/);
+    assert.match((await erroDe(async () => await servico.createRecord(admin(), { empresa: 'X6' }, opcoesInvalidas))).message, /opções devem ser um objeto simples/);
   }
   assert.deepEqual(repo.chamadas, [], 'entrada inválida nunca chega à persistência');
   assert.equal(inicial.list().length, 2, 'só os dois válidos foram criados');
 });
 
-test('[CRM-SVC-27] as regras de campo são do DOMÍNIO e passam intactas: empresa obrigatória, campos desconhecidos e gerenciados, tipos (valor numérico >= 0), espaços nas pontas', () => {
+test('[CRM-SVC-27] as regras de campo são do DOMÍNIO e passam intactas: empresa obrigatória, campos desconhecidos e gerenciados, tipos (valor numérico >= 0), espaços nas pontas', async () => {
   const servico = criarServico(createInMemoryCrmRepository());
-  assert.match(erroDe(() => servico.createRecord(admin(), {})).message, /exige "empresa"/);
-  assert.match(erroDe(() => servico.createRecord(admin(), { empresa: '   ' })).message, /exige "empresa"/);
-  assert.match(erroDe(() => servico.createRecord(admin(), { empresa: 'x', bogus: 1 })).message, /campos desconhecidos: bogus/);
+  assert.match((await erroDe(async () => await servico.createRecord(admin(), {}))).message, /exige "empresa"/);
+  assert.match((await erroDe(async () => await servico.createRecord(admin(), { empresa: '   ' }))).message, /exige "empresa"/);
+  assert.match((await erroDe(async () => await servico.createRecord(admin(), { empresa: 'x', bogus: 1 }))).message, /campos desconhecidos: bogus/);
   for (const gerenciado of ['id', 'status', 'dataDeEntrada', 'historico']) {
-    assert.match(erroDe(() => servico.createRecord(admin(), { empresa: 'x', [gerenciado]: 'y' })).message, /gerenciados pelo domínio/, gerenciado);
+    assert.match((await erroDe(async () => await servico.createRecord(admin(), { empresa: 'x', [gerenciado]: 'y' }))).message, /gerenciados pelo domínio/, gerenciado);
   }
-  assert.match(erroDe(() => servico.createRecord(admin(), { empresa: 'x', valorProposta: -1 })).message, /valorProposta/);
-  assert.match(erroDe(() => servico.createRecord(admin(), { empresa: 'x', valorTotal: '100' })).message, /valorTotal/);
-  assert.equal(servico.createRecord(admin(), { empresa: '  Com Espaços  ', site: '  espacos.example.test  ' }).record.site, 'espacos.example.test');
+  assert.match((await erroDe(async () => await servico.createRecord(admin(), { empresa: 'x', valorProposta: -1 }))).message, /valorProposta/);
+  assert.match((await erroDe(async () => await servico.createRecord(admin(), { empresa: 'x', valorTotal: '100' }))).message, /valorTotal/);
+  assert.equal((await servico.createRecord(admin(), { empresa: '  Com Espaços  ', site: '  espacos.example.test  ' })).record.site, 'espacos.example.test');
 });
 
-test('[CRM-SVC-28] DEDUPLICAÇÃO via Service: identidade forte idêntica (site, telefone, instagram — inclusive com espaços e telefone×whatsapp cruzados) NÃO cria um segundo registro; nome+cidade cria e avisa', () => {
+test('[CRM-SVC-28] DEDUPLICAÇÃO via Service: identidade forte idêntica (site, telefone, instagram — inclusive com espaços e telefone×whatsapp cruzados) NÃO cria um segundo registro; nome+cidade cria e avisa', async () => {
   const inicial = createInMemoryCrmRepository();
   const servico = criarServico(inicial);
-  servico.createRecord(admin(), { empresa: 'Original', site: 'original.example.test', telefone: '24911110000', whatsapp: '24922220000', instagram: 'original.perfil', cidade: 'Petrópolis' });
+  await servico.createRecord(admin(), { empresa: 'Original', site: 'original.example.test', telefone: '24911110000', whatsapp: '24922220000', instagram: 'original.perfil', cidade: 'Petrópolis' });
 
   const tentativas = [
     { empresa: 'Cópia site', site: 'https://WWW.Original.example.test/x' },
@@ -606,33 +606,33 @@ test('[CRM-SVC-28] DEDUPLICAÇÃO via Service: identidade forte idêntica (site,
     { empresa: 'Cópia instagram', instagram: '@Original.Perfil' },
   ];
   for (const campos of tentativas) {
-    assert.match(erroDe(() => servico.createRecord(admin(), campos)).message, /mesma identidade/, campos.empresa);
+    assert.match((await erroDe(async () => await servico.createRecord(admin(), campos))).message, /mesma identidade/, campos.empresa);
   }
   assert.equal(inicial.list().length, 1, 'nenhuma tentativa criou um segundo registro');
 
-  const { record, duplicidade } = servico.createRecord(admin(), { empresa: 'Original', cidade: 'Petrópolis' });
+  const { record, duplicidade } = await servico.createRecord(admin(), { empresa: 'Original', cidade: 'Petrópolis' });
   assert.equal(inicial.list().length, 2, 'só nome+cidade: cria (preferir falso negativo)');
   assert.equal(duplicidade.status, 'POSSIVEL_DUPLICADO');
   assert.deepEqual(duplicidade.matchedOn, ['nome_cidade']);
   assert.notEqual(record.id, duplicidade.matchedRecordId);
 });
 
-test('[CRM-SVC-29] o aviso de possível duplicidade é MÍNIMO: só { status, matchedOn, matchedRecordId } — nunca o registro inteiro de OUTRA empresa dentro da resposta de uma criação', () => {
+test('[CRM-SVC-29] o aviso de possível duplicidade é MÍNIMO: só { status, matchedOn, matchedRecordId } — nunca o registro inteiro de OUTRA empresa dentro da resposta de uma criação', async () => {
   const servico = criarServico(createInMemoryCrmRepository());
-  const { record: primeiro } = servico.createRecord(admin(), { empresa: 'Sigilosa Ltda', cidade: 'Niterói', observacoes: 'dado interno que não deve vazar', telefone: '24900001111' });
-  const { duplicidade } = servico.createRecord(admin(), { empresa: 'Sigilosa Ltda', cidade: 'Niterói' });
+  const { record: primeiro } = await servico.createRecord(admin(), { empresa: 'Sigilosa Ltda', cidade: 'Niterói', observacoes: 'dado interno que não deve vazar', telefone: '24900001111' });
+  const { duplicidade } = await servico.createRecord(admin(), { empresa: 'Sigilosa Ltda', cidade: 'Niterói' });
   assert.deepEqual(Object.keys(duplicidade).sort(), ['matchedOn', 'matchedRecordId', 'status']);
   assert.equal(duplicidade.matchedRecordId, primeiro.id);
   const texto = JSON.stringify(duplicidade);
   for (const vazado of ['dado interno', '24900001111', 'observacoes', 'telefone']) assert.ok(!texto.includes(vazado), `não pode conter ${vazado}`);
 });
 
-test('[CRM-SVC-30] updateRecord (ADMIN): altera só os campos enviados, preserva o resto e o histórico; campos gerenciados/desconhecidos são recusados; um patch inválido nunca chega à persistência', () => {
+test('[CRM-SVC-30] updateRecord (ADMIN): altera só os campos enviados, preserva o resto e o histórico; campos gerenciados/desconhecidos são recusados; um patch inválido nunca chega à persistência', async () => {
   const inicial = createInMemoryCrmRepository();
   const repo = repositorioObservado(inicial);
   const servico = criarServico(repo);
-  const id = semear(servico, { empresa: 'Editável Ltda', cidade: 'Petrópolis' });
-  const atualizado = servico.updateRecord(admin(), id, { telefone: '24999990000', observacoes: 'nota' });
+  const id = await semear(servico, { empresa: 'Editável Ltda', cidade: 'Petrópolis' });
+  const atualizado = await servico.updateRecord(admin(), id, { telefone: '24999990000', observacoes: 'nota' });
   assert.equal(atualizado.telefone, '24999990000');
   assert.equal(atualizado.observacoes, 'nota');
   assert.equal(atualizado.cidade, 'Petrópolis');
@@ -640,115 +640,115 @@ test('[CRM-SVC-30] updateRecord (ADMIN): altera só os campos enviados, preserva
   assert.equal(atualizado.historico.length, 1, 'editar campos não mexe no histórico (limite documentado)');
 
   for (const gerenciado of ['id', 'status', 'dataDeEntrada', 'historico']) {
-    assert.match(erroDe(() => servico.updateRecord(admin(), id, { [gerenciado]: 'x' })).message, /gerenciados pelo domínio/, gerenciado);
+    assert.match((await erroDe(async () => await servico.updateRecord(admin(), id, { [gerenciado]: 'x' }))).message, /gerenciados pelo domínio/, gerenciado);
   }
-  assert.match(erroDe(() => servico.updateRecord(admin(), id, { bogus: 1 })).message, /campos desconhecidos/);
-  assert.match(erroDe(() => servico.updateRecord(admin(), id, { empresa: '  ' })).message, /"empresa" vazia/);
+  assert.match((await erroDe(async () => await servico.updateRecord(admin(), id, { bogus: 1 }))).message, /campos desconhecidos/);
+  assert.match((await erroDe(async () => await servico.updateRecord(admin(), id, { empresa: '  ' }))).message, /"empresa" vazia/);
 
   const antes = gravacoes(repo);
   for (const invalido of [undefined, null, 'texto', [], Object.create({ observacoes: 'herdada' })]) {
-    assert.match(erroDe(() => servico.updateRecord(admin(), id, invalido)).message, /patch deve ser um objeto simples/);
+    assert.match((await erroDe(async () => await servico.updateRecord(admin(), id, invalido))).message, /patch deve ser um objeto simples/);
   }
   assert.equal(gravacoes(repo), antes, 'patch inválido não gravou');
 });
 
-test('[CRM-SVC-31] EDITAR a identidade não contorna o DNC nem a deduplicação via Service (a brecha do domínio corrigida nesta etapa)', () => {
+test('[CRM-SVC-31] EDITAR a identidade não contorna o DNC nem a deduplicação via Service (a brecha do domínio corrigida nesta etapa)', async () => {
   const servico = criarServico(createInMemoryCrmRepository());
-  const bloqueado = semear(servico, { empresa: 'Bloqueada Ltda', site: 'bloqueada.example.test', telefone: '24933334444' });
-  servico.markDoNotContact(admin(), bloqueado);
-  const outro = semear(servico, { empresa: 'Outra Ltda', site: 'outra.example.test' });
-  const ativo = semear(servico, { empresa: 'Ativa Ltda', site: 'ativa.example.test' });
+  const bloqueado = await semear(servico, { empresa: 'Bloqueada Ltda', site: 'bloqueada.example.test', telefone: '24933334444' });
+  await servico.markDoNotContact(admin(), bloqueado);
+  const outro = await semear(servico, { empresa: 'Outra Ltda', site: 'outra.example.test' });
+  const ativo = await semear(servico, { empresa: 'Ativa Ltda', site: 'ativa.example.test' });
 
-  assert.match(erroDe(() => servico.updateRecord(admin(), ativo, { site: '  bloqueada.example.test  ' })).message, /bloqueado como DO_NOT_CONTACT/);
-  assert.match(erroDe(() => servico.updateRecord(admin(), ativo, { whatsapp: '24933334444' })).message, /bloqueado como DO_NOT_CONTACT/, 'o telefone do bloqueado, agora como whatsapp');
-  assert.match(erroDe(() => servico.updateRecord(admin(), ativo, { site: 'outra.example.test' })).message, /coincide com a de outro registro/);
-  assert.equal(servico.getRecord(admin(), ativo).site, 'ativa.example.test');
-  assert.equal(servico.getRecord(admin(), outro).site, 'outra.example.test');
+  assert.match((await erroDe(async () => await servico.updateRecord(admin(), ativo, { site: '  bloqueada.example.test  ' }))).message, /bloqueado como DO_NOT_CONTACT/);
+  assert.match((await erroDe(async () => await servico.updateRecord(admin(), ativo, { whatsapp: '24933334444' }))).message, /bloqueado como DO_NOT_CONTACT/, 'o telefone do bloqueado, agora como whatsapp');
+  assert.match((await erroDe(async () => await servico.updateRecord(admin(), ativo, { site: 'outra.example.test' }))).message, /coincide com a de outro registro/);
+  assert.equal((await servico.getRecord(admin(), ativo)).site, 'ativa.example.test');
+  assert.equal((await servico.getRecord(admin(), outro)).site, 'outra.example.test');
 });
 
-test('[CRM-SVC-32] moveStatus (ADMIN): aplica a máquina de estados do DOMÍNIO e registra a transição no histórico; transições proibidas, status inventado e destino que não é texto são recusados', () => {
+test('[CRM-SVC-32] moveStatus (ADMIN): aplica a máquina de estados do DOMÍNIO e registra a transição no histórico; transições proibidas, status inventado e destino que não é texto são recusados', async () => {
   const inicial = createInMemoryCrmRepository();
   const repo = repositorioObservado(inicial);
   const servico = criarServico(repo);
-  const id = semear(servico);
+  const id = await semear(servico);
 
-  const movido = servico.moveStatus(admin(), id, CRM_STATUS.NEGOTIATION, { reason: 'proposta aceita para negociar' });
+  const movido = await servico.moveStatus(admin(), id, CRM_STATUS.NEGOTIATION, { reason: 'proposta aceita para negociar' });
   assert.equal(movido.status, CRM_STATUS.NEGOTIATION);
   assert.deepEqual(movido.historico.at(-1), { timestamp: movido.historico.at(-1).timestamp, from: 'PROSPECT', to: 'NEGOTIATION', actor: 'HUMAN', reviewedBy: OPERADOR_ADMIN, motivo: 'proposta aceita para negociar' });
-  assert.equal(servico.moveStatus(admin(), id, CRM_STATUS.QUALIFICATION).status, CRM_STATUS.QUALIFICATION, 'o funil também volta');
+  assert.equal((await servico.moveStatus(admin(), id, CRM_STATUS.QUALIFICATION)).status, CRM_STATUS.QUALIFICATION, 'o funil também volta');
 
-  const ganho = servico.moveStatus(admin(), id, CRM_STATUS.WON);
+  const ganho = await servico.moveStatus(admin(), id, CRM_STATUS.WON);
   assert.equal(ganho.status, CRM_STATUS.WON);
-  assert.match(erroDe(() => servico.moveStatus(admin(), id, CRM_STATUS.PROSPECT)).message, /transição não permitida: WON -> PROSPECT/);
-  assert.match(erroDe(() => servico.moveStatus(admin(), id, CRM_STATUS.LOST)).message, /transição não permitida/);
-  assert.match(erroDe(() => servico.moveStatus(admin(), id, 'ESTADO_INVENTADO')).message, /status desconhecido/);
+  assert.match((await erroDe(async () => await servico.moveStatus(admin(), id, CRM_STATUS.PROSPECT))).message, /transição não permitida: WON -> PROSPECT/);
+  assert.match((await erroDe(async () => await servico.moveStatus(admin(), id, CRM_STATUS.LOST))).message, /transição não permitida/);
+  assert.match((await erroDe(async () => await servico.moveStatus(admin(), id, 'ESTADO_INVENTADO'))).message, /status desconhecido/);
 
   const antes = gravacoes(repo);
   for (const naoTexto of [undefined, null, 42, {}, [], CRM_STATUS]) {
-    assert.match(erroDe(() => servico.moveStatus(admin(), id, naoTexto)).message, /status de destino deve ser um texto/, String(naoTexto));
+    assert.match((await erroDe(async () => await servico.moveStatus(admin(), id, naoTexto))).message, /status de destino deve ser um texto/, String(naoTexto));
   }
-  assert.match(erroDe(() => servico.moveStatus(admin(), id, CRM_STATUS.LOST, { reason: 42 })).message, /reason deve ser um texto/);
+  assert.match((await erroDe(async () => await servico.moveStatus(admin(), id, CRM_STATUS.LOST, { reason: 42 }))).message, /reason deve ser um texto/);
   assert.equal(gravacoes(repo), antes, 'nada disso gravou');
   assert.equal(inicial.getById(id).status, CRM_STATUS.WON);
 });
 
-test('[CRM-SVC-33] DO_NOT_CONTACT via Service: o ADMIN bloqueia; o bloqueio é TERMINAL — nenhum destino, nenhuma edição, nenhuma reentrada com a mesma identidade — e o motivo fica no histórico', () => {
+test('[CRM-SVC-33] DO_NOT_CONTACT via Service: o ADMIN bloqueia; o bloqueio é TERMINAL — nenhum destino, nenhuma edição, nenhuma reentrada com a mesma identidade — e o motivo fica no histórico', async () => {
   const inicial = createInMemoryCrmRepository();
   const servico = criarServico(inicial);
-  const id = semear(servico, { empresa: 'Pediu Para Sair', site: 'saiu.example.test', telefone: '24955556666' });
-  const bloqueado = servico.markDoNotContact(admin(), id, { reason: 'pediu para não ser mais contatado' });
+  const id = await semear(servico, { empresa: 'Pediu Para Sair', site: 'saiu.example.test', telefone: '24955556666' });
+  const bloqueado = await servico.markDoNotContact(admin(), id, { reason: 'pediu para não ser mais contatado' });
   assert.equal(bloqueado.status, CRM_STATUS.DO_NOT_CONTACT);
   assert.equal(bloqueado.historico.at(-1).motivo, 'pediu para não ser mais contatado');
   assert.deepEqual(bloqueado.historico.at(-1).reviewedBy, OPERADOR_ADMIN);
 
   for (const destino of Object.values(CRM_STATUS)) {
-    assert.match(erroDe(() => servico.moveStatus(admin(), id, destino)).message, /transição não permitida/, `DNC -> ${destino}`);
+    assert.match((await erroDe(async () => await servico.moveStatus(admin(), id, destino))).message, /transição não permitida/, `DNC -> ${destino}`);
   }
-  assert.match(erroDe(() => servico.markDoNotContact(admin(), id)).message, /transição não permitida/, 'marcar de novo também é recusado');
-  assert.match(erroDe(() => servico.updateRecord(admin(), id, { observacoes: 'reabrir' })).message, /não pode ser atualizado/);
+  assert.match((await erroDe(async () => await servico.markDoNotContact(admin(), id))).message, /transição não permitida/, 'marcar de novo também é recusado');
+  assert.match((await erroDe(async () => await servico.updateRecord(admin(), id, { observacoes: 'reabrir' }))).message, /não pode ser atualizado/);
   for (const reentrada of [{ empresa: 'Reentrada por site', site: '  saiu.example.test ' }, { empresa: 'Reentrada por telefone', telefone: '24955556666' }, { empresa: 'Reentrada por whatsapp', whatsapp: '24955556666' }]) {
-    assert.match(erroDe(() => servico.createRecord(admin(), reentrada)).message, /bloqueada como DO_NOT_CONTACT/, reentrada.empresa);
+    assert.match((await erroDe(async () => await servico.createRecord(admin(), reentrada))).message, /bloqueada como DO_NOT_CONTACT/, reentrada.empresa);
   }
   assert.equal(inicial.list().length, 1, 'nenhuma reentrada criou um registro');
-  assert.equal(servico.getRecord(closer(), id).status, CRM_STATUS.DO_NOT_CONTACT);
+  assert.equal((await servico.getRecord(closer(), id)).status, CRM_STATUS.DO_NOT_CONTACT);
 });
 
-test('[CRM-SVC-34] DECISÃO PENDENTE (produto), registrada: o COMMERCIAL_CLOSER NÃO pode marcar DO_NOT_CONTACT — é uma escrita e ele não tem WRITE:CRM. Nenhuma exceção foi criada; se o negócio quiser essa capacidade, é uma nova permissão ou uma mudança da matriz, nunca um atalho aqui', () => {
+test('[CRM-SVC-34] DECISÃO PENDENTE (produto), registrada: o COMMERCIAL_CLOSER NÃO pode marcar DO_NOT_CONTACT — é uma escrita e ele não tem WRITE:CRM. Nenhuma exceção foi criada; se o negócio quiser essa capacidade, é uma nova permissão ou uma mudança da matriz, nunca um atalho aqui', async () => {
   const servico = criarServico(createInMemoryCrmRepository());
-  const id = semear(servico);
-  const erro = erroDe(() => servico.markDoNotContact(closer(), id, { reason: 'o lead pediu para não ser contatado' }));
+  const id = await semear(servico);
+  const erro = await erroDe(async () => await servico.markDoNotContact(closer(), id, { reason: 'o lead pediu para não ser contatado' }));
   assert.match(erro.message, /acesso negado/);
   assert.match(erro.message, /WRITE:CRM/);
-  assert.equal(servico.getRecord(admin(), id).status, CRM_STATUS.PROSPECT);
+  assert.equal((await servico.getRecord(admin(), id)).status, CRM_STATUS.PROSPECT);
 });
 
-test('[CRM-SVC-35] toda escrita que dá certo grava EXATAMENTE uma vez; toda que falha (domínio ou entrada) não grava nenhuma', () => {
+test('[CRM-SVC-35] toda escrita que dá certo grava EXATAMENTE uma vez; toda que falha (domínio ou entrada) não grava nenhuma', async () => {
   const inicial = createInMemoryCrmRepository();
-  const id = semear(criarServico(inicial));
+  const id = await semear(criarServico(inicial));
   const repo = repositorioObservado(inicial);
   const servico = criarServico(repo);
 
   const ok = [
-    () => servico.createRecord(admin(), { empresa: 'Uma Gravação', site: 'uma.example.test' }),
-    () => servico.updateRecord(admin(), id, { observacoes: 'nota' }),
-    () => servico.moveStatus(admin(), id, CRM_STATUS.RESEARCH),
-    () => servico.markDoNotContact(admin(), id),
+    async () => await servico.createRecord(admin(), { empresa: 'Uma Gravação', site: 'uma.example.test' }),
+    async () => await servico.updateRecord(admin(), id, { observacoes: 'nota' }),
+    async () => await servico.moveStatus(admin(), id, CRM_STATUS.RESEARCH),
+    async () => await servico.markDoNotContact(admin(), id),
   ];
   for (const executar of ok) {
     const antes = gravacoes(repo);
-    executar();
+    await executar();
     assert.equal(gravacoes(repo) - antes, 1);
   }
   const falhas = [
-    () => servico.createRecord(admin(), { empresa: 'Duplicada', site: 'uma.example.test' }),
-    () => servico.updateRecord(admin(), id, { observacoes: 'bloqueado não edita' }),
-    () => servico.moveStatus(admin(), id, CRM_STATUS.PROSPECT),
-    () => servico.markDoNotContact(admin(), 'crm:nao-existe'),
-    () => servico.createRecord(admin(), { empresa: '' }),
+    async () => await servico.createRecord(admin(), { empresa: 'Duplicada', site: 'uma.example.test' }),
+    async () => await servico.updateRecord(admin(), id, { observacoes: 'bloqueado não edita' }),
+    async () => await servico.moveStatus(admin(), id, CRM_STATUS.PROSPECT),
+    async () => await servico.markDoNotContact(admin(), 'crm:nao-existe'),
+    async () => await servico.createRecord(admin(), { empresa: '' }),
   ];
   for (const executar of falhas) {
     const antes = gravacoes(repo);
-    assert.ok(erroDe(executar));
+    assert.ok(await erroDe(executar));
     assert.equal(gravacoes(repo), antes);
   }
 });
@@ -756,82 +756,82 @@ test('[CRM-SVC-35] toda escrita que dá certo grava EXATAMENTE uma vez; toda que
 // ===========================================================================
 // 6) Registros inexistentes, ids perigosos, objetos herdados, entrada não confiável
 // ===========================================================================
-test('[CRM-SVC-36] registro INEXISTENTE: getRecord devolve null; getHistory/updateRecord/moveStatus/markDoNotContact recusam com "registro não encontrado" — sem gravar nada', () => {
+test('[CRM-SVC-36] registro INEXISTENTE: getRecord devolve null; getHistory/updateRecord/moveStatus/markDoNotContact recusam com "registro não encontrado" — sem gravar nada', async () => {
   const inicial = createInMemoryCrmRepository();
-  semear(criarServico(inicial));
+  await semear(criarServico(inicial));
   const repo = repositorioObservado(inicial);
   const servico = criarServico(repo);
   const inexistente = 'crm:00000000-0000-0000-0000-000000000000';
-  assert.equal(servico.getRecord(admin(), inexistente), null);
-  assert.match(erroDe(() => servico.getHistory(admin(), inexistente)).message, /registro não encontrado/);
-  assert.match(erroDe(() => servico.updateRecord(admin(), inexistente, { observacoes: 'x' })).message, /registro não encontrado/);
-  assert.match(erroDe(() => servico.moveStatus(admin(), inexistente, CRM_STATUS.RESEARCH)).message, /registro não encontrado/);
-  assert.match(erroDe(() => servico.markDoNotContact(admin(), inexistente)).message, /registro não encontrado/);
+  assert.equal(await servico.getRecord(admin(), inexistente), null);
+  assert.match((await erroDe(async () => await servico.getHistory(admin(), inexistente))).message, /registro não encontrado/);
+  assert.match((await erroDe(async () => await servico.updateRecord(admin(), inexistente, { observacoes: 'x' }))).message, /registro não encontrado/);
+  assert.match((await erroDe(async () => await servico.moveStatus(admin(), inexistente, CRM_STATUS.RESEARCH))).message, /registro não encontrado/);
+  assert.match((await erroDe(async () => await servico.markDoNotContact(admin(), inexistente))).message, /registro não encontrado/);
   assert.equal(gravacoes(repo), 0);
 });
 
-test('[CRM-SVC-37] ids INVÁLIDOS (vazio, só espaços, não-texto) são recusados em toda operação por id, antes da persistência', () => {
+test('[CRM-SVC-37] ids INVÁLIDOS (vazio, só espaços, não-texto) são recusados em toda operação por id, antes da persistência', async () => {
   const inicial = createInMemoryCrmRepository();
   const repo = repositorioObservado(inicial);
   const servico = criarServico(repo);
   for (const ruim of ['', '   ', undefined, null, 42, {}, [], true]) {
     for (const executar of [
-      () => servico.getRecord(admin(), ruim),
-      () => servico.getHistory(admin(), ruim),
-      () => servico.updateRecord(admin(), ruim, { observacoes: 'x' }),
-      () => servico.moveStatus(admin(), ruim, CRM_STATUS.RESEARCH),
-      () => servico.markDoNotContact(admin(), ruim),
+      async () => await servico.getRecord(admin(), ruim),
+      async () => await servico.getHistory(admin(), ruim),
+      async () => await servico.updateRecord(admin(), ruim, { observacoes: 'x' }),
+      async () => await servico.moveStatus(admin(), ruim, CRM_STATUS.RESEARCH),
+      async () => await servico.markDoNotContact(admin(), ruim),
     ]) {
-      assert.match(erroDe(executar).message, /id deve ser um texto não vazio/, String(ruim));
+      assert.match((await erroDe(executar)).message, /id deve ser um texto não vazio/, String(ruim));
     }
   }
   assert.deepEqual(repo.chamadas, []);
 });
 
-test('[CRM-SVC-38] ids HERDADOS do protótipo do Object ("__proto__", "constructor", "prototype", "toString", "hasOwnProperty") nunca são um registro — em memória e em arquivo — e nunca poluem o protótipo', (t) => {
+test('[CRM-SVC-38] ids HERDADOS do protótipo do Object ("__proto__", "constructor", "prototype", "toString", "hasOwnProperty") nunca são um registro — em memória e em arquivo — e nunca poluem o protótipo', async (t) => {
   const arquivo = arquivoTemporario(t);
   for (const repositorio of [createInMemoryCrmRepository(), createJsonFileCrmRepository(arquivo)]) {
     const servico = criarServico(repositorio);
-    semear(servico);
+    await semear(servico);
     for (const perigoso of ['__proto__', 'constructor', 'prototype', 'toString', 'hasOwnProperty', 'valueOf', '__defineGetter__']) {
-      assert.equal(servico.getRecord(closer(), perigoso), null, perigoso);
-      assert.match(erroDe(() => servico.getHistory(closer(), perigoso)).message, /registro não encontrado/, perigoso);
-      assert.match(erroDe(() => servico.updateRecord(admin(), perigoso, { observacoes: 'x' })).message, /registro não encontrado/, perigoso);
-      assert.match(erroDe(() => servico.moveStatus(admin(), perigoso, CRM_STATUS.RESEARCH)).message, /registro não encontrado/, perigoso);
-      assert.match(erroDe(() => servico.markDoNotContact(admin(), perigoso)).message, /registro não encontrado/, perigoso);
+      assert.equal(await servico.getRecord(closer(), perigoso), null, perigoso);
+      assert.match((await erroDe(async () => await servico.getHistory(closer(), perigoso))).message, /registro não encontrado/, perigoso);
+      assert.match((await erroDe(async () => await servico.updateRecord(admin(), perigoso, { observacoes: 'x' }))).message, /registro não encontrado/, perigoso);
+      assert.match((await erroDe(async () => await servico.moveStatus(admin(), perigoso, CRM_STATUS.RESEARCH))).message, /registro não encontrado/, perigoso);
+      assert.match((await erroDe(async () => await servico.markDoNotContact(admin(), perigoso))).message, /registro não encontrado/, perigoso);
     }
-    assert.equal(servico.listRecords(closer()).length, 1, 'o repositório continua íntegro');
+    assert.equal((await servico.listRecords(closer())).length, 1, 'o repositório continua íntegro');
   }
   assert.equal({}.polluted, undefined);
   assert.equal(Object.getPrototypeOf({}), Object.prototype);
 });
 
-test('[CRM-SVC-39] entradas com chaves perigosas vindas de JSON ("__proto__", "constructor") são recusadas como desconhecidas e nunca poluem o protótipo global', () => {
+test('[CRM-SVC-39] entradas com chaves perigosas vindas de JSON ("__proto__", "constructor") são recusadas como desconhecidas e nunca poluem o protótipo global', async () => {
   const inicial = createInMemoryCrmRepository();
   const servico = criarServico(inicial);
-  const id = semear(servico);
+  const id = await semear(servico);
   const maliciosoComoJson = JSON.parse('{"empresa":"x","__proto__":{"polluted":true},"constructor":{"prototype":{"polluted":true}}}');
-  assert.match(erroDe(() => servico.createRecord(admin(), maliciosoComoJson)).message, /campos desconhecidos/);
-  assert.match(erroDe(() => servico.updateRecord(admin(), id, JSON.parse('{"__proto__":{"polluted":true}}'))).message, /campos desconhecidos/);
+  assert.match((await erroDe(async () => await servico.createRecord(admin(), maliciosoComoJson))).message, /campos desconhecidos/);
+  assert.match((await erroDe(async () => await servico.updateRecord(admin(), id, JSON.parse('{"__proto__":{"polluted":true}}')))).message, /campos desconhecidos/);
   for (const opcoes of [JSON.parse('{"__proto__":{"reason":"x"}}'), JSON.parse('{"constructor":{"reason":"x"}}')]) {
-    assert.match(erroDe(() => servico.moveStatus(admin(), id, CRM_STATUS.RESEARCH, opcoes)).message, /opções não reconhecidas/);
+    assert.match((await erroDe(async () => await servico.moveStatus(admin(), id, CRM_STATUS.RESEARCH, opcoes))).message, /opções não reconhecidas/);
   }
   assert.equal({}.polluted, undefined);
   assert.equal(Object.prototype.polluted, undefined);
   assert.equal(inicial.list().length, 1);
 });
 
-test('[CRM-SVC-40] propriedades HERDADAS nunca participam: um `reason` herdado (Object.create) é uma entrada inválida, e uma Object.prototype.reason poluída NÃO vira o motivo', () => {
+test('[CRM-SVC-40] propriedades HERDADAS nunca participam: um `reason` herdado (Object.create) é uma entrada inválida, e uma Object.prototype.reason poluída NÃO vira o motivo', async () => {
   const servico = criarServico(createInMemoryCrmRepository());
-  const id = semear(servico);
-  assert.match(erroDe(() => servico.moveStatus(admin(), id, CRM_STATUS.RESEARCH, Object.create({ reason: 'herdado' }))).message, /opções devem ser um objeto simples/);
+  const id = await semear(servico);
+  assert.match((await erroDe(async () => await servico.moveStatus(admin(), id, CRM_STATUS.RESEARCH, Object.create({ reason: 'herdado' })))).message, /opções devem ser um objeto simples/);
   Object.prototype.reason = 'motivo poluído';
   Object.prototype.status = 'WON';
   try {
-    const { record } = servico.createRecord(admin(), { empresa: 'Sem Herança' }, {});
+    const { record } = await servico.createRecord(admin(), { empresa: 'Sem Herança' }, {});
     assert.equal(record.status, CRM_STATUS.PROSPECT, 'um status herdado nunca escolhe o status inicial');
     assert.equal(record.historico[0].motivo, null, 'um reason herdado nunca vira o motivo');
-    assert.equal(servico.moveStatus(admin(), id, CRM_STATUS.CONTACTED, {}).historico.at(-1).motivo, null);
+    assert.equal((await servico.moveStatus(admin(), id, CRM_STATUS.CONTACTED, {})).historico.at(-1).motivo, null);
   } finally {
     delete Object.prototype.reason;
     delete Object.prototype.status;
@@ -841,29 +841,29 @@ test('[CRM-SVC-40] propriedades HERDADAS nunca participam: um `reason` herdado (
 // ===========================================================================
 // 7) Dados sensíveis: o que sai do Service
 // ===========================================================================
-test('[CRM-SVC-41] nenhum authUserId, e-mail de usuário, permissions ou token sai do Service — em nenhuma operação — e o reviewedBy tem só { userId, name, role }', () => {
+test('[CRM-SVC-41] nenhum authUserId, e-mail de usuário, permissions ou token sai do Service — em nenhuma operação — e o reviewedBy tem só { userId, name, role }', async () => {
   const servico = criarServico(createInMemoryCrmRepository());
   const ctx = admin();
-  const { record } = servico.createRecord(ctx, { empresa: 'Sem Vazamento', site: 'sem-vazamento.example.test' }, { reason: 'ok' });
+  const { record } = await servico.createRecord(ctx, { empresa: 'Sem Vazamento', site: 'sem-vazamento.example.test' }, { reason: 'ok' });
   const saidas = [
     record,
-    servico.updateRecord(ctx, record.id, { observacoes: 'nota' }),
-    servico.moveStatus(ctx, record.id, CRM_STATUS.RESEARCH, { reason: 'x' }),
-    servico.getRecord(ctx, record.id),
-    servico.getHistory(ctx, record.id),
-    servico.listRecords(ctx),
-    servico.markDoNotContact(ctx, record.id),
+    await servico.updateRecord(ctx, record.id, { observacoes: 'nota' }),
+    await servico.moveStatus(ctx, record.id, CRM_STATUS.RESEARCH, { reason: 'x' }),
+    await servico.getRecord(ctx, record.id),
+    await servico.getHistory(ctx, record.id),
+    await servico.listRecords(ctx),
+    await servico.markDoNotContact(ctx, record.id),
   ];
   const texto = JSON.stringify(saidas);
   for (const proibido of [ADMIN_USER.authUserId, ADMIN_USER.email, 'permissions', 'READ:CRM', 'WRITE:CRM', 'APPROVE', 'token', 'Bearer', 'authUserId']) {
     assert.ok(!texto.includes(proibido), `a saída não pode conter ${proibido}`);
   }
-  for (const entrada of servico.getHistory(ctx, record.id)) {
+  for (const entrada of await servico.getHistory(ctx, record.id)) {
     assert.deepEqual(Object.keys(entrada.reviewedBy).sort(), ['name', 'role', 'userId']);
   }
 });
 
-test('[CRM-SVC-42] uma ADULTERAÇÃO no armazenamento (campos a mais, authUserId, permissions, tokens, objetos aninhados, reviewedBy com dados extras) nunca vaza: a saída é sempre a lista explícita de campos, com valores primitivos', () => {
+test('[CRM-SVC-42] uma ADULTERAÇÃO no armazenamento (campos a mais, authUserId, permissions, tokens, objetos aninhados, reviewedBy com dados extras) nunca vaza: a saída é sempre a lista explícita de campos, com valores primitivos', async () => {
   const adulterado = {
     id: 'crm:adulterado',
     empresa: 'Adulterada Ltda',
@@ -883,7 +883,7 @@ test('[CRM-SVC-42] uma ADULTERAÇÃO no armazenamento (campos a mais, authUserId
     ],
   };
   const servico = criarServico(createInMemoryCrmRepository([adulterado]));
-  const saidas = [servico.getRecord(closer(), 'crm:adulterado'), servico.listRecords(closer()), servico.getHistory(closer(), 'crm:adulterado')];
+  const saidas = [await servico.getRecord(closer(), 'crm:adulterado'), await servico.listRecords(closer()), await servico.getHistory(closer(), 'crm:adulterado')];
   const texto = JSON.stringify(saidas);
   for (const vazado of ['vazado', 'vazada', 'authUserId', 'permissions', 'token', 'senha', 'aninhado', 'extra']) {
     assert.ok(!texto.includes(vazado), `a saída não pode conter ${vazado}`);
@@ -898,45 +898,45 @@ test('[CRM-SVC-42] uma ADULTERAÇÃO no armazenamento (campos a mais, authUserId
   assert.equal(registro.historico[2].reviewedBy, null);
 });
 
-test('[CRM-SVC-43] corrupção do armazenamento aparece, nunca é escondida: um item que não é um registro na lista lança um erro claro; um registro sem histórico nunca é "consertado" numa escrita', () => {
+test('[CRM-SVC-43] corrupção do armazenamento aparece, nunca é escondida: um item que não é um registro na lista lança um erro claro; um registro sem histórico nunca é "consertado" numa escrita', async () => {
   const corrompido = criarServico(createInMemoryCrmRepository([{ id: 'crm:ok', empresa: 'Ok', status: 'PROSPECT', historico: [] }, { id: 'crm:sem-historico', empresa: 'Sem histórico', status: 'PROSPECT' }]));
-  assert.match(erroDe(() => corrompido.moveStatus(admin(), 'crm:sem-historico', CRM_STATUS.RESEARCH)).message, /histórico ausente ou inválido/);
-  assert.match(erroDe(() => corrompido.updateRecord(admin(), 'crm:sem-historico', { observacoes: 'x' })).message, /histórico ausente ou inválido/);
+  assert.match((await erroDe(async () => await corrompido.moveStatus(admin(), 'crm:sem-historico', CRM_STATUS.RESEARCH))).message, /histórico ausente ou inválido/);
+  assert.match((await erroDe(async () => await corrompido.updateRecord(admin(), 'crm:sem-historico', { observacoes: 'x' }))).message, /histórico ausente ou inválido/);
 
   const listaSuja = { list: () => [{ id: 'crm:a', empresa: 'A', historico: [] }, null], getById: () => null, save: () => {} };
-  assert.match(erroDe(() => criarServico(listaSuja).listRecords(closer())).message, /registro inválido no armazenamento/);
+  assert.match((await erroDe(() => criarServico(listaSuja).listRecords(closer()))).message, /registro inválido no armazenamento/);
 });
 
-test('[CRM-SVC-44] um repositório DEFEITUOSO que devolve o registro de OUTRO id nunca sai como o registro pedido: getRecord devolve null e getHistory recusa', () => {
+test('[CRM-SVC-44] um repositório DEFEITUOSO que devolve o registro de OUTRO id nunca sai como o registro pedido: getRecord devolve null e getHistory recusa', async () => {
   const outro = { id: 'crm:outro', empresa: 'Outro', status: 'PROSPECT', historico: [] };
   const defeituoso = { list: () => [outro], getById: () => structuredClone(outro), save: () => {} };
   const servico = criarServico(defeituoso);
-  assert.equal(servico.getRecord(closer(), 'crm:pedido'), null);
-  assert.match(erroDe(() => servico.getHistory(closer(), 'crm:pedido')).message, /registro não encontrado/);
+  assert.equal(await servico.getRecord(closer(), 'crm:pedido'), null);
+  assert.match((await erroDe(async () => await servico.getHistory(closer(), 'crm:pedido'))).message, /registro não encontrado/);
 });
 
 // ===========================================================================
 // 8) Persistência de verdade (arquivo) e falhas
 // ===========================================================================
-test('[CRM-SVC-45] PERSISTÊNCIA: o que um Service grava, um SEGUNDO Service — outra instância, outro repositório sobre o MESMO arquivo — lê, inclusive histórico e o bloqueio DNC', (t) => {
+test('[CRM-SVC-45] PERSISTÊNCIA: o que um Service grava, um SEGUNDO Service — outra instância, outro repositório sobre o MESMO arquivo — lê, inclusive histórico e o bloqueio DNC', async (t) => {
   const arquivo = arquivoTemporario(t);
   const primeiro = criarServico(createJsonFileCrmRepository(arquivo));
-  const { record } = primeiro.createRecord(admin(), { empresa: 'Persistente Ltda', site: 'persistente.example.test' }, { reason: 'gravado pelo primeiro' });
-  primeiro.moveStatus(admin(), record.id, CRM_STATUS.QUALIFICATION, { reason: 'qualificado' });
-  primeiro.markDoNotContact(admin(), record.id, { reason: 'pediu para sair' });
+  const { record } = await primeiro.createRecord(admin(), { empresa: 'Persistente Ltda', site: 'persistente.example.test' }, { reason: 'gravado pelo primeiro' });
+  await primeiro.moveStatus(admin(), record.id, CRM_STATUS.QUALIFICATION, { reason: 'qualificado' });
+  await primeiro.markDoNotContact(admin(), record.id, { reason: 'pediu para sair' });
 
   const segundo = criarServico(createJsonFileCrmRepository(arquivo));
-  const lido = segundo.getRecord(closer(), record.id);
+  const lido = await segundo.getRecord(closer(), record.id);
   assert.equal(lido.status, CRM_STATUS.DO_NOT_CONTACT);
   assert.deepEqual(lido.historico.map((entrada) => entrada.to), ['PROSPECT', 'QUALIFICATION', 'DO_NOT_CONTACT']);
   assert.deepEqual(lido.historico.map((entrada) => entrada.motivo), ['gravado pelo primeiro', 'qualificado', 'pediu para sair']);
-  assert.match(erroDe(() => segundo.createRecord(admin(), { empresa: 'Reentrada', site: 'persistente.example.test' })).message, /bloqueada como DO_NOT_CONTACT/, 'o DNC sobrevive à reinicialização');
-  assert.equal(segundo.listRecords(closer()).length, 1);
+  assert.match((await erroDe(async () => await segundo.createRecord(admin(), { empresa: 'Reentrada', site: 'persistente.example.test' }))).message, /bloqueada como DO_NOT_CONTACT/, 'o DNC sobrevive à reinicialização');
+  assert.equal((await segundo.listRecords(closer())).length, 1);
 });
 
-test('[CRM-SVC-46] falhas de armazenamento passam intactas e não deixam meia-escrita: uma gravação que falha lança o erro do repositório e o registro continua como estava; um arquivo CORROMPIDO nunca é mascarado como "vazio"', (t) => {
+test('[CRM-SVC-46] falhas de armazenamento passam intactas e não deixam meia-escrita: uma gravação que falha lança o erro do repositório e o registro continua como estava; um arquivo CORROMPIDO nunca é mascarado como "vazio"', async (t) => {
   const inicial = createInMemoryCrmRepository();
-  const id = semear(criarServico(inicial));
+  const id = await semear(criarServico(inicial));
   const gravacaoQuebrada = {
     list: () => inicial.list(),
     getById: (registroId) => inicial.getById(registroId),
@@ -945,57 +945,61 @@ test('[CRM-SVC-46] falhas de armazenamento passam intactas e não deixam meia-es
     },
   };
   const servico = criarServico(gravacaoQuebrada);
-  assert.match(erroDe(() => servico.moveStatus(admin(), id, CRM_STATUS.RESEARCH)).message, /disco cheio \(simulado\)/);
+  assert.match((await erroDe(async () => await servico.moveStatus(admin(), id, CRM_STATUS.RESEARCH))).message, /disco cheio \(simulado\)/);
   assert.equal(inicial.getById(id).status, CRM_STATUS.PROSPECT, 'nada mudou');
   assert.equal(inicial.getById(id).historico.length, 1);
 
   const arquivo = arquivoTemporario(t);
   fs.writeFileSync(arquivo, '{ isto não é json [[[', 'utf8');
   const sobreCorrompido = criarServico(createJsonFileCrmRepository(arquivo));
-  assert.match(erroDe(() => sobreCorrompido.listRecords(admin())).message, /corrompido/);
-  assert.match(erroDe(() => sobreCorrompido.createRecord(admin(), { empresa: 'Não pode' })).message, /corrompido/);
+  assert.match((await erroDe(async () => await sobreCorrompido.listRecords(admin()))).message, /corrompido/);
+  assert.match((await erroDe(async () => await sobreCorrompido.createRecord(admin(), { empresa: 'Não pode' }))).message, /corrompido/);
   assert.equal(fs.readFileSync(arquivo, 'utf8'), '{ isto não é json [[[', 'o arquivo corrompido não foi sobrescrito');
 });
 
-test('[CRM-SVC-47] os erros do domínio passam INTACTOS (mesma classe e mesma mensagem), sem tradução', () => {
+test('[CRM-SVC-47] os erros do domínio passam INTACTOS (mesma classe e mesma mensagem), sem tradução', async () => {
   const servico = criarServico(createInMemoryCrmRepository());
-  const id = semear(servico);
-  servico.moveStatus(admin(), id, CRM_STATUS.WON);
-  const doServico = erroDe(() => servico.moveStatus(admin(), id, CRM_STATUS.PROSPECT));
-  const doDominio = erroDe(() => crmDomain.moveStatus(createInMemoryCrmRepository([{ id: 'x', empresa: 'x', status: 'WON', historico: [] }]), 'x', CRM_STATUS.PROSPECT));
+  const id = await semear(servico);
+  await servico.moveStatus(admin(), id, CRM_STATUS.WON);
+  const doServico = await erroDe(async () => await servico.moveStatus(admin(), id, CRM_STATUS.PROSPECT));
+  const doDominio = await erroDe(async () => await crmDomain.moveStatus(createInMemoryCrmRepository([{ id: 'x', empresa: 'x', status: 'WON', historico: [] }]), 'x', CRM_STATUS.PROSPECT));
   assert.equal(doServico.constructor, doDominio.constructor);
   assert.equal(doServico.message, doDominio.message);
 });
 
-test('[CRM-SVC-48] concorrência dentro do processo: duas operações seguidas sobre o mesmo registro enxergam uma à outra (cada operação é síncrona e indivisível — sem "última gravação vence" silenciosa)', () => {
+test('[CRM-SVC-48] concorrência dentro do processo: duas operações seguidas sobre o mesmo registro enxergam uma à outra (cada operação é síncrona e indivisível — sem "última gravação vence" silenciosa)', async () => {
   const servico = criarServico(createInMemoryCrmRepository());
-  const id = semear(servico);
-  servico.updateRecord(admin(), id, { observacoes: 'primeira' });
-  servico.updateRecord(admin(), id, { telefone: '24900001111' });
-  const registro = servico.getRecord(admin(), id);
+  const id = await semear(servico);
+  await servico.updateRecord(admin(), id, { observacoes: 'primeira' });
+  await servico.updateRecord(admin(), id, { telefone: '24900001111' });
+  const registro = await servico.getRecord(admin(), id);
   assert.equal(registro.observacoes, 'primeira', 'a segunda edição não apagou a primeira');
   assert.equal(registro.telefone, '24900001111');
-  servico.moveStatus(admin(), id, CRM_STATUS.RESEARCH);
-  servico.updateRecord(admin(), id, { cargo: 'Diretora' });
-  assert.equal(servico.getRecord(admin(), id).status, CRM_STATUS.RESEARCH, 'editar campos depois não desfez a mudança de status');
+  await servico.moveStatus(admin(), id, CRM_STATUS.RESEARCH);
+  await servico.updateRecord(admin(), id, { cargo: 'Diretora' });
+  assert.equal((await servico.getRecord(admin(), id)).status, CRM_STATUS.RESEARCH, 'editar campos depois não desfez a mudança de status');
 });
 
 // ===========================================================================
 // 9) Reforços (achados pela checagem de mutação)
 // ===========================================================================
-test('[CRM-SVC-49] nada "thenable" é aceito como identidade do autorizador — nem quando o `then` é HERDADO (Object.prototype poluído): recusa fechada, nunca uma autorização', () => {
+test('[CRM-SVC-49] nada "thenable" é aceito como identidade do autorizador — nem quando o `then` é HERDADO (Object.prototype poluído): recusa fechada, nunca uma autorização', async () => {
   const servico = criarServico(createInMemoryCrmRepository(), { authorizeOperation: () => ({ userId: 'u', name: 'n', role: 'ADMIN' }) });
-  assert.doesNotThrow(() => servico.listRecords(admin()), 'sanidade: sem a poluição, o mesmo autorizador funciona');
+  await assert.doesNotReject(async () => await servico.listRecords(admin()), 'sanidade: sem a poluição, o mesmo autorizador funciona');
+  // A poluição só vale durante a chamada SÍNCRONA (a autorização roda antes do primeiro await): enquanto `then` existir em
+  // Object.prototype, nenhum objeto pode ser devolvido por um await (seria tratado como thenable e a promessa nunca resolveria).
+  let pendente;
   Object.prototype.then = function then() {};
   try {
-    assert.match(erroDe(() => servico.listRecords(admin())).message, /síncrono/);
+    pendente = servico.listRecords(admin());
   } finally {
     delete Object.prototype.then;
   }
+  await assert.rejects(() => pendente, /síncrono/);
   assert.equal(Object.prototype.then, undefined, 'a poluição de teste foi removida');
 });
 
-test('[CRM-SVC-50] o Service NÃO depende de o repositório copiar o que recebe: com um repositório que guarda REFERÊNCIAS, alterar depois o objeto devolvido pelo autorizador não muda o histórico gravado', () => {
+test('[CRM-SVC-50] o Service NÃO depende de o repositório copiar o que recebe: com um repositório que guarda REFERÊNCIAS, alterar depois o objeto devolvido pelo autorizador não muda o histórico gravado', async () => {
   const guardados = new Map();
   const porReferencia = {
     list: () => [...guardados.values()],
@@ -1004,8 +1008,8 @@ test('[CRM-SVC-50] o Service NÃO depende de o repositório copiar o que recebe:
   };
   const compartilhada = { userId: 'user-ref', name: 'Referência', role: 'ADMIN' };
   const servico = criarServico(porReferencia, { authorizeOperation: () => compartilhada });
-  const { record } = servico.createRecord(admin(), { empresa: 'Por Referência' });
-  servico.moveStatus(admin(), record.id, CRM_STATUS.RESEARCH);
+  const { record } = await servico.createRecord(admin(), { empresa: 'Por Referência' });
+  await servico.moveStatus(admin(), record.id, CRM_STATUS.RESEARCH);
   compartilhada.role = 'ALTERADA-DEPOIS';
   compartilhada.userId = 'outro-usuario';
   for (const entrada of guardados.get(record.id).historico) {

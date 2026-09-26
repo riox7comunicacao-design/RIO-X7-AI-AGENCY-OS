@@ -1,5 +1,13 @@
 # Changelog
 
+## 2026-09-26 — CRM: porta de persistência ASSÍNCRONA (Fase A, etapa 4.2)
+
+Prepara a camada acima do repositório para uma persistência remota ([decisão 0023](./docs/decisions/0023-crm-async-persistence-port.md)). **Sem Supabase, sem SQL, sem mudança de contrato.** O CRM segue em `data/crm.json`, no mesmo formato.
+
+- A porta (`list`/`getById`/`save`) aceita métodos síncronos **ou** assíncronos; domínio e Service do CRM viraram `async`; a autorização continua síncrona. Chamadores ajustados: promoção, prospecção (leitura do CRM) e as 7 rotas `/api/crm`.
+- As escritas de um mesmo repositório rodam uma por vez (e as promoções de um serviço também): ler → decidir → gravar segue indivisível dentro do processo. A proteção entre servidores é da persistência remota e está listada como pendência na 0023.
+- Testes: 22 arquivos atualizados só com `await`/`async` (mesmas contagens de testes e asserções; `CRM-PORT-3`/`CRM-SVC-3` agora afirmam que a porta assíncrona é aceita) + `tests/crm/crmAsyncPort.test.js` (7 novos).
+
 ## 2026-09-26 — Adaptadores reais das portas do Researcher + primeiro smoke test real controlado
 
 Passo 1 da 0021 ([decisão 0022](./docs/decisions/0022-researcher-adapters.md)). **Só** os adaptadores de rede e o smoke test; sem serviço Researcher → `submitProspecting`, fila, lote, CRM, Dashboard, SDR, análises ou lote real. `researcher.js`, `researchPolicy.js`, o contrato V2, o CRM, a fila, o Promotion Service, o Batch e as permissões **não foram alterados**; nenhuma dependência nova.

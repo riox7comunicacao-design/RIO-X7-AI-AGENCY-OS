@@ -54,18 +54,18 @@ test('[DASH-MODEL-2] os campos do Dashboard são exatamente os 31 graváveis do 
 
 test('[DASH-MODEL-3] o tipo de cada campo bate com o do domínio: só os campos "number" aceitam número (>= 0) e todos os outros recusam', async () => {
   const { EDITABLE_FIELDS } = await loadModel();
-  const aceita = (key, value) => {
+  const aceita = async (key, value) => {
     try {
-      domain.createRecord(domain.createInMemoryCrmRepository(), { empresa: 'Base Teste', [key]: value });
+      await domain.createRecord(domain.createInMemoryCrmRepository(), { empresa: 'Base Teste', [key]: value });
       return true;
     } catch {
       return false;
     }
   };
   for (const entry of EDITABLE_FIELDS) {
-    assert.equal(aceita(entry.key, 5), entry.kind === 'number', `${entry.key}: número 5`);
-    assert.equal(aceita(entry.key, 'texto'), entry.kind !== 'number', `${entry.key}: texto`);
-    if (entry.kind === 'number') assert.equal(aceita(entry.key, -1), false, `${entry.key}: negativo`);
+    assert.equal(await aceita(entry.key, 5), entry.kind === 'number', `${entry.key}: número 5`);
+    assert.equal(await aceita(entry.key, 'texto'), entry.kind !== 'number', `${entry.key}: texto`);
+    if (entry.kind === 'number') assert.equal(await aceita(entry.key, -1), false, `${entry.key}: negativo`);
   }
 });
 
