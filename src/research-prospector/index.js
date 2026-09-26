@@ -9,6 +9,9 @@ const approvalQueue = require('./approvalQueue');
 const crmAdapter = require('./crmAdapter');
 const rawFindingSchema = require('./rawFindingSchema');
 const batchAccounting = require('./batchAccounting');
+const signalSchema = require('./signalSchema');
+const dossier = require('./dossier');
+const dossierRepository = require('./dossierRepository');
 
 module.exports = {
   createCandidate,
@@ -21,6 +24,9 @@ module.exports = {
   crmAdapter,
   rawFindingSchema,
   batchAccounting,
+  signalSchema,
+  dossier,
+  dossierRepository,
   INFO_STATUS,
   DUPLICATE_STATUS,
   VALIDATION_STATUS,

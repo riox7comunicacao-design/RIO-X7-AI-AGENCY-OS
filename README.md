@@ -48,7 +48,7 @@ npm start                                         # sobe o Dashboard em http://1
 - [PROJECT_CONTEXT.md](./PROJECT_CONTEXT.md) — contexto de negócio validado
 - [RULES.md](./RULES.md) — regras fundamentais (não inventar, testar antes de declarar, humano no controle, privacidade, não expor segredos, uma etapa por vez)
 - [CHANGELOG.md](./CHANGELOG.md) — histórico de mudanças, etapa por etapa
-- [docs/decisions/](./docs/decisions/) — decisões arquiteturais (0001–0017); as mais recentes: 0012 (CRM próprio), 0013 (domínio), 0014 (Service), 0015 (API), 0016 (promoção Approval Queue → CRM)
+- [docs/decisions/](./docs/decisions/) — decisões arquiteturais (0001–0018); as mais recentes: 0012 (CRM próprio), 0013 (domínio), 0014 (Service), 0015 (API), 0016 (promoção Approval Queue → CRM)
 - [docs/architecture/](./docs/architecture/) — arquitetura, domínios de dados, permissões e especialistas
 - [docs/operations/CONTINUE-HERE.md](./docs/operations/CONTINUE-HERE.md) e [docs/operations/MULTICOMPUTER-HANDOFF.md](./docs/operations/MULTICOMPUTER-HANDOFF.md) — retomada e handoff entre computadores
 - [data/README.md](./data/README.md) — o que são os arquivos locais `data/*.json` e por que não vão para o Git

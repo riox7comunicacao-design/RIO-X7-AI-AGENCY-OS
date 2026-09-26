@@ -45,8 +45,8 @@ npm start
 
 | Onde | Total | Passam | Falham | Pulados |
 |---|---|---|---|---|
-| Neste computador, com `.env` | 1016 | 1014 | 0 | 2 |
-| Sem `.env` e sem `data/*.json` (um clone limpo) | 1016 | 1009 | 0 | 7 |
+| Neste computador, com `.env` | 1076 | 1074 | 0 | 2 |
+| Sem `.env` e sem `data/*.json` (um clone limpo) | 1076 | 1069 | 0 | 7 |
 
 Nenhuma falha. Os pulados são esperados: sem `.env` (5 testes de conectividade/autenticação contra o Supabase real), o `[REAL-2]` (só roda com `RIO_X7_TEST_ACCESS_TOKEN`, um token real de teste) e o `[SRV-SEC-24b]` (symlink, que o Windows sem privilégio não permite). O preflight sem `.env` **falha de propósito** (`.env` e `data/users.json` ausentes; conectividade pulada) — é o comportamento correto de um computador ainda não configurado.
 
@@ -84,6 +84,7 @@ A API não informa as transições permitidas (a tela oferece os outros status e
 - documentação e handoff para outro computador: concluídos e ensaiados com um clone limpo do `origin/main`
 - CRM-INTEGRATION: **concluído** (decisão 0016) — serviço, rota `POST /api/approvals/:id/promote` e ação "Promover para CRM" no Dashboard
 - **Dashboard V1 — Central Operacional: concluído** (só UX/UI): menu lateral agrupado (áreas ainda inexistentes desabilitadas, "Em desenvolvimento"), Visão Geral com indicadores/pipeline/atividade **reais**, Central de Agentes IA (`#/agentes`, só estrutura visual). Nenhuma regra, permissão ou API mudou; ver o [CHANGELOG.md](../../CHANGELOG.md)
+- **Prospecting Dossier + Signals V1: concluído** ([0018](../decisions/0018-prospecting-dossier-signals.md)) — só o modelo determinístico (`src/research-prospector/dossier.js`, `signalSchema.js`, `dossierRepository.js`): fatos `DADO`/`NAO_VERIFICADO`, 13 sinais derivados por regra fixa, análises/hipóteses separadas, persistência em `data/prospecting-dossiers.json` (fora do Git). **Não integrado ao `submitProspecting`**, sem rota, sem Dashboard, sem CRM write. Próximo incremento sugerido: rawFindings → dossiê → lote → Approval Queue
 - **Rota de ingestão de prospecção: concluída** ([0017](../decisions/0017-prospecting-ingestion-route.md)) — `POST /api/prospecting/submit` (corpo exatamente `{ briefing, rawFindings }`, até 2 MiB só nesta rota, PROPOSE:LEAD_APPROVAL + READ:CRM no serviço, 201 com o relatório do serviço). **Sem Dashboard, sem pesquisa web, sem IA.** Um servidor já em execução precisa ser reiniciado para ganhar a rota
 - **Prospecting Service V1 (ingestão controlada): concluído** — só serviço (`src/services/prospectingService.js`): permissão `PROPOSE:LEAD_APPROVAL` (ADMIN sim, closer **não**), lote em entidade/arquivo separados (`data/prospecting-batches.json`), só candidatos elegíveis entram na fila (nunca DNC, duplicado ou dados insuficientes), sem aprovação automática. **Sem rota, sem interface, sem pesquisa web, sem IA, sem dossiê.** O servidor o compõe pela rota acima
 - **Prospector — 1º incremento: concluído** (só domínio, puro): adaptador CRM → DNC/duplicidade (`crmAdapter.js`), esquema dos raw findings (`rawFindingSchema.js`) e contabilidade de lote (`batchAccounting.js`). O esquema agora é usado pelo Prospecting Service; ainda sem pesquisa web, IA, dossiê, rota ou interface

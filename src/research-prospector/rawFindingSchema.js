@@ -504,4 +504,6 @@ function validateRawFindings(list, { now = new Date() } = {}) {
 
 // checkText e MESSAGES também são usados por quem valida o BRIEFING (Prospecting Service): os mesmos limites e as mesmas frases, sem
 // uma segunda implementação de "texto seguro".
-module.exports = { LIMITS, ERROR, MESSAGES, checkText, validateRawFinding, validateRawFindings };
+// Os primitivos de validação também são usados pelo esquema do DOSSIÊ (signalSchema.js / dossier.js): a mesma definição de "texto
+// seguro", "URL pública https", "data ISO real" e "estrutura de dado puro" — nenhuma segunda implementação.
+module.exports = { LIMITS, ERROR, MESSAGES, SOURCE_TYPES, isPlainObject, ownEntries, ownItems, measure, checkText, checkUrl, checkDate, validateRawFinding, validateRawFindings };

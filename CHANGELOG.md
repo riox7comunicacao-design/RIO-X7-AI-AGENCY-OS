@@ -1,5 +1,14 @@
 # Changelog
 
+## 2026-09-25 — Prospecting Dossier + Signals V1 (modelo determinístico)
+
+Cria o dossiê de pesquisa e os sinais do Prospector — **só o modelo e a persistência** ([decisão 0018](./docs/decisions/0018-prospecting-dossier-signals.md)). Sem pesquisa web, IA, navegador, Dashboard, rota, SDR, automação, CRM write; Approval Queue, Promotion Service, CRM e permissões **não foram alterados**; **não integrado ao `submitProspecting`**.
+
+- **Módulos** (`src/research-prospector/`): `signalSchema.js` (vocabulários fechados, catálogo de 15 campos de fato, validação de fato/fonte, derivação de 13 sinais), `dossier.js` (`buildDossier`: ids, datas, fontes e sinais derivados pelo sistema; análises/hipóteses com `baseadoEm`), `dossierRepository.js` (porta `list/getById/save`, adapters em memória e em arquivo `data/prospecting-dossiers.json`, fora do Git). `rawFindingSchema.js` só passou a exportar os primitivos de validação (sem duplicação).
+- **Regras:** fato `DADO` | `NAO_VERIFICADO` (nunca hipótese); ausência nunca é negativa (presença só `true`; anúncios: `IDENTIFICADO` / `NAO_ENCONTRADO_NA_VERIFICACAO` / `NAO_VERIFICAVEL`); Instagram sem "ativo = true" (datas, dias, 15 dias, frequência só com ≥ 3 datas); conflito → sinal `NAO_VERIFICADO`; `ANALISE` exige evidência `DADO`; texto sem promessa/urgência/"não anuncia"; sem score, ranking, temperatura ou decisão; fontes só HTTPS público.
+- **Testes:** 60 novos — 1076 no total: 1074 passam e 2 pulados com `.env`; 1069 e 7 pulados sem `.env`; 0 falhas. **Mutação:** 124 mutantes, 24 sobreviventes na 1ª rodada: 16 lacunas de teste (corrigidas), 1 código morto (simplificado) e 7 equivalentes/não observáveis (documentados na 0018).
+- **Limites:** sem integração, sem exclusão/versionamento de dossiê, sem trava entre processos.
+
 ## 2026-09-25 — Rota autenticada de ingestão do Prospecting Service: POST /api/prospecting/submit
 
 Expõe o Prospecting Service V1 por HTTP — **só a rota** ([decisão 0017](./docs/decisions/0017-prospecting-ingestion-route.md)). Sem Dashboard, sem pesquisa web, sem IA, sem exclusão persistente; CRM (domínio, Service, API), Approval Queue (inclusive o modelo), Promotion Service e permissões **não foram alterados** (nenhuma permissão nova: `PROPOSE:LEAD_APPROVAL` e `READ:CRM`, verificadas pelo serviço antes de olhar qualquer dado).
