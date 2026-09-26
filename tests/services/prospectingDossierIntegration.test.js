@@ -425,3 +425,104 @@ test('[PDI-15] a criação exige o repositório de dossiês; a fábrica de arqui
   const r = servico.submitProspecting(admin(), submissao([achadoRico('Clínica Alfa Teste', 'alfa-teste')]));
   assert.deepEqual(Object.keys(env.dossies()), r.dossierIds);
 });
+
+// ---------------------------------------------------------------------------------------------------------------------------------
+// rawFinding V2 (decisão 0020): o bloco `dossie` dentro do achado
+// ---------------------------------------------------------------------------------------------------------------------------------
+const fonteObs = (extras = {}) => ({ url: 'https://instagram.example.test/perfil', tipo: 'OFICIAL', observadoEm: DATA, ...extras });
+const fatoObs = (campo, valor, extras = {}) => ({ campo, valor, status: 'DADO', fonte: fonteObs(), observadoEm: DATA, ...extras });
+const analiseObs = (extras = {}) => ({ tipo: 'ATIVIDADE_SOCIAL', texto: 'Última postagem observada há 4 dias, com chamada para agendar.', baseadoEm: [{ sinal: 'INSTAGRAM_ATIVIDADE' }], status: 'ANALISE', ...extras });
+const blocoV2 = () => ({
+  fatos: [fatoObs('instagram.postagensObservadas', ['2026-09-01', '2026-09-10', '2026-09-20']), fatoObs('instagram.cta', 'Agende pelo link da bio'), fatoObs('site.formularioContato', true, { fonte: fonteObs({ url: 'https://alfa-teste.example.test/contato' }) }), { campo: 'anuncios.meta', valor: null, status: 'NAO_VERIFICADO', observadoEm: DATA, motivo: 'BLOQUEADO' }],
+  analises: [analiseObs(), analiseObs({ status: 'HIPOTESE', texto: 'Pode haver espaço para melhorar o agendamento (não confirmado).', baseadoEm: [{ fato: 'instagram.cta' }] })],
+});
+
+test('[PDI-16] o bloco `dossie` chega ao dossiê: observações do Instagram, CTA, formulário e anúncios viram fatos e sinais; as análises ficam separadas; nada disso entra na fila, no lote nem no discovery', (t) => {
+  const env = ambiente(t);
+  const com = achadoRico('Clínica Alfa Teste', 'alfa-teste', { dossie: blocoV2() });
+  const r = env.servico.submitProspecting(admin(), submissao([com]));
+  const dossie = env.dossies()[r.dossierIds[0]];
+  const sinais = Object.fromEntries(dossie.sinais.map((s) => [s.tipo, s]));
+  assert.equal(sinais.INSTAGRAM_ATIVIDADE.status, 'DADO');
+  assert.deepEqual([sinais.INSTAGRAM_ATIVIDADE.valor.diasDesdeUltimaPostagem, sinais.INSTAGRAM_ATIVIDADE.valor.postouNosUltimos15Dias, sinais.INSTAGRAM_ATIVIDADE.valor.cta], [4, true, 'Agende pelo link da bio']);
+  assert.equal(sinais.INSTAGRAM_ATIVIDADE.valor.url, 'https://instagram.example.test/alfa-teste', 'a URL vem do fato de identidade derivado de campos, não do bloco');
+  assert.deepEqual([sinais.FORMULARIO_CONTATO.status, sinais.ANUNCIO_META.status, sinais.ANUNCIO_META.valor], ['DADO', 'NAO_VERIFICADO', 'NAO_VERIFICAVEL']);
+  assert.equal(dossie.fatos.find((f) => f.campo === 'anuncios.meta').motivo, 'BLOQUEADO');
+  assert.deepEqual(dossie.analises.map((a) => [a.analiseId, a.status]), [['analise:001', 'ANALISE'], ['analise:002', 'HIPOTESE']]);
+  assert.equal(dossie.fatos.some((f) => f.status === 'HIPOTESE' || f.status === 'ANALISE'), false, 'análise/hipótese nunca é fato');
+  assert.equal(dossie.dataDaPesquisa, DATA);
+
+  // o que o bloco NÃO alcança: fila, lote (relatório) e decisão do discovery
+  const tudo = JSON.stringify([env.fila(), env.lotes()]);
+  for (const proibido of ['Última postagem observada', 'Pode haver espaço', 'Agende pelo link', 'analise:', 'instagram.cta', 'problemaIdentificado', 'temperatura', 'score', 'urgência']) assert.equal(tudo.includes(proibido), false, proibido);
+  const sem = ambiente(t);
+  const rSem = sem.servico.submitProspecting(admin(), submissao([achadoRico('Clínica Alfa Teste', 'alfa-teste')]));
+  assert.equal(r.resultados[0].estadoOperacional, rSem.resultados[0].estadoOperacional, 'o bloco não muda a decisão do discovery');
+  assert.deepEqual(r.contagens, rSem.contagens, 'nem a contabilidade');
+  assert.equal(JSON.stringify(env.fila().items[r.prospectIds[0]].discoverySnapshot), JSON.stringify(sem.fila().items[rSem.prospectIds[0]].discoverySnapshot));
+});
+
+test('[PDI-17] bloco inválido: a submissão INTEIRA é recusada (RAW_FINDINGS_INVALID, caminho e código, sem o conteúdo) antes de tocar em CRM, dossiês, fila ou lote — mesmo um achado bom junto', (t) => {
+  const env = ambiente(t);
+  const ruins = [
+    [{ fatos: [fatoObs('instagram.url', 'https://instagram.example.test/x')] }, 'rawFindings[1].dossie.fatos[0].campo', 'CAMPO_DE_IDENTIDADE'],
+    [{ fatos: [fatoObs('instagram.cta', 'Agende', { fonte: fonteObs({ url: 'http://x.example.test' }) })] }, 'rawFindings[1].dossie.fatos[0].fonte.url', 'PROTOCOLO_PROIBIDO'],
+    [{ fatos: [fatoObs('instagram.cta', 'Agende')], analises: [analiseObs({ baseadoEm: [{ fato: 'instagram.cta' }], texto: 'Resultado garantido SEGREDO-X' })] }, 'rawFindings[1].dossie.analises[0].texto', 'TEXTO_PROIBIDO'],
+    [{ fatos: [], analises: [analiseObs({ baseadoEm: [] })] }, 'rawFindings[1].dossie.analises[0].baseadoEm', 'ANALISE_SEM_BASE'],
+    [{ sinais: [{ tipo: 'SCORE_ALTO' }] }, 'rawFindings[1].dossie.sinais', 'CAMPO_DESCONHECIDO'],
+  ];
+  for (const [bloco, caminho, codigo] of ruins) {
+    const erro = erroDe(() => env.servico.submitProspecting(admin(), submissao([achadoRico('Clínica Boa', 'boa-teste'), achadoRico('Clínica Ruim', 'ruim-teste', { dossie: bloco })])));
+    assert.equal(erro.code, PROSPECTING_ERROR.RAW_FINDINGS_INVALID);
+    assert.deepEqual(erro.details.errors.map((e) => [e.path, e.code]), [[caminho, codigo]]);
+    assert.equal(JSON.stringify(erro.details).includes('SEGREDO'), false);
+  }
+  assert.deepEqual(env.chamadasCrm, [], 'nada foi lido no CRM');
+  assert.equal(['queue', 'batch', 'dossier'].every((a) => !env.existe(a)), true);
+});
+
+test('[PDI-18] conflito de identidade é PRESERVADO como conflito (sinal NAO_VERIFICADO com as duas evidências), nunca resolvido em silêncio; o bloco não substitui a identidade', (t) => {
+  const env = ambiente(t);
+  const a = achadoRico('Clínica Alfa Teste', 'alfa-teste');
+  a.campos.facebook = [ev('https://facebook.example.test/alfa-um', 'f1'), ev('https://facebook.example.test/alfa-dois', 'f2')];
+  const r = env.servico.submitProspecting(admin(), submissao([a]));
+  const dossie = env.dossies()[r.dossierIds[0]];
+  const sinal = dossie.sinais.find((s) => s.tipo === 'FACEBOOK_EXISTENTE');
+  assert.deepEqual([sinal.status, sinal.valor, sinal.evidencias], ['NAO_VERIFICADO', null, ['fato:facebook.url', 'fato:facebook.url#2']]);
+  assert.equal(dossie.fatos.filter((f) => f.campo === 'facebook.url').length, 2, 'os dois valores ficam, cada um com a sua fonte');
+  const erro = erroDe(() => ambiente(t).servico.submitProspecting(admin(), submissao([achadoRico('Clínica Alfa Teste', 'alfa-teste', { dossie: { fatos: [fatoObs('site.url', 'https://outro.example.test')] } })])));
+  assert.equal(erro.code, PROSPECTING_ERROR.RAW_FINDINGS_INVALID);
+});
+
+test('[PDI-19] o bloco de um candidato bloqueado (DNC) é validado mas NÃO é guardado: sem dossiê para quem não entra na fila', (t) => {
+  const env = ambiente(t, { crm: [{ campos: { empresa: 'Bloqueada Teste', site: 'bloqueada.example.test' }, dnc: true }] });
+  const r = env.servico.submitProspecting(admin(), submissao([achadoRico('Nome Diferente Um', 'bloqueada', { dossie: blocoV2() })]));
+  assert.equal(r.resultados[0].estadoOperacional, 'DNC');
+  assert.deepEqual([r.resultados[0].dossierId, r.dossierIds], [null, []]);
+  assert.equal(env.existe('dossier'), false);
+  assert.equal(JSON.stringify(env.lotes()).includes('Última postagem'), false);
+});
+
+test('[PDI-20] limite de submissão: 150 achados aceitos, 151 recusados por inteiro (LOTE_EXCESSIVO) sem gravar nada; cada dossiê V2 de uma submissão cheia é gravado sem truncar', (t) => {
+  const env = ambiente(t);
+  const achados = (n) => Array.from({ length: n }, (_, i) => achadoRico(`Clínica Número ${i} Teste`, `numero-${i}-teste`, { dossie: blocoV2() }));
+  const r = env.servico.submitProspecting(admin(), submissao(achados(150), { quantidadeDesejada: 100 }));
+  assert.equal(r.contagens.encontrados, 150);
+  assert.deepEqual([r.contagens.principal, r.contagens.reserva, r.contagens.metaAtingida], [100, 50, true]);
+  assert.equal(r.dossierIds.length, 150);
+  assert.equal(Object.values(env.dossies()).every((d) => d.analises.length === 2 && d.fatos.length === 7), true);
+  const cheio = ambiente(t);
+  const erro = erroDe(() => cheio.servico.submitProspecting(admin(), submissao(achados(151), { quantidadeDesejada: 100 })));
+  assert.deepEqual(erro.details.errors.map((e) => e.code), ['LOTE_EXCESSIVO']);
+  assert.equal(['queue', 'batch', 'dossier'].every((a) => !cheio.existe(a)), true);
+});
+
+test('[PDI-21] cada achado leva o SEU bloco: o dossiê de um candidato sem bloco não recebe as observações do outro', (t) => {
+  const env = ambiente(t);
+  const r = env.servico.submitProspecting(admin(), submissao([achadoRico('Clínica Sem Bloco', 'sem-bloco-teste'), achadoRico('Clínica Com Bloco', 'com-bloco-teste', { dossie: blocoV2() })]));
+  const porEmpresa = Object.fromEntries(r.resultados.map((x) => [x.empresa, env.dossies()[x.dossierId]]));
+  assert.equal(porEmpresa['Clínica Sem Bloco'].fatos.some((f) => f.campo === 'instagram.cta'), false);
+  assert.deepEqual(porEmpresa['Clínica Sem Bloco'].analises, []);
+  assert.equal(porEmpresa['Clínica Com Bloco'].fatos.some((f) => f.campo === 'instagram.cta'), true);
+  assert.equal(porEmpresa['Clínica Com Bloco'].analises.length, 2);
+});

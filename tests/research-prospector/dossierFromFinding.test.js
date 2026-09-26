@@ -7,7 +7,7 @@ const fs = require('node:fs');
 const path = require('node:path');
 
 const { factsFromFinding, FIELD_TO_FACT } = require('../../src/research-prospector/dossierFromFinding');
-const { buildDossier, LIMITS } = require('../../src/research-prospector/dossier');
+const { buildDossier } = require('../../src/research-prospector/dossier');
 const { analyzeSource, toPosix } = require('../helpers/staticImports');
 
 const HOJE = '2026-09-25';
@@ -55,13 +55,16 @@ test('[DFF-5] whatsapp: fato whatsapp.publico com valor true (só DADO com fonte
   assert.deepEqual([fatos({ whatsapp: [ev('(24) 98765-1000', { url: undefined })] })[0].status], ['NAO_VERIFICADO']);
 });
 
-test('[DFF-6] se há ao menos uma evidência verificável, só os fatos DADO ficam (no máximo 5 por campo); se nenhuma, UM único NAO_VERIFICADO por campo', () => {
+test('[DFF-6] UM fato por evidência, na ordem, sem cortar nem descartar nada em silêncio (o excesso é recusado antes, pelo esquema; se chegasse aqui, o dossiê recusaria)', () => {
   const muitas = Array.from({ length: 8 }, (_, i) => ev(`https://a${i}.example.test`));
-  assert.equal(fatos({ site: muitas }).length, LIMITS.FATOS_POR_CAMPO);
+  assert.equal(fatos({ site: muitas }).length, 8, 'nenhum corte');
   const misto = fatos({ site: [ev('@x'), ev('https://ok.example.test')] });
-  assert.deepEqual(misto.map((f) => [f.status, f.valor]), [['DADO', 'https://ok.example.test']]);
+  assert.deepEqual(misto.map((f) => [f.status, f.valor]), [['NAO_VERIFICADO', null], ['DADO', 'https://ok.example.test']]);
   const nenhuma = fatos({ site: [ev('@x'), ev('@y'), ev('@z')] });
-  assert.deepEqual(nenhuma.map((f) => f.status), ['NAO_VERIFICADO']);
+  assert.deepEqual(nenhuma.map((f) => f.status), ['NAO_VERIFICADO', 'NAO_VERIFICADO', 'NAO_VERIFICADO']);
+  const r = buildDossier({ prospectId: 'id:x', fatos: fatos({ site: muitas }) }, { now: new Date('2026-09-25T15:00:00Z') });
+  assert.equal(r.ok, false);
+  assert.deepEqual(r.errors.map((e) => e.code), ['FATOS_DO_CAMPO_EXCESSIVOS', 'FATOS_DO_CAMPO_EXCESSIVOS', 'FATOS_DO_CAMPO_EXCESSIVOS']);
 });
 
 test('[DFF-7] campo herdado do protótipo ou achado hostil não quebra nem polui; e o resultado é aceito por buildDossier (que revalida tudo), gerando sinais', () => {
@@ -73,13 +76,13 @@ test('[DFF-7] campo herdado do protótipo ou achado hostil não quebra nem polui
   assert.deepEqual(r.value.sinais.map((s) => [s.tipo, s.status]).sort(), [['FACEBOOK_EXISTENTE', 'NAO_VERIFICADO'], ['INSTAGRAM_EXISTENTE', 'DADO'], ['SITE_EXISTENTE', 'DADO'], ['WHATSAPP_PUBLICO', 'DADO']]);
 });
 
-test('[DFF-8] arquitetura: o módulo só importa ./dossier; é puro (sem CRM, disco, rede, relógio ou ambiente); nenhum módulo do dossiê importa o serviço', () => {
+test('[DFF-8] arquitetura: o módulo não importa nada; é puro (sem CRM, disco, rede, relógio ou ambiente); nenhum módulo do dossiê importa o serviço', () => {
   const raiz = path.join(__dirname, '..', '..');
   const arquivo = path.join(raiz, 'src', 'research-prospector', 'dossierFromFinding.js');
   const codigo = fs.readFileSync(arquivo, 'utf8');
   const analise = analyzeSource(codigo, toPosix(path.relative(raiz, arquivo)));
   assert.deepEqual(analise.issues, []);
-  assert.deepEqual(analise.refs.map((r) => r.specifier), ['./dossier']);
+  assert.deepEqual(analise.refs.map((r) => r.specifier), []);
   const semComentarios = codigo.replace(/\/\/.*$/gm, '');
   assert.doesNotMatch(semComentarios, /node:|fetch\(|process\.|new Date|Date\.now|Math\.random|crypto/);
   for (const nome of ['dossier.js', 'signalSchema.js', 'dossierRepository.js', 'dossierFromFinding.js']) {

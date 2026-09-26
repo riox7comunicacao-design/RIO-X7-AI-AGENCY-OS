@@ -1,5 +1,14 @@
 # Changelog
 
+## 2026-09-25 — rawFinding V2: bloco opcional `dossie` (observações e análises), rota 4 MiB / 150 achados
+
+O achado bruto pode trazer observações e análises para o dossiê ([decisão 0020](./docs/decisions/0020-raw-finding-v2.md)). **Sem pesquisa web**, sem rota nova, sem permissão nova, sem CRM write; discovery, Approval Queue, `batchAccounting`, Promotion Service e CRM não foram alterados. Contrato da submissão inalterado: `{ briefing, rawFindings }`.
+
+- **Bloco `dossie?: { fatos?, analises? }`** (módulo `rawFindingV2.js`): `campos` continua sendo a identidade/presença dos canais; o bloco só traz **observações** (`instagram.ultimaPostagemEm/postagensObservadas/cta`, `site.ctaWhatsapp/ctaAgendamento/formularioContato`, `anuncios.meta/google`); fato de identidade (`*.url`, `whatsapp.publico`) é recusado (`CAMPO_DE_IDENTIDADE`) e observação de canal sem o canal em `campos` também (`OBSERVACAO_SEM_CANAL`); conflito de identidade fica como conflito. Validado executando o `buildDossier` (sem duplicar validação e sem dependência circular) **antes** de ler o CRM ou gravar; o bloco não chega ao discovery.
+- **`motivo`** em fato NAO_VERIFICADO (vocabulário fechado: `SITE_FORA_DO_AR`, `PERFIL_PRIVADO`, `BLOQUEADO`, `SEM_RESULTADO`, `PAGINA_REMOVIDA`, `DESATUALIZADA`, `NAO_CONSULTADO`). Análises/hipóteses separadas dos fatos, sempre com `baseadoEm`, nunca DADO, nunca fora do dossiê.
+- **Limites, sem truncar:** rota de prospecção **4 MiB** (as demais 16 KiB), **150 achados** por submissão (era 500), **5 evidências por campo** (era 10), 25 fatos e 10 análises no bloco; excesso = recusa com código estável (`EVIDENCIAS_EXCESSIVAS`, `FATOS_EXCESSIVOS`, `ANALISES_EXCESSIVAS`, `LOTE_EXCESSIVO`...). A tradução `campos` → fatos gera um fato por evidência (antes cortava em 5). Sem `SITE_NAO_ENCONTRADO`.
+- **Testes:** 17 novos — 1117 no total: 1115 passam e 2 pulados com `.env`; 1110 e 7 pulados sem `.env`; 0 falhas. **Mutação:** 55 mutantes, 7 sobreviventes na 1ª rodada: 4 lacunas de teste (corrigidas e detectadas) e 3 equivalentes/inalcançáveis (defesas redundantes, documentados).
+
 ## 2026-09-25 — Integração do dossiê ao Prospecting Service (rawFindings → discovery → dossiê → fila → lote)
 
 O `submitProspecting` existente passou a criar o dossiê dos candidatos elegíveis ([decisão 0019](./docs/decisions/0019-prospecting-dossier-ingestion.md)). **Sem rota nova** (a rota só transporta), sem permissão nova, sem CRM write, sem alteração na Approval Queue, no Promotion Service ou no CRM; sem pesquisa web, IA, Dashboard, score ou ranking. Contrato de entrada inalterado: exatamente `{ briefing, rawFindings }`.

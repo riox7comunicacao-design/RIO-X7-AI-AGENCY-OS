@@ -10,12 +10,10 @@
 // de um domínio) uma URL https válida — "@usuario" e telefones NÃO viram URL —, (b) a URL https da fonte e (c) a data da consulta;
 // a fonte do fato é { url, tipo (o tipoFonte), observadoEm (a dataConsulta), nome (a fonte) }. Sem isso o fato é NAO_VERIFICADO de
 // valor nulo (a pesquisa não confirmou nada) — nunca uma URL, uma data ou uma fonte inventada. Um campo sem evidência não gera
-// fato (a ausência de fato não é a ausência da coisa). No máximo LIMITS.FATOS_POR_CAMPO fatos DADO por campo (os primeiros).
+// fato (a ausência de fato não é a ausência da coisa). UM fato por evidência: nada é cortado nem descartado em silêncio.
 //
-// Não há fato de atividade do Instagram, CTA, formulário nem anúncios, e não há análises: o achado não tem onde trazê-los, então
-// esses sinais simplesmente não nascem. O dossiê (buildDossier) revalida TUDO; aqui só se monta a entrada.
-
-const { LIMITS } = require('./dossier');
+// Fatos de OBSERVAÇÃO (atividade do Instagram, CTA, formulário, anúncios) e análises vêm do bloco opcional `dossie` do achado (rawFindingV2.js).
+// O dossiê (buildDossier) revalida TUDO; aqui só se monta a entrada a partir de `campos`.
 
 const FIELD_TO_FACT = Object.freeze({
   site: 'site.url',
@@ -44,20 +42,21 @@ function factsFromFinding(finding, fallbackDate) {
   for (const [field, campo] of Object.entries(FIELD_TO_FACT)) {
     const evidences = hasOwn(campos, field) && Array.isArray(campos[field]) ? campos[field] : [];
     if (evidences.length === 0) continue;
-    const verified = [];
+    // UM fato por evidência, na ordem em que vieram: nada é cortado nem descartado em silêncio (o excesso já foi recusado pelo esquema).
     for (const evidence of evidences) {
       const valor = campo === 'whatsapp.publico' ? true : asHttpsUrl(evidence.valor);
-      if (valor === null || !evidence.url || !evidence.dataConsulta) continue;
-      verified.push({
-        campo,
-        valor,
-        status: 'DADO',
-        observadoEm: evidence.dataConsulta,
-        fonte: { url: evidence.url, tipo: evidence.tipoFonte, observadoEm: evidence.dataConsulta, nome: evidence.fonte },
-      });
+      if (valor !== null && evidence.url && evidence.dataConsulta) {
+        facts.push({
+          campo,
+          valor,
+          status: 'DADO',
+          observadoEm: evidence.dataConsulta,
+          fonte: { url: evidence.url, tipo: evidence.tipoFonte, observadoEm: evidence.dataConsulta, nome: evidence.fonte },
+        });
+      } else {
+        facts.push({ campo, valor: null, status: 'NAO_VERIFICADO', observadoEm: evidence.dataConsulta || finding.dataDaPesquisa || fallbackDate });
+      }
     }
-    if (verified.length > 0) facts.push(...verified.slice(0, LIMITS.FATOS_POR_CAMPO));
-    else facts.push({ campo, valor: null, status: 'NAO_VERIFICADO', observadoEm: evidences[0].dataConsulta || finding.dataDaPesquisa || fallbackDate });
   }
   return facts;
 }

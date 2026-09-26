@@ -32,9 +32,9 @@ const LIMITS = Object.freeze({
   URL: 2048,
   FONTE_NOME: 200,
   OBSERVACAO_FONTE: 500,
-  EVIDENCIAS_POR_CAMPO: 10,
+  EVIDENCIAS_POR_CAMPO: 5, // = fatos por campo do dossiê: nunca se corta em silêncio (o excesso é recusado, EVIDENCIAS_EXCESSIVAS)
   FONTES: 50,
-  ACHADOS_POR_LOTE: 500,
+  ACHADOS_POR_LOTE: 150, // ~100 leads pedidos + até 50 de reserva (decisão 0020); a rota aceita até 4 MiB
   MAX_ERRORS: 50,
 });
 

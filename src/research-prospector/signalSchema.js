@@ -110,7 +110,32 @@ const DATE_PART = (value) => String(value).slice(0, 10);
 const DAY_MS = 24 * 60 * 60 * 1000;
 const dayNumber = (isoDate) => Math.round(Date.parse(`${DATE_PART(isoDate)}T00:00:00Z`) / DAY_MS);
 
-const FACT_KEYS = Object.freeze(['campo', 'valor', 'status', 'fonte', 'observadoEm']);
+const FACT_KEYS = Object.freeze(['campo', 'valor', 'status', 'fonte', 'observadoEm', 'motivo']);
+
+// Por que um fato ficou NAO_VERIFICADO — vocabulário FECHADO (as limitações da decisão 0004, seção 10). Só existe em fato NAO_VERIFICADO.
+const MOTIVO = Object.freeze({
+  SITE_FORA_DO_AR: 'SITE_FORA_DO_AR',
+  PERFIL_PRIVADO: 'PERFIL_PRIVADO',
+  BLOQUEADO: 'BLOQUEADO',
+  SEM_RESULTADO: 'SEM_RESULTADO',
+  PAGINA_REMOVIDA: 'PAGINA_REMOVIDA',
+  DESATUALIZADA: 'DESATUALIZADA',
+  NAO_CONSULTADO: 'NAO_CONSULTADO',
+});
+
+// Campos de OBSERVAÇÃO (o que a pesquisa viu sobre um canal ou sobre anúncios) e o canal de `campos` de que dependem. Os demais campos do
+// catálogo (`*.url`, `whatsapp.publico`) são IDENTIDADE/PRESENÇA de canal: quem os informa é `campos` do achado, e o bloco `dossie` do
+// achado NÃO os repete (uma só fonte de verdade — decisão 0020).
+const OBSERVATION_FIELDS = Object.freeze({
+  'instagram.ultimaPostagemEm': 'instagram',
+  'instagram.postagensObservadas': 'instagram',
+  'instagram.cta': 'instagram',
+  'site.ctaWhatsapp': 'site',
+  'site.ctaAgendamento': 'site',
+  'site.formularioContato': 'site',
+  'anuncios.meta': null,
+  'anuncios.google': null,
+});
 const SOURCE_KEYS = Object.freeze(['url', 'tipo', 'observadoEm', 'nome']);
 
 // A fonte de um fato: só as quatro chaves, url https pública, tipo do domínio, data real, nome opcional. Devolve { value } ou { errors }.
@@ -191,6 +216,14 @@ function validateFact(raw, path, now) {
   else if (typeof status !== 'string') errors.push({ path: `${path}.status`, code: SCHEMA_ERROR.TIPO_INVALIDO });
   else if (!hasOwn(FACT_STATUS, status)) errors.push({ path: `${path}.status`, code: 'STATUS_INVALIDO' });
   else value.status = status;
+
+  const motivo = present.get('motivo');
+  if (motivo !== undefined && motivo !== null) {
+    if (value.status === FACT_STATUS.DADO) errors.push({ path: `${path}.motivo`, code: 'MOTIVO_EM_FATO_DADO' });
+    else if (typeof motivo !== 'string') errors.push({ path: `${path}.motivo`, code: SCHEMA_ERROR.TIPO_INVALIDO });
+    else if (!hasOwn(MOTIVO, motivo)) errors.push({ path: `${path}.motivo`, code: SCHEMA_ERROR.VALOR_INVALIDO });
+    else value.motivo = motivo;
+  }
 
   let observadoEm;
   if (!present.has('observadoEm') || present.get('observadoEm') === null) errors.push({ path: `${path}.observadoEm`, code: SCHEMA_ERROR.CAMPO_OBRIGATORIO });
@@ -328,6 +361,8 @@ module.exports = {
   SIGNAL_TYPE,
   ADS_STATE,
   FACT_CATALOG,
+  MOTIVO,
+  OBSERVATION_FIELDS,
   LIMITS,
   RECENT_POST_DAYS,
   MIN_POSTS_FOR_FREQUENCY,

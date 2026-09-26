@@ -1,5 +1,7 @@
 # 0017 — Rota autenticada de ingestão de prospecção
 
+> **Atualização (0020, 2026-09-25):** o limite do corpo desta rota passou de 2 MiB para **4 MiB** e uma submissão passou de 500 para **150 achados** ([0020](./0020-raw-finding-v2.md)). Onde este documento diz 2 MiB, leia 4 MiB.
+
 ## Status
 
 Implementado em 2026-09-25, sobre o Prospecting Service V1 (`src/services/prospectingService.js`). Só a **rota HTTP**: sem Dashboard, sem pesquisa web, sem IA, sem exclusão persistente. CRM (domínio, Service, API), a Approval Queue, o Promotion Service e o modelo da fila **não foram alterados**; nenhuma permissão nova (usa `PROPOSE:LEAD_APPROVAL` e `READ:CRM`, que já existiam).

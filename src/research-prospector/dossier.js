@@ -59,6 +59,7 @@ const DOSSIER_ERROR = Object.freeze({
   POSTAGEM_APOS_OBSERVACAO: 'POSTAGEM_APOS_OBSERVACAO',
   POSTAGENS_INCONSISTENTES: 'POSTAGENS_INCONSISTENTES',
   ID_INVALIDO: 'ID_INVALIDO',
+  MOTIVO_EM_FATO_DADO: 'MOTIVO_EM_FATO_DADO',
 });
 
 const MESSAGES = Object.freeze({
@@ -77,6 +78,7 @@ const MESSAGES = Object.freeze({
   POSTAGEM_APOS_OBSERVACAO: 'uma postagem não pode ser posterior à data da observação',
   POSTAGENS_INCONSISTENTES: 'a última postagem não coincide com a mais recente das postagens observadas',
   ID_INVALIDO: 'identificador com formato inválido',
+  MOTIVO_EM_FATO_DADO: 'um motivo só existe em fato NAO_VERIFICADO',
 });
 
 // Texto de análise que NÃO passa: promessa de resultado, urgência artificial e a afirmação negativa que a pesquisa nunca pode fazer

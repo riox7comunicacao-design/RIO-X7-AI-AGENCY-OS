@@ -3,7 +3,7 @@
 // O que estes testes protegem: a rota autentica pelo fluxo que já existe (Bearer -> verifyAccessToken real, contra um Supabase falso só na
 // borda de rede -> AuthorizationContext) e entrega ao serviço SÓ o contexto e o corpo — o serviço autoriza (PROPOSE:LEAD_APPROVAL e READ:CRM),
 // valida, processa e grava. A rota não duplica nada disso. Nada que o navegador manda vira identidade, permissão ou decisão; o corpo aceita
-// até 2 MiB só nesta rota; os erros PROSPECTING_* viram HTTP de forma determinística com mensagem FIXA; e nada interno (stack, caminho, valor
+// até 4 MiB só nesta rota; os erros PROSPECTING_* viram HTTP de forma determinística com mensagem FIXA; e nada interno (stack, caminho, valor
 // recusado, token, authUserId) sai. A maioria roda sobre peças REAIS (serviço, CRM, fila e lote em arquivos temporários); os testes que
 // provam a DELEGAÇÃO e o mapeamento de erros usam um double do serviço. Tudo fictício (example.test).
 
@@ -191,7 +191,7 @@ test('[PRO-API-8] corpo ausente, vazio, quebrado, que não é objeto, sem uma da
   await ruim({ body: corpo([]), contentType: null }, 415, 'sem Content-Type');
   await ruim({ body: '{"briefing":{"nicho":"X Nicho","quantidadeDesejada":1},"rawFindings":[],"__proto__":{"polluted":true}}' }, 400, '__proto__');
   assert.equal({}.polluted, undefined);
-  // bombas de aninhamento e de tamanho (dentro do limite de 2 MiB): recusadas como JSON inválido ou pelo esquema, sem travar nem estourar
+  // bombas de aninhamento e de tamanho (dentro do limite de 4 MiB): recusadas como JSON inválido ou pelo esquema, sem travar nem estourar
   await ruim({ body: '['.repeat(1000000) }, 400, 'aninhamento de 1 milhão de níveis');
   await ruim({ body: JSON.stringify({ briefing: { nicho: 'X Nicho', quantidadeDesejada: 1 }, rawFindings: [{ empresa: 'X', campos: JSON.parse('{"a":'.repeat(50) + '1' + '}'.repeat(50)) }] }) }, 400, 'achado profundo');
   const comQuery = await chamar(env, BRENO, { url: `${ROTA}?loteId=1`, body: corpo([]) });
@@ -199,8 +199,8 @@ test('[PRO-API-8] corpo ausente, vazio, quebrado, que não é objeto, sem uma da
   efeitos.conferir();
 });
 
-test('[PRO-API-9] corpo acima de 2 MiB: 413, o corpo não é processado e o serviço nem é chamado — declarado no Content-Length ou só no fluxo; e o limite geral das outras rotas continua 16 KiB', async (t) => {
-  assert.equal(MAX_PROSPECTING_BODY_BYTES, 2 * 1024 * 1024);
+test('[PRO-API-9] corpo acima de 4 MiB: 413, o corpo não é processado e o serviço nem é chamado — declarado no Content-Length ou só no fluxo; e o limite geral das outras rotas continua 16 KiB', async (t) => {
+  assert.equal(MAX_PROSPECTING_BODY_BYTES, 4 * 1024 * 1024);
   assert.equal(MAX_BODY_BYTES, 16 * 1024, 'o limite geral NÃO mudou');
   const chamadas = [];
   const env = ambiente(t, { prospectingService: { submitProspecting: (...args) => (chamadas.push(args), {}) }, prospeccao: false });
@@ -219,7 +219,7 @@ test('[PRO-API-9] corpo acima de 2 MiB: 413, o corpo não é processado e o serv
   const grandeComLength = JSON.stringify(corpo(Array.from({ length: 60 }, (_, i) => achado(`Clínica ${i} Teste`, `grande-${i}-teste`, { observacoesBrutas: 'y'.repeat(900) }))));
   assert.ok(grandeComLength.length > MAX_BODY_BYTES && grandeComLength.length < MAX_PROSPECTING_BODY_BYTES);
   const comContentLength = await chamar(env, BRENO, { body: grandeComLength, headers: { 'content-length': String(Buffer.byteLength(grandeComLength)) } });
-  assert.equal(comContentLength.status, 201, 'um Content-Length declarado dentro dos 2 MiB é aceito nesta rota');
+  assert.equal(comContentLength.status, 201, 'um Content-Length declarado dentro dos 4 MiB é aceito nesta rota');
   assert.ok(grande.length > 2 * 1024 && grande.length < MAX_PROSPECTING_BODY_BYTES);
   const aceito = await chamar(env, BRENO, { body: grande });
   assert.equal(aceito.status, 201);
@@ -228,16 +228,16 @@ test('[PRO-API-9] corpo acima de 2 MiB: 413, o corpo não é processado e o serv
   assert.equal(outraRota.status, 413, 'as outras rotas continuam com 16 KiB');
 });
 
-test('[PRO-API-10] 500 achados de verdade cabem no limite: a submissão real de 500 candidatos passa pelo transporte e pelo serviço (e um a mais é recusado pelo esquema, não pelo transporte)', async (t) => {
+test('[PRO-API-10] 150 achados de verdade cabem no limite: a submissão real de 150 candidatos (o modelo: ~100 pedidos + até 50 de reserva) passa pelo transporte e pelo serviço (e um a mais é recusado pelo esquema, não pelo transporte)', async (t) => {
   const env = ambiente(t);
-  const achados = Array.from({ length: 500 }, (_, i) => achado(`Clínica Número ${i} Teste`, `numero-${i}-teste`, { observacoesBrutas: 'Atende adultos e adolescentes. '.repeat(20) }));
-  const texto = JSON.stringify(corpo(achados, { quantidadeDesejada: 500 }));
-  assert.ok(texto.length < MAX_PROSPECTING_BODY_BYTES, `500 achados ocupam ${texto.length} bytes`);
+  const achados = Array.from({ length: 150 }, (_, i) => achado(`Clínica Número ${i} Teste`, `numero-${i}-teste`, { observacoesBrutas: 'Atende adultos e adolescentes. '.repeat(20) }));
+  const texto = JSON.stringify(corpo(achados, { quantidadeDesejada: 100 }));
+  assert.ok(texto.length < MAX_PROSPECTING_BODY_BYTES, `150 achados ocupam ${texto.length} bytes`);
   const resposta = await chamar(env, BRENO, { body: texto });
   assert.equal(resposta.status, 201);
-  assert.equal(resposta.json().contagens.encontrados, 500);
+  assert.equal(resposta.json().contagens.encontrados, 150);
   assert.equal(resposta.json().status, 'META_ATINGIDA');
-  const demais = await chamar(env, BRENO, { body: corpo([...achados, achado('Um a mais', 'um-a-mais')], { quantidadeDesejada: 500 }) });
+  const demais = await chamar(env, BRENO, { body: corpo([...achados, achado('Um a mais', 'um-a-mais')], { quantidadeDesejada: 100 }) });
   assert.equal(demais.status, 400);
   assert.equal(demais.json().error.code, 'PROSPECTING_RAW_FINDINGS_INVALID');
   assert.deepEqual(demais.json().error.details, [{ path: '', code: 'LOTE_EXCESSIVO' }]);
@@ -408,7 +408,7 @@ test('[PRO-API-19] a rota chama o serviço UMA vez por requisição, e uma requi
   assert.equal(chamadas.length, 2);
 });
 
-test('[PRO-API-20] servidor HTTP de verdade (socket): POST autenticado devolve 201; sem token, 401; corpo maior que 2 MiB é cortado com 413 sem ser processado', async (t) => {
+test('[PRO-API-20] servidor HTTP de verdade (socket): POST autenticado devolve 201; sem token, 401; corpo maior que 4 MiB é cortado com 413 sem ser processado', async (t) => {
   const http = require('node:http');
   const env = ambiente(t);
   const servidor = http.createServer(env.app.listener);

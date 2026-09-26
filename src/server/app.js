@@ -68,10 +68,10 @@ const {
 const { createStaticHandler } = require('./static');
 
 const MAX_BODY_BYTES = 16 * 1024;
-// A ÚNICA rota com corpo maior: a submissão de prospecção (até 500 achados brutos). O limite geral acima NÃO mudou; este vale só
+// A ÚNICA rota com corpo maior: a submissão de prospecção (até 150 achados brutos, decisão 0020). O limite geral acima NÃO mudou; este vale só
 // para POST /api/prospecting/submit e é conferido ANTES de ler o corpo (Content-Length) e durante a leitura (o corpo nunca é
 // processado acima dele). Os limites estruturais do rawFindingSchema continuam valendo por dentro.
-const MAX_PROSPECTING_BODY_BYTES = 2 * 1024 * 1024;
+const MAX_PROSPECTING_BODY_BYTES = 4 * 1024 * 1024;
 const MAX_TOKEN_LENGTH = 8192;
 const MAX_TARGET_LENGTH = 4096;
 const DEFAULT_AUTH_TIMEOUT_MS = 10000;
@@ -605,7 +605,7 @@ function createApp(dependencies) {
     if (route.family === 'crm') return dispatchCrm(req, url, route, context);
 
     if (route.name === 'prospecting-submit') {
-      // Só transporte: sem query, corpo JSON (objeto) de até 2 MiB, e o objeto INTEIRO vai ao serviço — que decide (autoriza
+      // Só transporte: sem query, corpo JSON (objeto) de até 4 MiB, e o objeto INTEIRO vai ao serviço — que decide (autoriza
       // PROPOSE e READ do CRM, aceita exatamente { briefing, rawFindings } e deriva autor, lote, datas e contagens). O autor é o
       // `context` desta requisição (a identidade verificada), nunca algo do corpo. O relatório do serviço sai como está.
       readQuery(url, []);

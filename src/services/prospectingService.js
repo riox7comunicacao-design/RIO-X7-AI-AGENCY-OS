@@ -54,7 +54,8 @@ const { assertValidBatchRepository, BATCH_ID_PATTERN } = require('../research-pr
 const { buildDossier } = require('../research-prospector/dossier');
 const { factsFromFinding } = require('../research-prospector/dossierFromFinding');
 const { assertValidDossierRepository } = require('../research-prospector/dossierRepository');
-const { validateRawFindings, checkText, ERROR: SCHEMA_ERROR, MESSAGES: SCHEMA_MESSAGES, LIMITS: SCHEMA_LIMITS } = require('../research-prospector/rawFindingSchema');
+const { validateRawFindingsV2 } = require('../research-prospector/rawFindingV2');
+const { checkText, ERROR: SCHEMA_ERROR, MESSAGES: SCHEMA_MESSAGES, LIMITS: SCHEMA_LIMITS } = require('../research-prospector/rawFindingSchema');
 const { PERMISSION } = require('../auth');
 
 const { QUEUE_STATE } = approvalQueueDomain;
@@ -299,7 +300,7 @@ function createProspectingService(dependencies) {
     const briefing = checkedBriefing.value;
 
     const instant = now();
-    const checkedFindings = validateRawFindings(rawFindings, { now: instant });
+    const checkedFindings = validateRawFindingsV2(rawFindings, { now: instant });
     if (!checkedFindings.ok) {
       const errors = checkedFindings.errors.length > 0 ? checkedFindings.errors : checkedFindings.items.filter((item) => !item.ok).flatMap((item) => item.errors.map((error) => ({ ...error, path: `rawFindings[${item.index}]${error.path ? `.${error.path}` : ''}` })));
       throw new ProspectingError(PROSPECTING_ERROR.RAW_FINDINGS_INVALID, { errors: errors.slice(0, SCHEMA_LIMITS.MAX_ERRORS) });
@@ -308,10 +309,13 @@ function createProspectingService(dependencies) {
     // 3) CRM (só leitura) — sem ele o DNC não pode ser verificado: recusa em vez de seguir "sem DNC"
     const crmRecords = loadCrmRecords(context);
 
-    // 4) discovery existente. As exclusões do briefing são aplicadas pela função existente, preservando o índice de cada achado.
+    // 4) discovery existente. O bloco `dossie` (rawFinding V2) NÃO chega ao discovery: ele não decide identidade, duplicidade, DNC nem
+    // elegibilidade. As exclusões do briefing são aplicadas pela função existente, preservando o índice de cada achado.
+    const dossieBlocks = checkedFindings.validos.map((finding) => finding.dossie || { fatos: [], analises: [] });
+    const findings = checkedFindings.validos.map(({ dossie, ...finding }) => finding);
     const exclusoes = (briefing.exclusoes || []).map((item) => item.toLowerCase());
-    const indexOf = new Map(checkedFindings.validos.map((finding, index) => [finding, index]));
-    const screened = discovery.screenExclusions(checkedFindings.validos, exclusoes);
+    const indexOf = new Map(findings.map((finding, index) => [finding, index]));
+    const screened = discovery.screenExclusions(findings, exclusoes);
     let pipeline;
     try {
       pipeline = discovery.runDiscoveryPipeline({
@@ -389,9 +393,9 @@ function createProspectingService(dependencies) {
         // o que a fila já decidiu para um item que existia vale mais do que a classificação de agora
         if (QUEUE_STATES_THAT_WIN.includes(item.estado)) entry.estadoLote = item.estado;
         // o dossiê do candidato pesquisado (só elegíveis; sem fatos, sem dossiê): associado por identificadores, nunca dentro da fila
-        const fatos = factsFromFinding(checkedFindings.validos[indice], instant.toISOString().slice(0, 10));
+        const fatos = [...factsFromFinding(findings[indice], instant.toISOString().slice(0, 10)), ...dossieBlocks[indice].fatos];
         if (fatos.length > 0) {
-          const built = buildDossier({ prospectId, loteId, fatos }, { now: instant, ...(newDossierId ? { newId: newDossierId } : {}) });
+          const built = buildDossier({ prospectId, loteId, fatos, analises: dossieBlocks[indice].analises }, { now: instant, ...(newDossierId ? { newId: newDossierId } : {}) });
           if (!built.ok) throw new ProspectingError(PROSPECTING_ERROR.CANDIDATE_INVALID);
           dossiers.push(built.value);
           entry.dossierId = built.value.dossierId;
