@@ -95,13 +95,32 @@ function screenExclusions(rawFindings, exclusoes) {
   return { incluidos, excluidos };
 }
 
+// ORIGEM de uma evidência (unidade de independência entre evidências — decisão M1/H1):
+// - com URL https válida: o HOST (hostname em minúsculas, sem "www." inicial, sem porta). Caminho, barra final, query e fragmento não
+//   contam: duas páginas do mesmo host são UMA origem (mesma definição de "host" de researchPolicy.bareHost);
+// - sem URL (ou com URL que não é https válida): a `fonte` normalizada (sem acento, minúscula, espaços colapsados);
+// - sem nenhum dos dois: uma única origem "vazia" (nunca conta como origem distinta).
+// Os prefixos separam os dois espaços: um host nunca é igual a um nome de fonte.
+function evidenceOrigin(evidence) {
+  if (typeof evidence.url === 'string') {
+    try {
+      const url = new URL(evidence.url.trim());
+      if (url.protocol === 'https:' && url.hostname !== '') return `host:${url.hostname.toLowerCase().replace(/^www\./, '')}`;
+    } catch {
+      // URL inválida: cai para a fonte
+    }
+  }
+  const fonte = typeof evidence.fonte === 'string' ? evidence.fonte.normalize('NFD').replace(/\p{M}/gu, '').toLowerCase().replace(/\s+/g, ' ').trim() : '';
+  return `fonte:${fonte}`;
+}
+
 // Decide o status de confiança de UM campo a partir das evidências coletadas.
 // - Sem evidência → NAO_VERIFICADO (nunca inventado, nunca inferido de outro campo).
 // - Evidências com valores diferentes → HIPOTESE + conflito registrado (nenhuma
 //   escolhida silenciosamente; nenhum valor único vira o "valor" do campo).
-// - Evidência única de fonte oficial, ou 2+ evidências independentes concordando
-//   → VALIDADO.
-// - Evidência única de fonte secundária → HIPOTESE.
+// - Evidência única de fonte oficial, ou evidências concordando de 2+ ORIGENS distintas
+//   (evidenceOrigin; duplicatas e páginas do mesmo host contam como uma) → VALIDADO.
+// - Evidência única de fonte secundária, ou várias de uma só origem → HIPOTESE.
 function evidenceStatus(evidences) {
   if (!evidences || evidences.length === 0) {
     return { status: INFO_STATUS.NAO_VERIFICADO, valor: null, conflito: false, evidencias: [] };
@@ -114,7 +133,7 @@ function evidenceStatus(evidences) {
 
   const valor = valoresUnicos[0];
   const temFonteOficial = evidences.some((e) => e.tipoFonte === SOURCE_TYPE.OFICIAL);
-  const multiplasFontes = evidences.length > 1;
+  const multiplasFontes = new Set(evidences.map(evidenceOrigin)).size > 1;
 
   if (temFonteOficial || multiplasFontes) {
     return { status: INFO_STATUS.VALIDADO, valor, conflito: false, evidencias: evidences };
