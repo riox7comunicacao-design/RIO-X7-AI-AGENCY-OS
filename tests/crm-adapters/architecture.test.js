@@ -48,7 +48,7 @@ test('[CRMADP-ARQ-3] a lista própria de campos do adapter (crmSupabaseMapping.j
 });
 
 test('[CRMADP-ARQ-4] nada de produção (server, services) usa src/crm-adapters/ ainda — a composição real continua só com o arquivo local (comentários podem CITAR "crm-adapters" em prosa; o que conta é um import/uso de verdade)', () => {
-  for (const arquivo of ['src/server/index.js', 'src/server/app.js', 'src/server/static.js', 'src/services/crmFileService.js', 'src/services/crmIntegrationFileService.js', 'src/services/prospectingFileService.js']) {
+  for (const arquivo of ['src/server/index.js', 'src/server/app.js', 'src/server/static.js', 'src/services/crmFileService.js', 'src/services/crmIntegrationFileService.js', 'src/services/prospectingFileService.js', 'src/services/crmRepositoryFactory.js']) {
     const semComentarios = fs.readFileSync(path.join(RAIZ, arquivo), 'utf8').replace(/\/\/[^\n]*/g, '');
     assert.doesNotMatch(semComentarios, /crm-adapters/, arquivo);
   }

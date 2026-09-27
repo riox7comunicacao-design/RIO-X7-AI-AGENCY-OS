@@ -11,7 +11,7 @@ const os = require('node:os');
 const path = require('node:path');
 
 const { authorizeCrmOperation, PERMISSION, defineUser, ROLE, USER_STATUS } = require('../../src/auth');
-const { createFileBackedCrmService } = require('../../src/services/crmFileService');
+const { createFileBackedCrmService, sharedFileCrmRepository } = require('../../src/services/crmFileService');
 const { createAuthorizationContext } = require('../helpers/authFixtures');
 const { analyzeSource } = require('../helpers/staticImports');
 
@@ -112,6 +112,30 @@ test('[CRM-FILE-6] persistência real: outro Service sobre o MESMO arquivo lê o
   fs.writeFileSync(filePath, '{ "meio-de-um-json": ');
   await assert.rejects(async () => await segundo.listRecords(ctx), /^Error: CRM: arquivo de dados corrompido/);
   await assert.rejects(async () => await segundo.createRecord(ctx, { empresa: 'Nova' }), /arquivo de dados corrompido/);
+});
+
+test('[CRM-FILE-8] INSTÂNCIA ÚNICA por caminho (etapa 2.3): duas chamadas a createFileBackedCrmService() para o MESMO caminho reaproveitam o MESMO repositório — provado por igualdade de referência (sharedFileCrmRepository) e, de forma reproduzível (30 repetições), por uma corrida real: duas escritas CONCORRENTES com a mesma identidade, uma por CADA Service, nunca criam duas cópias', async (t) => {
+  const filePath = path.join(novoDiretorio(t), 'crm.json');
+  const a = createFileBackedCrmService({ authorizeOperation: authorizeCrmOperation, filePath });
+  const b = createFileBackedCrmService({ authorizeOperation: authorizeCrmOperation, filePath });
+  assert.equal(sharedFileCrmRepository(filePath), sharedFileCrmRepository(filePath), 'sanidade: a própria função de cache é estável para o mesmo caminho');
+
+  for (let tentativa = 0; tentativa < 30; tentativa += 1) {
+    const arquivoDaVez = path.join(novoDiretorio(t), 'crm.json');
+    const x = createFileBackedCrmService({ authorizeOperation: authorizeCrmOperation, filePath: arquivoDaVez });
+    const y = createFileBackedCrmService({ authorizeOperation: authorizeCrmOperation, filePath: arquivoDaVez });
+    const resultados = await Promise.allSettled([
+      x.createRecord(contexto(), { empresa: 'Corrida A', site: 'corrida.example.test' }),
+      y.createRecord(contexto(), { empresa: 'Corrida B', site: 'corrida.example.test' }),
+    ]);
+    const sucessos = resultados.filter((r) => r.status === 'fulfilled').length;
+    assert.equal(sucessos, 1, `tentativa ${tentativa}: deveria haver exatamente 1 sucesso e 1 recusa por duplicidade, não ${sucessos}`);
+    const gravados = JSON.parse(fs.readFileSync(arquivoDaVez, 'utf8'));
+    assert.equal(Object.keys(gravados).length, 1, `tentativa ${tentativa}: exatamente 1 registro no arquivo — nenhuma duplicata, nenhuma escrita perdida`);
+  }
+
+  const { record } = await a.createRecord(contexto(), EMPRESA);
+  assert.equal((await b.getRecord(contexto(), record.id)).empresa, EMPRESA.empresa, 'b vê o que a gravou — mesmo repositório');
 });
 
 test('[CRM-FILE-7] a fábrica só conhece o Service e o adapter de arquivo: a lista de importações é fechada e não há I/O, rede nem execução dinâmica no código', () => {

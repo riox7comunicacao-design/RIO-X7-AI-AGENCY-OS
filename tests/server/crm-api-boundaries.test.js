@@ -73,19 +73,22 @@ test('[CRM-API-ARCH-3] a raiz de composição só chama a fábrica de src/servic
   assert.deepEqual(analise.issues, []);
   assert.deepEqual(
     analise.refs.map((ref) => ref.specifier).sort(),
-    ['../auth', '../services/approvalQueueService', '../services/crmFileService', '../services/crmIntegrationFileService', '../services/prospectingFileService', './app', 'node:fs', 'node:http', 'node:path']
+    ['../auth', '../services/approvalQueueService', '../services/crmIntegrationFileService', '../services/crmRepositoryFactory', '../services/prospectingFileService', './app', 'node:fs', 'node:http', 'node:path']
   );
   const identificadores = identificadoresDe(analise);
-  for (const proibido of ['createCrmService', 'createJsonFileCrmRepository', 'createInMemoryCrmRepository', 'assertValidRepository', 'crmDomain']) {
+  // (etapa 2.3) createConfiguredCrmService (crmRepositoryFactory.js) substitui o import direto de
+  // createFileBackedCrmService: só a fábrica de modo sabe qual adapter usar — a composição continua sem tocar no
+  // domínio, no repositório ou num adapter específico.
+  for (const proibido of ['createCrmService', 'createFileBackedCrmService', 'createJsonFileCrmRepository', 'createInMemoryCrmRepository', 'createSupabaseCrmRepository', 'assertValidRepository', 'crmDomain']) {
     assert.equal(identificadores.has(proibido), false, `a composição não pode usar ${proibido}`);
   }
-  assert.equal(identificadores.has('createFileBackedCrmService'), true);
+  assert.equal(identificadores.has('createConfiguredCrmService'), true);
   assert.equal(identificadores.has('authorizeCrmOperation'), true, 'o autorizador real é injetado pela composição');
 });
 
 test('[CRM-API-ARCH-4] a composição injeta o autorizador de src/auth e o caminho do arquivo — e o app recebe o Service pronto (não há um segundo caminho até o domínio)', () => {
   const codigo = fs.readFileSync(path.join(REPO_ROOT, 'src/server/index.js'), 'utf8');
-  assert.match(codigo, /createFileBackedCrmService\(\{\s*authorizeOperation: authorizeCrmOperation,\s*filePath: resolveFile\(env\.RIO_X7_CRM_PATH, DEFAULT_CRM_FILE\),?\s*\}\)/);
+  assert.match(codigo, /createConfiguredCrmService\(\{\s*env,\s*authorizeOperation: authorizeCrmOperation,\s*filePath: resolveFile\(env\.RIO_X7_CRM_PATH, DEFAULT_CRM_FILE\),?\s*\}\)/, 'REPOSITORY_MODE decide o adapter (etapa 2.3) antes de montar o CRM Service');
   assert.match(codigo, /createApp\(\{[^}]*\bcrmService,/);
   assert.match(codigo, /createApp\(\{[^}]*\bcrmIntegrationService,/);
   assert.match(codigo, /createApp\(\{[^}]*\bprospectingService,/);

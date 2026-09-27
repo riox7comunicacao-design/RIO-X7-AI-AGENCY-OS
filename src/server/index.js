@@ -6,8 +6,10 @@
 // o store de USERs (data/users.json, via defineUser + createUserStore), o Approval Queue Service e o CRM Service (cada
 // um com a sua ponte de autorização de src/auth como autorizador injetado) e o adaptador HTTP (app.js). Este arquivo
 // só importa os pontos PÚBLICOS: o barrel de src/auth e os módulos dos Services — nunca um domínio (nem o da fila,
-// nem o do CRM: a regra R12 só deixa src/services importar src/crm) nem arquivos internos de auth. O CRM entra por
-// createFileBackedCrmService (src/services/crmFileService.js): o servidor passa só o CAMINHO do arquivo, como faz com a fila.
+// nem o do CRM: a regra R12 só deixa src/services importar src/crm, e a regra R15/R16 fazem o mesmo para
+// src/crm-adapters) nem arquivos internos de auth. O CRM entra por createConfiguredCrmService
+// (src/services/crmRepositoryFactory.js, etapa 2.3): o servidor passa o CAMINHO do arquivo e o ambiente (para
+// REPOSITORY_MODE), nunca um repositório ou um adapter escolhido aqui.
 //
 // CONFIGURAÇÃO — o servidor lê SÓ estas variáveis de ambiente, e nenhuma é segredo:
 //   SUPABASE_URL, SUPABASE_ANON_KEY   o projeto Supabase (a chave anon é pública por desenho)
@@ -15,6 +17,9 @@
 //   RIO_X7_USERS_FILE                 o arquivo de usuários (padrão: data/users.json)
 //   RIO_X7_QUEUE_PATH                 o arquivo da fila (padrão: o do domínio, data/approval-queue.json)
 //   RIO_X7_CRM_PATH                   o arquivo do CRM (padrão: data/crm.json; criado no primeiro registro)
+//   REPOSITORY_MODE (etapa 2.3)       "file" (padrão) ou "supabase" — HOJE só "file" funciona; "supabase" é
+//                                     recusado de propósito (ver crmRepositoryFactory.js) e NÃO exige/lê
+//                                     SUPABASE_SERVICE_ROLE_KEY em nenhum dos dois casos.
 // Nada além disso é lido do ambiente, e o adapter de auth recebe só as duas variáveis do Supabase — a service_role
 // nunca é lida nem repassada. Um valor que falte ou seja inválido derruba a subida com uma mensagem clara.
 //
@@ -38,7 +43,10 @@ const {
   authorizeProposerForLeadApproval,
 } = require('../auth');
 const { createApprovalQueueService } = require('../services/approvalQueueService');
-const { createFileBackedCrmService } = require('../services/crmFileService');
+// createConfiguredCrmService (etapa 2.3, decisão 0024): decide REPOSITORY_MODE (file, hoje; supabase, bloqueado
+// nesta versão — ver o cabeçalho de crmRepositoryFactory.js) antes de montar o CRM Service. Substitui o import
+// direto de createFileBackedCrmService: agora só a fábrica sabe qual adapter usar, e nunca um caminho escondido.
+const { createConfiguredCrmService } = require('../services/crmRepositoryFactory');
 const { createFileBackedCrmIntegrationService } = require('../services/crmIntegrationFileService');
 const { createFileBackedProspectingService } = require('../services/prospectingFileService');
 const { createApp } = require('./app');
@@ -139,12 +147,19 @@ function createServer(env = process.env, options = {}) {
     authorizeReviewer: authorizeReviewerForApprovalQueue,
     queuePath: resolveFile(env.RIO_X7_QUEUE_PATH, undefined),
   });
-  const crmService = createFileBackedCrmService({
+  const crmService = createConfiguredCrmService({
+    env,
     authorizeOperation: authorizeCrmOperation,
     filePath: resolveFile(env.RIO_X7_CRM_PATH, DEFAULT_CRM_FILE),
   });
 
   // A promoção Approval Queue → CRM (decisão 0016): os MESMOS dois arquivos e as MESMAS portas de autorização.
+  // (etapa 2.3) createFileBackedCrmIntegrationService/createFileBackedProspectingService continuam recebendo
+  // { crmPath } como sempre — o repositório por trás é o MESMO objeto de `crmService` acima, porque
+  // createFileBackedCrmService (chamado tanto por createConfiguredCrmService quanto por estas duas fábricas)
+  // reaproveita o repositório por caminho (sharedFileCrmRepository, em crmFileService.js). Se REPOSITORY_MODE
+  // fosse "supabase", `crmService` já teria lançado a exceção da fábrica ANTES desta linha rodar — nenhuma das
+  // duas composições abaixo chega a ser tentada.
   const crmIntegrationService = createFileBackedCrmIntegrationService({
     authorizeReviewer: authorizeReviewerForApprovalQueue,
     authorizeOperation: authorizeCrmOperation,
