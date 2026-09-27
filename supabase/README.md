@@ -7,6 +7,10 @@ Este diretório guarda o SQL da persistência do CRM em Postgres/Supabase, como 
 - `migrations/20260927120000_crm_initial_schema.sql`: proposta de esquema para o CRM (decisão [0024](../docs/decisions/0024-crm-postgres-schema.md)). **Não aplicada** ao projeto Supabase real (`rio-x7-ai-agency-os`, `sa-east-1`).
 - O CRM operacional continua em `data/crm.json` (adapter de arquivo, `src/crm/crmRepository.js`). Nenhum código lê ou escreve nas tabelas descritas aqui — elas não existem ainda no banco.
 
+## Código de preparação (etapa 2)
+
+`src/crm/crmSupabaseConfig.js`, `crmSupabaseMapping.js` e `crmSupabaseRepository.js` (mais testes em `tests/crm/`) já existem — ver a seção 10 da decisão [0024](../docs/decisions/0024-crm-postgres-schema.md). **Nada disso é usado por nenhum caminho de produção/dev**: nada em `src/server/` os importa, nenhuma chamada à rede acontece fora de teste (e os testes nunca tocam a rede real). `SUPABASE_SERVICE_ROLE_KEY` **não é exigida** para o CRM local continuar funcionando.
+
 ## Decisões já confirmadas (etapa 1.1)
 
 - **Credencial (D1):** o futuro servidor fala com este banco usando a `service_role` key. Ela **nunca** chega ao navegador; o navegador **nunca** acessa este banco diretamente — só HTTP com o servidor, como já é hoje.

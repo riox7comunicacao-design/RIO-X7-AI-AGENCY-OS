@@ -76,6 +76,11 @@ const RULES = {
   // autoriza. Por isso o domínio só pode ser alcançado por src/services: qualquer outro caminho até ele contornaria a
   // autorização do CRM (escrita sem WRITE:CRM, reviewedBy vindo de fora).
   R12: 'src/crm/ só pode ser importado por src/services/ (e por si mesmo): o domínio do CRM não autoriza sozinho, então qualquer outro caminho até ele contorna o CRM Service.',
+  // R15-R16 (persistência Postgres/Supabase do CRM, decisão 0024, etapa 2.1): o MESMO princípio de R13/R14,
+  // aplicado ao par src/crm/ (domínio) / src/crm-adapters/ (rede) — o domínio do CRM é independente de qualquer
+  // tecnologia de persistência remota, e o adapter de rede não conhece autorização nem a camada de aplicação.
+  R15: 'src/crm/ não pode importar src/crm-adapters/ (o domínio do CRM é independente de qualquer persistência remota).',
+  R16: 'src/crm-adapters/ não pode importar src/auth/, src/crm/, src/services/ nem src/server/ (o adaptador de rede do CRM não conhece autorização nem a camada de aplicação; R12 já impede importar src/crm/ fora de src/services — o adapter guarda sua própria cópia do que precisa, sem abrir exceção nessa fronteira).',
 };
 
 // Detalhe de uma aresta (arquivo -> alvo) que viola uma regra; usado no grafo estático e no de execução.
@@ -90,6 +95,8 @@ const EDGE_DETAIL = {
   R10: 'src/server não pode importar o domínio research-prospector diretamente — só através de src/services',
   R11: 'dashboard/ não pode importar nada de src/',
   R12: 'o domínio src/crm só pode ser importado por src/services (e por si mesmo) — qualquer outro caminho contorna a autorização do CRM Service',
+  R15: 'o domínio src/crm não pode importar src/crm-adapters (a persistência remota é um detalhe do adapter)',
+  R16: 'src/crm-adapters não pode importar auth, crm, services nem server',
 };
 
 const lc = (value) => value.toLowerCase();
@@ -111,6 +118,8 @@ function edgeRules(fromRel, toRel) {
   if (to.startsWith('src/crm/') && !from.startsWith('src/crm/') && !from.startsWith('src/services/')) rules.push('R12');
   if (from.startsWith('src/research-prospector/') && to.startsWith('src/research-adapters/')) rules.push('R13');
   if (from.startsWith('src/research-adapters/') && (to.startsWith('src/auth/') || to.startsWith('src/crm/') || to.startsWith('src/services/') || to.startsWith('src/server/'))) rules.push('R14');
+  if (from.startsWith('src/crm/') && to.startsWith('src/crm-adapters/')) rules.push('R15');
+  if (from.startsWith('src/crm-adapters/') && (to.startsWith('src/auth/') || to.startsWith('src/crm/') || to.startsWith('src/services/') || to.startsWith('src/server/'))) rules.push('R16');
   return rules;
 }
 
@@ -482,6 +491,17 @@ test('[ARCH-14] R12: só src/services importa o domínio do CRM (src/crm) — ne
   assert.ok(fs.existsSync(path.join(REPO_ROOT, 'src', 'crm', 'crmDomain.js')), 'src/crm/crmDomain.js deveria existir');
   assert.ok(fs.existsSync(path.join(REPO_ROOT, 'src', 'services', 'crmService.js')), 'src/services/crmService.js deveria existir');
   assert.ok(fs.readFileSync(path.join(REPO_ROOT, 'src', 'services', 'crmService.js'), 'utf8').includes("require('../crm/crmDomain')"), 'o Service importa o domínio — o caminho permitido');
+});
+
+test('[ARCH-15] R15: src/crm/ (o domínio do CRM) não importa src/crm-adapters/ — a persistência remota é independente do domínio, mesmo par já usado para research-prospector/research-adapters', () => {
+  const violations = only('R15');
+  assert.equal(violations.length, 0, report('R15', violations));
+  assert.ok(fs.existsSync(path.join(REPO_ROOT, 'src', 'crm-adapters', 'crmSupabaseRepository.js')), 'src/crm-adapters/crmSupabaseRepository.js deveria existir para esta checagem valer algo');
+});
+
+test('[ARCH-16] R16: src/crm-adapters/ não importa src/auth/, src/crm/, src/services/ nem src/server/ — o adaptador de rede do CRM não conhece autorização nem a camada de aplicação (e nem precisa importar o domínio: R12 continua intacto)', () => {
+  const violations = only('R16');
+  assert.equal(violations.length, 0, report('R16', violations));
 });
 
 // ===========================================================================
