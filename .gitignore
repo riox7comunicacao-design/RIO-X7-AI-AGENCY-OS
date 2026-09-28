@@ -56,6 +56,11 @@ temp/
 *.bak
 *.old
 
+# === Export lógico do CRM (etapa 3L, docs/operations/crm-data-policy.md) ===
+# Pode conter dados reais de clientes no futuro — nunca deve entrar no histórico do Git, nunca é servido pela
+# aplicação, nunca é uma réplica operacional.
+backups/crm/
+
 # === Estado local com dados pessoais de prospects (Passo 3) ===
 # Contém nome/telefone/e-mail reais de prospects pesquisados publicamente —
 # nunca deve entrar no histórico do Git (ver data/README.md e RULES.md, Regra 8).
