@@ -1,26 +1,45 @@
 # Política de Dados do CRM — Rio X7 AI Agency OS
 
-Escrito na etapa 3L, sobre o estado confirmado nas etapas 3I-B/3J/3K. Este documento é **operacional**: não
-altera nem substitui nenhuma decisão arquitetural já registrada em `docs/decisions/0012` a `0024`. Ele existe
-para que a operação diária do CRM (backup, troca de backend, recuperação) siga uma política clara, escrita antes
-de haver dados reais em jogo.
+Escrito na etapa 3L, sobre o estado confirmado nas etapas 3I-B/3J/3K. Atualizado na etapa 3M, quando a ativação
+oficial foi concluída. Este documento é **operacional**: não altera nem substitui nenhuma decisão arquitetural já
+registrada em `docs/decisions/0012` a `0024`. Ele existe para que a operação diária do CRM (backup, troca de
+backend, recuperação) siga uma política clara.
+
+## Ativação oficial (etapa 3M)
+
+- **Concluída em 2026-09-28.**
+- **`REPOSITORY_MODE=supabase`** foi definido no `.env` de produção — configuração oficial e permanente a partir
+  desta data (não um teste temporário como as ativações controladas das etapas 3I-B/3M-smoke).
+- Validado de ponta a ponta antes de considerar a ativação concluída: servidor real subindo com a configuração
+  oficial, autenticação, leitura, criação, edição, mudança de status, histórico, duplicidade (409), DNC e seu
+  bloqueio terminal (409) — tudo através do caminho real da aplicação (HTTP → Service → Domínio → Supabase
+  Repository → Supabase), nunca direto no repositório. O único registro sintético criado para essa validação foi
+  removido antes de considerar a etapa concluída; o banco terminou, e permanece, com 0 registros.
+
+## Estado anterior (etapas 3I-B a 3L)
+
+Antes da etapa 3M, `file` (`data/crm.json`) era a fonte de verdade operacional — `REPOSITORY_MODE` estava ausente
+do `.env`, e o Supabase, embora integrado e tecnicamente validado, não era o backend oficial.
 
 ## Estado atual
 
-- **`file` (`data/crm.json`) é a fonte de verdade atual.** `REPOSITORY_MODE` está ausente do `.env` de produção —
-  o padrão do sistema, confirmado por `src/services/crmRepositoryFactory.js`, é `"file"`.
-- **O Supabase está integrado e tecnicamente validado** (schema aplicado, adapter testado contra o banco real,
-  ativação controlada aprovada na etapa 3I-B) **mas não é o backend oficial neste momento.**
-- **Ambos os armazenamentos estão vazios** — `public.crm_records` = 0 registros, `data/crm.json` = `{}`
-  (confirmado nesta mesma etapa).
-- **Não existe sincronização automática entre os dois.** `sharedFileCrmRepository` (arquivo) e
+- **`public.crm_records` (Supabase) é a fonte oficial de verdade do CRM.** `REPOSITORY_MODE=supabase` está
+  definido no `.env` de produção.
+- **`data/crm.json` deixou de ser a fonte operacional do CRM** a partir da ativação oficial — ele **não é uma
+  réplica**: continua existindo como implementação técnica do adapter de arquivo, mas não é mais atualizado pelo
+  uso normal do sistema.
+- **Ambos os armazenamentos permanecem vazios** — `public.crm_records` = 0 registros (confirmado de forma
+  independente após a validação da etapa 3M), `data/crm.json` = `{}` (nunca foi tocado pela ativação nem pela
+  validação).
+- **Não existe sincronização automática entre os dois, e nunca existiu.** `sharedFileCrmRepository` (arquivo) e
   `sharedSupabaseCrmRepository` (Supabase) são caches completamente independentes — nada no código lê de um para
-  escrever no outro.
+  escrever no outro. O adapter de arquivo **permanece disponível** como implementação técnica (não foi removido,
+  e não deveria ser) — ele só não é mais o backend oficial enquanto `REPOSITORY_MODE=supabase` estiver configurado.
+- **A responsabilidade de backup/export continua inteiramente operacional**, não automatizada — ver a seção
+  Backup abaixo. Nenhuma automação (cron, workflow) foi criada.
+- **Restore/import continuam não implementados** — ver a seção Restauração.
 
-## Após ativação oficial
-
-Quando `REPOSITORY_MODE=supabase` for oficialmente adotado (decisão futura do proprietário, fora do escopo desta
-etapa), a política passa a ser:
+## Política (vale desde a ativação oficial)
 
 - **`public.crm_records` será a fonte oficial de verdade do CRM.**
 - **`data/crm.json` não será réplica** — ele simplesmente para de ser atualizado a partir do momento da ativação.
@@ -103,8 +122,8 @@ deliberadamente antes de trocar `REPOSITORY_MODE` de volta para ausente/`"file"`
 
 ## Fonte oficial de verdade
 
-- **Estado atual:** `file` (`data/crm.json`).
-- **Estado futuro, após a ativação oficial:** Supabase (`public.crm_records`).
+- **Estado atual (desde a etapa 3M, 2026-09-28):** Supabase (`public.crm_records`).
+- **Estado anterior:** `file` (`data/crm.json`).
 
-A ativação oficial **não é feita por este documento** — é uma decisão própria e futura do proprietário, registrada
-em uma etapa dedicada, nunca implícita numa mudança de configuração isolada.
+A ativação oficial foi feita por decisão explícita do proprietário, registrada na etapa 3M — nunca implícita numa
+mudança de configuração isolada.
