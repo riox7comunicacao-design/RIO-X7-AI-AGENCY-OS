@@ -163,6 +163,11 @@ const KNOWN_MESSAGES = Object.freeze([
   // fila; só entram aqui as que uma requisição HTTP consegue produzir — o resto (repositório defeituoso, registro
   // corrompido, autorizador defeituoso, opções que este módulo nunca envia) é bug ou falha de armazenamento: 500.
   // A ordem importa só entre padrões que possam casar a mesma mensagem, e estes não casam.
+  // (etapa 3F) Um erro que vem do REPOSITÓRIO (não do domínio) nunca chega até aqui por mensagem: um erro do
+  // adapter de arquivo (ex.: "CRM: arquivo de dados corrompido") continua sem nenhum destes prefixos específicos,
+  // caindo no INTERNAL genérico como sempre; um erro do adapter Supabase é classificado ANTES, por CRM_REPOSITORY_CODES
+  // acima (contrato comum entre adapters, nunca por uma mensagem "CRM (Supabase): ..." — essas nunca deveriam casar
+  // aqui, de propósito, porque o prefixo é literalmente diferente).
   [/^CRM: registro não encontrado/, 'NOT_FOUND'],
   [/^CRM: não é possível (?:criar — identidade já bloqueada|atualizar — a nova identidade coincide com a de um registro bloqueado)/, 'DNC_BLOCKED'],
   [/^CRM: não é possível (?:criar — já existe um registro|atualizar — a nova identidade coincide com a de outro registro)/, 'DUPLICATE_RECORD'],
@@ -191,6 +196,21 @@ const PROMOTION_CODES = Object.freeze({
   PROMOTION_INSUFFICIENT_DATA: 'PROMOTION_INSUFFICIENT_DATA',
   PROMOTION_INCONSISTENT: 'PROMOTION_INCONSISTENT',
   PROMOTION_PARTIAL: 'PROMOTION_PARTIAL',
+});
+
+// Os `code` que um adapter de REPOSITÓRIO do CRM pode anexar a um erro (contrato comum entre adapters, etapa 3F —
+// corrige o BLOCKER 2 da etapa 3E). app.js NUNCA importa src/crm-adapters/ nem src/crm/ (R12/R16, e a lista de
+// imports fechada de [CRM-API-ARCH-1]: só `../auth`/`./static`) — por isso o reconhecimento é por STRING, igual a
+// PROMOTION_CODES/PROSPECTING_CODES acima, nunca por `instanceof` de uma classe de outro módulo. Hoje só
+// src/crm-adapters/crmSupabaseRepository.js usa este contrato (CRM_REPOSITORY_ERROR, exportado de lá — um teste
+// vigia que esta lista não diverge); o adapter de ARQUIVO nunca anexa `code` a um erro, então nada aqui muda o
+// comportamento dele — os erros do arquivo continuam caindo só pelas mensagens "CRM: ..." de sempre (KNOWN_MESSAGES
+// abaixo). Qualquer erro do adapter Supabase SEM um destes dois códigos (rede fora, tabela ausente, permissão, um
+// 5xx do Postgres) continua caindo no INTERNAL genérico — de propósito: não há como classificar essas causas sem
+// arriscar enganar quem chama.
+const CRM_REPOSITORY_CODES = Object.freeze({
+  CRM_REPOSITORY_INVALID_REQUEST: 'INVALID_REQUEST',
+  CRM_REPOSITORY_CONFLICT: 'DUPLICATE_RECORD',
 });
 
 // Os `code` do Prospecting Service que a API reconhece (o próprio código do serviço vira o código HTTP; o catálogo acima traz a
@@ -247,6 +267,8 @@ function mapErrorToHttp(error) {
   } else if (error && typeof error === 'object' && Object.prototype.hasOwnProperty.call(PROMOTION_CODES, error.code)) {
     code = PROMOTION_CODES[error.code];
     if (code === 'INVALID_REQUEST') detail = 'Identificador inválido.';
+  } else if (error && typeof error === 'object' && Object.prototype.hasOwnProperty.call(CRM_REPOSITORY_CODES, error.code)) {
+    code = CRM_REPOSITORY_CODES[error.code];
   } else {
     const message = error && typeof error.message === 'string' ? error.message : '';
     const known = KNOWN_MESSAGES.find(([pattern]) => pattern.test(message));

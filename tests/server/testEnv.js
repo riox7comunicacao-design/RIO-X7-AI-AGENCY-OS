@@ -106,7 +106,7 @@ function montarAmbiente(t, { usuarios = [BRENO, RAFAEL], queue, authTimeoutMs, s
   const crmIntegrationService =
     integracaoInjetada ||
     (integracao
-      ? createFileBackedCrmIntegrationService({ authorizeReviewer: authorizeReviewerForApprovalQueue, authorizeOperation: authorizeCrmOperation, queuePath: filePath, crmPath: arquivoCrm })
+      ? createFileBackedCrmIntegrationService({ authorizeReviewer: authorizeReviewerForApprovalQueue, authorizeOperation: authorizeCrmOperation, queuePath: filePath, crmService })
       : undefined);
   // Prospecting Service (opcional): `prospeccao: true` liga a fábrica REAL de produção sobre a MESMA fila e o MESMO CRM (exige
   // `crm: true`), com o arquivo dos lotes em diretório temporário (`batchPath`); `prospectingService` injeta um double.
@@ -116,7 +116,7 @@ function montarAmbiente(t, { usuarios = [BRENO, RAFAEL], queue, authTimeoutMs, s
   const prospectingService =
     prospeccaoInjetada ||
     (prospeccao
-      ? createFileBackedProspectingService({ authorizeProposer: authorizeProposerForLeadApproval, authorizeOperation: authorizeCrmOperation, queuePath: filePath, crmPath: arquivoCrm, batchPath, dossierPath })
+      ? createFileBackedProspectingService({ authorizeProposer: authorizeProposerForLeadApproval, authorizeOperation: authorizeCrmOperation, queuePath: filePath, crmService, batchPath, dossierPath })
       : undefined);
   const logs = [];
   const publicConfig = { supabaseUrl: FAKE_ENV.SUPABASE_URL, supabaseAnonKey: FAKE_ENV.SUPABASE_ANON_KEY };

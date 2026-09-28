@@ -9,7 +9,7 @@ const fs = require('node:fs');
 const path = require('node:path');
 
 const { assertValidRepository } = require('../../src/crm/crmRepositoryPort');
-const { createSupabaseCrmRepository, DEFAULT_TABLE } = require('../../src/crm-adapters/crmSupabaseRepository');
+const { createSupabaseCrmRepository, DEFAULT_TABLE, CRM_REPOSITORY_ERROR } = require('../../src/crm-adapters/crmSupabaseRepository');
 const { recordToRow } = require('../../src/crm-adapters/crmSupabaseMapping');
 
 const REPO_ROOT = path.join(__dirname, '..', '..');
@@ -201,6 +201,78 @@ test('[SBR-12] falha de REDE (fetch lança): erro estável, sem repassar a mensa
     assert.doesNotMatch(erro.message, new RegExp(CHAVE_DE_TESTE));
     return true;
   });
+});
+
+// ===========================================================================
+// Contrato de erro comum entre adapters (etapa 3F, corrige o BLOCKER 2 da etapa 3E): o `code` anexado ao erro é a
+// única coisa que src/server/app.js (mapErrorToHttp) reconhece — nunca a mensagem "CRM (Supabase): ...", que
+// continua igual, só para leitura humana/log. Só os dois casos que o PostgREST sinaliza por CÓDIGO, nunca por
+// adivinhação de texto, ganham um `code`; qualquer outra falha (rede, tabela ausente, permissão, 5xx) fica SEM
+// `code` — o mesmo INTERNAL/500 de hoje, de propósito (ver a auditoria da etapa 3E: nunca inventamos uma
+// classificação para o que não temos certeza).
+// ===========================================================================
+test('[SBR-17] uma violação de restrição de DADO (CHECK/NOT NULL/tipo — status 400, ou o código Postgres correspondente) ganha code CRM_REPOSITORY_INVALID_REQUEST', async () => {
+  const porStatus = fetchFalso(jsonResposta({ message: 'null value in column "empresa" violates not-null constraint' }, 400));
+  const repoPorStatus = createSupabaseCrmRepository({ url: URL_DE_TESTE, serviceRoleKey: CHAVE_DE_TESTE, fetchImpl: porStatus });
+  await assert.rejects(() => repoPorStatus.save(registro()), (erro) => {
+    assert.equal(erro.code, CRM_REPOSITORY_ERROR.INVALID_REQUEST);
+    assert.doesNotMatch(erro.message, new RegExp(CHAVE_DE_TESTE));
+    return true;
+  });
+
+  // Mesmo com um status genérico (ex.: 422, incomum mas possível), o CÓDIGO do Postgres já basta para classificar.
+  for (const codigoPostgres of ['22P02', '23502', '23514']) {
+    const porCodigo = fetchFalso(jsonResposta({ code: codigoPostgres, message: 'restrição violada' }, 422));
+    const repo = createSupabaseCrmRepository({ url: URL_DE_TESTE, serviceRoleKey: CHAVE_DE_TESTE, fetchImpl: porCodigo });
+    await assert.rejects(() => repo.save(registro()), (erro) => {
+      assert.equal(erro.code, CRM_REPOSITORY_ERROR.INVALID_REQUEST, codigoPostgres);
+      return true;
+    });
+  }
+});
+
+test('[SBR-18] uma violação de UNICIDADE (status 409, ou o código Postgres 23505 — não alcançável hoje, já que save() faz upsert e não há UNIQUE além da chave primária, mas pronta para D-IDENTITY-FUTURA) ganha code CRM_REPOSITORY_CONFLICT', async () => {
+  const porStatus = fetchFalso(jsonResposta({ message: 'duplicate key value violates unique constraint' }, 409));
+  const repoPorStatus = createSupabaseCrmRepository({ url: URL_DE_TESTE, serviceRoleKey: CHAVE_DE_TESTE, fetchImpl: porStatus });
+  await assert.rejects(() => repoPorStatus.save(registro()), (erro) => {
+    assert.equal(erro.code, CRM_REPOSITORY_ERROR.CONFLICT);
+    return true;
+  });
+
+  const porCodigo = fetchFalso(jsonResposta({ code: '23505', message: 'chave duplicada' }, 400));
+  const repoPorCodigo = createSupabaseCrmRepository({ url: URL_DE_TESTE, serviceRoleKey: CHAVE_DE_TESTE, fetchImpl: porCodigo });
+  await assert.rejects(() => repoPorCodigo.save(registro()), (erro) => {
+    assert.equal(erro.code, CRM_REPOSITORY_ERROR.CONFLICT, '23505 classifica como conflito mesmo com status 400 — o código do Postgres é mais específico que o status genérico');
+    return true;
+  });
+});
+
+test('[SBR-19] o que NÃO é classificável (tabela ausente/PGRST205, permissão negada, 5xx do Postgres, resposta sem "code" reconhecível) fica SEM code — cai no INTERNAL genérico de sempre, nunca inventamos uma classificação', async () => {
+  const casos = [
+    jsonResposta({ code: 'PGRST205', message: "Could not find the table 'public.crm_records' in the schema cache" }, 404),
+    jsonResposta({ code: '42501', message: 'permission denied for table crm_records' }, 401),
+    jsonResposta({ message: 'internal server error' }, 500),
+    { ok: false, status: 502, text: async () => '<html>Bad Gateway</html>' },
+  ];
+  for (const resposta of casos) {
+    const repo = createSupabaseCrmRepository({ url: URL_DE_TESTE, serviceRoleKey: CHAVE_DE_TESTE, fetchImpl: fetchFalso(resposta) });
+    await assert.rejects(() => repo.list(), (erro) => {
+      assert.equal(erro.code, undefined, JSON.stringify(resposta));
+      return true;
+    });
+  }
+  // falha de rede: também sem code.
+  const semRede = async () => { throw new TypeError('rede fora'); };
+  const repoSemRede = createSupabaseCrmRepository({ url: URL_DE_TESTE, serviceRoleKey: CHAVE_DE_TESTE, fetchImpl: semRede });
+  await assert.rejects(() => repoSemRede.list(), (erro) => {
+    assert.equal(erro.code, undefined);
+    return true;
+  });
+});
+
+test('[SBR-20] CRM_REPOSITORY_ERROR (o contrato exportado) tem exatamente os dois códigos documentados — nenhum a mais, nenhum a menos (um teste espelhado, [CRM-ERRMAP-9] em tests/server/crm-error-mapping.test.js, garante que src/server/app.js reconhece cada um deles)', () => {
+  assert.deepEqual(Object.keys(CRM_REPOSITORY_ERROR).sort(), ['CONFLICT', 'INVALID_REQUEST']);
+  assert.deepEqual(Object.values(CRM_REPOSITORY_ERROR).sort(), ['CRM_REPOSITORY_CONFLICT', 'CRM_REPOSITORY_INVALID_REQUEST']);
 });
 
 // ===========================================================================

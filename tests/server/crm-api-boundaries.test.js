@@ -86,7 +86,7 @@ test('[CRM-API-ARCH-3] a raiz de composição só chama a fábrica de src/servic
   assert.equal(identificadores.has('authorizeCrmOperation'), true, 'o autorizador real é injetado pela composição');
 });
 
-test('[CRM-API-ARCH-4] a composição injeta o autorizador de src/auth e o caminho do arquivo — e o app recebe o Service pronto (não há um segundo caminho até o domínio)', () => {
+test('[CRM-API-ARCH-4] a composição injeta o autorizador de src/auth e o caminho do arquivo — e o app recebe o Service pronto (não há um segundo caminho até o domínio); promoção e prospecção recebem o MESMO objeto crmService (etapa 3F), nunca um crmPath próprio', () => {
   const codigo = fs.readFileSync(path.join(REPO_ROOT, 'src/server/index.js'), 'utf8');
   assert.match(codigo, /createConfiguredCrmService\(\{\s*env,\s*authorizeOperation: authorizeCrmOperation,\s*filePath: resolveFile\(env\.RIO_X7_CRM_PATH, DEFAULT_CRM_FILE\),?\s*\}\)/, 'REPOSITORY_MODE decide o adapter (etapa 2.3) antes de montar o CRM Service');
   assert.match(codigo, /createApp\(\{[^}]*\bcrmService,/);
@@ -95,5 +95,6 @@ test('[CRM-API-ARCH-4] a composição injeta o autorizador de src/auth e o camin
   assert.match(codigo, /createFileBackedProspectingService\(\{\s*authorizeProposer: authorizeProposerForLeadApproval,\s*authorizeOperation: authorizeCrmOperation,/, 'a composição liga as duas pontes certas: PROPOSE e CRM (nunca a de aprovação)');
   const inicio = codigo.indexOf('createFileBackedProspectingService({');
   assert.doesNotMatch(codigo.slice(inicio, inicio + 400), /authorizeReviewer/);
-  assert.match(codigo, /createFileBackedProspectingService\(\{[^}]*queuePath: resolveFile\(env\.RIO_X7_QUEUE_PATH, undefined\),\s*crmPath: resolveFile\(env\.RIO_X7_CRM_PATH, DEFAULT_CRM_FILE\),\s*\}\)/, 'os MESMOS arquivos da fila e do CRM que o resto do servidor usa');
+  assert.match(codigo, /createFileBackedCrmIntegrationService\(\{[^}]*queuePath: resolveFile\(env\.RIO_X7_QUEUE_PATH, undefined\),\s*crmService,\s*\}\)/, 'a promoção recebe o MESMO objeto crmService, nunca reconstrói o CRM a partir de um caminho');
+  assert.match(codigo, /createFileBackedProspectingService\(\{[^}]*queuePath: resolveFile\(env\.RIO_X7_QUEUE_PATH, undefined\),\s*crmService,\s*\}\)/, 'a prospecção recebe o MESMO objeto crmService, nunca reconstrói o CRM a partir de um caminho');
 });

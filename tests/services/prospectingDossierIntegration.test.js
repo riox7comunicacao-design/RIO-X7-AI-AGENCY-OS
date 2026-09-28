@@ -419,7 +419,7 @@ test('[PDI-15] a criação exige o repositório de dossiês; a fábrica de arqui
   assert.throws(() => createProspectingService({ ...base, dossierRepository: {} }), /repositório de dossiês/);
   assert.throws(() => createProspectingService({ ...base, dossierRepository: createJsonFileDossierRepository(env.arquivos.dossier), newDossierId: 5 }), /newDossierId/);
   const { createFileBackedProspectingService } = require('../../src/services/prospectingFileService');
-  const comum = { authorizeProposer: authorizeProposerForLeadApproval, authorizeOperation: authorizeCrmOperation, queuePath: env.arquivos.queue, crmPath: env.arquivos.crm, batchPath: env.arquivos.batch };
+  const comum = { authorizeProposer: authorizeProposerForLeadApproval, authorizeOperation: authorizeCrmOperation, queuePath: env.arquivos.queue, crmService: createFileBackedCrmService({ authorizeOperation: authorizeCrmOperation, filePath: env.arquivos.crm }), batchPath: env.arquivos.batch };
   for (const ruimPath of ['', '  ', 5, {}]) assert.throws(() => createFileBackedProspectingService({ ...comum, dossierPath: ruimPath }), /dossierPath/);
   const servico = createFileBackedProspectingService({ ...comum, dossierPath: env.arquivos.dossier });
   const r = await servico.submitProspecting(admin(), submissao([achadoRico('Clínica Alfa Teste', 'alfa-teste')]));

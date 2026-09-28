@@ -41,6 +41,37 @@ function assertSafeRecordId(id) {
 
 const isPlainObject = (value) => typeof value === 'object' && value !== null && !Array.isArray(value);
 
+// CONTRATO DE ERRO COMUM ENTRE ADAPTERS (etapa 3F, corrige o BLOCKER 2 da etapa 3E): src/server/app.js
+// (mapErrorToHttp) NUNCA pode importar este arquivo (nem src/crm-adapters/ inteiro — regra R16, e a fronteira
+// própria de app.js em [CRM-API-ARCH-1], que fecha sua lista de imports em `../auth`/`./static`). Por isso a
+// classificação não pode usar `instanceof` de uma classe daqui — só uma propriedade PLANA e estável em `error`,
+// exatamente como já funciona para PROSPECTING_ERROR/PROMOTION_ERROR (src/services/prospectingService.js e
+// crmIntegrationService.js): o produtor do erro anexa um `code` de uma lista fechada e documentada; o tradutor
+// (app.js) reconhece essa lista por STRING, sem importar nada de volta.
+//
+// Só dois casos são classificados — os únicos que o Postgres/PostgREST sinalizam de forma INEQUÍVOCA por código,
+// nunca por adivinhação de texto: uma violação de restrição de DADO (tipo inválido, NOT NULL, CHECK — vira
+// "requisição inválida", 400) e uma violação de UNICIDADE (vira "conflito", 409 — não alcançável hoje, porque
+// save() faz upsert e não há nenhuma constraint UNIQUE além da chave primária, mas fica pronta para
+// D-IDENTITY-FUTURA, docs/decisions/0024 seção 8). QUALQUER outra coisa — tabela ausente (PGRST205), rede fora,
+// permissão negada, um 5xx do Postgres, uma resposta sem "code" reconhecível — fica SEM code: cai no INTERNAL
+// genérico de sempre, exatamente o comportamento de HOJE, porque não temos como classificar essas causas sem
+// arriscar enganar quem chama (ex.: uma tabela ausente NÃO é "seu registro não existe"). Nunca inclui a mensagem
+// do PostgREST nem qualquer dado de negócio no `code` — só um rótulo fixo.
+const CRM_REPOSITORY_ERROR = Object.freeze({
+  INVALID_REQUEST: 'CRM_REPOSITORY_INVALID_REQUEST',
+  CONFLICT: 'CRM_REPOSITORY_CONFLICT',
+});
+const POSTGRES_VALIDATION_CODES = new Set(['22P02', '23502', '23514']); // invalid_text_representation, not_null_violation, check_violation
+const POSTGRES_CONFLICT_CODES = new Set(['23505']); // unique_violation
+
+function classifyPostgrestFailure(status, json) {
+  const postgresCode = json && typeof json.code === 'string' ? json.code : null;
+  if (status === 409 || POSTGRES_CONFLICT_CODES.has(postgresCode)) return CRM_REPOSITORY_ERROR.CONFLICT;
+  if (status === 400 || POSTGRES_VALIDATION_CODES.has(postgresCode)) return CRM_REPOSITORY_ERROR.INVALID_REQUEST;
+  return null;
+}
+
 // Uma chamada ao PostgREST. `fetchImpl` é SEMPRE injetado por quem cria o repositório (nunca o fetch global
 // direto) — ver createSupabaseCrmRepository. Nunca inclui o segredo em nada que possa vazar: só no cabeçalho da
 // requisição, nunca no erro lançado.
@@ -82,7 +113,10 @@ async function postgrest(config, { method, path, query, body, prefer }, fetchImp
   }
   if (!response.ok) {
     const detalhe = json && typeof json.message === 'string' ? json.message : `HTTP ${response.status}`;
-    throw new Error(`CRM (Supabase): PostgREST recusou a operação (${detalhe}).`);
+    const erro = new Error(`CRM (Supabase): PostgREST recusou a operação (${detalhe}).`);
+    const classificado = classifyPostgrestFailure(response.status, json);
+    if (classificado) erro.code = classificado;
+    throw erro;
   }
   return json;
 }
@@ -135,4 +169,4 @@ function createSupabaseCrmRepository(options = {}) {
   return Object.freeze({ list, getById, save });
 }
 
-module.exports = { createSupabaseCrmRepository, DEFAULT_TABLE };
+module.exports = { createSupabaseCrmRepository, DEFAULT_TABLE, CRM_REPOSITORY_ERROR };

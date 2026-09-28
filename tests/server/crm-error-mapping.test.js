@@ -233,6 +233,125 @@ test('[CRM-ERRMAP-7b] só o COMEÇO da mensagem classifica: um texto controlado 
 });
 
 // ---------------------------------------------------------------------------
+// Adapter Supabase (etapa 3F, corrige o BLOCKER 2 da etapa 3E): erros do REPOSITÓRIO (não do domínio) são
+// classificados por um `code` plano — CRM_REPOSITORY_CODES aqui (app.js), CRM_REPOSITORY_ERROR no adapter — nunca
+// por `instanceof` de uma classe do adapter: app.js não pode importar src/crm-adapters/ (R16, e a lista de
+// imports fechada de [CRM-API-ARCH-1]). Nenhum destes testes faz uma chamada de rede real: usam o mesmo fetch
+// FALSO já estabelecido em tests/crm-adapters/crmSupabaseRepository.test.js, com o adapter real.
+// ---------------------------------------------------------------------------
+const { createSupabaseCrmRepository, CRM_REPOSITORY_ERROR } = require('../../src/crm-adapters/crmSupabaseRepository');
+
+const fetchFalso = (resposta) => async () => resposta;
+const jsonRespostaAdapter = (corpo, status = 200) => ({ ok: status >= 200 && status < 300, status, text: async () => JSON.stringify(corpo) });
+
+test('[CRM-ERRMAP-14] os dois códigos de CRM_REPOSITORY_ERROR (o contrato do adapter) são reconhecidos por mapErrorToHttp com o status certo — nenhum cai em INTERNAL (varredura: um terceiro código futuro derruba este teste até ser classificado aqui)', () => {
+  const codigos = Object.values(CRM_REPOSITORY_ERROR);
+  assert.equal(codigos.length, 2, 'sanidade: se o adapter ganhar um código novo, este teste precisa ser atualizado junto com CRM_REPOSITORY_CODES em app.js');
+  assert.deepEqual(
+    mapeado(Object.assign(new Error('CRM (Supabase): PostgREST recusou a operação (x).'), { code: CRM_REPOSITORY_ERROR.INVALID_REQUEST })),
+    { status: 400, code: 'INVALID_REQUEST', message: 'Requisição inválida.' }
+  );
+  assert.deepEqual(mapeado(Object.assign(new Error('CRM (Supabase): PostgREST recusou a operação (x).'), { code: CRM_REPOSITORY_ERROR.CONFLICT })), FIXAS.duplicado);
+});
+
+test('[CRM-ERRMAP-15] um erro do adapter Supabase SEM nenhum destes códigos (rede fora, tabela ausente, permissão, 5xx, code desconhecido) continua em INTERNAL/500 — exatamente o comportamento de hoje, nada regride', () => {
+  for (const erro of [
+    new Error('CRM (Supabase): falha de rede ao falar com o PostgREST (TypeError).'),
+    new Error("CRM (Supabase): PostgREST recusou a operação (Could not find the table 'public.crm_records' in the schema cache)."),
+    Object.assign(new Error('CRM (Supabase): PostgREST recusou a operação (x).'), { code: 'ALGO_DESCONHECIDO' }),
+  ]) {
+    assert.deepEqual(mapeado(erro), FIXAS.interno, erro.message);
+  }
+});
+
+test('[CRM-ERRMAP-16] a CADEIA REAL: o adapter Supabase (fetch FALSO, sem rede) classifica uma violação de restrição/unicidade, e mapErrorToHttp devolve 400/409 — a integração de ponta a ponta, sem tocar o Supabase real', async () => {
+  const registroValido = {
+    id: 'crm:11111111-1111-4111-8111-111111111111',
+    empresa: 'X',
+    dataDeEntrada: '2026-01-01T00:00:00.000Z',
+    historico: [{ timestamp: '2026-01-01T00:00:00.000Z', from: null, to: 'PROSPECT', actor: 'HUMAN', reviewedBy: null, motivo: null }],
+  };
+  const invalido = createSupabaseCrmRepository({
+    url: 'https://projeto-de-teste.supabase.co',
+    serviceRoleKey: 'chave-de-teste-nao-real',
+    fetchImpl: fetchFalso(jsonRespostaAdapter({ code: '23514', message: 'restrição violada' }, 400)),
+  });
+  const erroInvalido = await erroDe(() => invalido.save(registroValido));
+  assert.deepEqual(mapeado(erroInvalido), { status: 400, code: 'INVALID_REQUEST', message: 'Requisição inválida.' });
+
+  const conflito = createSupabaseCrmRepository({
+    url: 'https://projeto-de-teste.supabase.co',
+    serviceRoleKey: 'chave-de-teste-nao-real',
+    fetchImpl: fetchFalso(jsonRespostaAdapter({ code: '23505', message: 'chave duplicada' }, 409)),
+  });
+  const erroConflito = await erroDe(() => conflito.save({ ...registroValido, id: 'crm:22222222-2222-4222-8222-222222222222' }));
+  assert.deepEqual(mapeado(erroConflito), FIXAS.duplicado);
+});
+
+// ---------------------------------------------------------------------------
+// PARIDADE entre adapters: "registro não encontrado", "duplicidade" e "DNC bloqueado" são erros do DOMÍNIO (nunca
+// do adapter) — surgem IDÊNTICOS não importa qual repositório está por trás, porque o domínio decide ANTES/DEPOIS
+// de chamar list()/getById()/save(), sem nunca inspecionar qual adapter é. Provado com um repositório FAKE no
+// FORMATO do Supabase (as três operações ASSÍNCRONAS, sem nenhum estado em memória compartilhado além de um
+// array local) — sem nenhuma chamada de rede.
+// ---------------------------------------------------------------------------
+function repositorioAssincronoFake(registrosIniciais = []) {
+  const registros = registrosIniciais.map((r) => structuredClone(r));
+  return {
+    async list() {
+      return structuredClone(registros);
+    },
+    async getById(id) {
+      const achado = registros.find((r) => r.id === id);
+      return achado ? structuredClone(achado) : null;
+    },
+    async save(record) {
+      const indice = registros.findIndex((r) => r.id === record.id);
+      if (indice === -1) registros.push(structuredClone(record));
+      else registros[indice] = structuredClone(record);
+    },
+  };
+}
+
+const registroFake = (overrides) => ({
+  id: 'crm:00000000-0000-4000-8000-000000000000',
+  empresa: 'Fake',
+  site: null,
+  telefone: null,
+  whatsapp: null,
+  instagram: null,
+  cidade: null,
+  status: 'PROSPECT',
+  dataDeEntrada: '2026-01-01T00:00:00.000Z',
+  historico: [{ timestamp: '2026-01-01T00:00:00.000Z', from: null, to: 'PROSPECT', actor: 'HUMAN', reviewedBy: null, motivo: null }],
+  ...overrides,
+});
+
+test('[CRM-ERRMAP-17] PARIDADE — "registro não encontrado" (404): com um repositório assíncrono no FORMATO Supabase (sem nenhuma chamada de rede), a mensagem do domínio e o mapeamento HTTP são IDÊNTICOS aos do adapter de arquivo/memória', async () => {
+  const service = createCrmService({ authorizeOperation: authorizeCrmOperation, repository: repositorioAssincronoFake([]) });
+  const ctx = createAuthorizationContext(usuario());
+  const erro = await erroDe(() => service.updateRecord(ctx, 'crm:99999999-9999-4999-8999-999999999999', { empresa: 'X' }));
+  assert.match(erro.message, /^CRM: registro não encontrado/);
+  assert.deepEqual(mapeado(erro), FIXAS.naoEncontrado);
+});
+
+test('[CRM-ERRMAP-18] PARIDADE — duplicidade (409) e DNC bloqueado (409): idênticos com um repositório assíncrono no formato Supabase, sem nenhuma chamada de rede', async () => {
+  const existente = registroFake({ id: 'crm:88888888-8888-4888-8888-888888888888', empresa: 'Existente', site: ALFA.site });
+  const service = createCrmService({ authorizeOperation: authorizeCrmOperation, repository: repositorioAssincronoFake([existente]) });
+  const ctx = createAuthorizationContext(usuario());
+
+  const erroDuplicado = await erroDe(() => service.createRecord(ctx, { empresa: 'Novo', site: ALFA.site }));
+  assert.match(erroDuplicado.message, /^CRM: não é possível criar — já existe um registro/);
+  assert.deepEqual(mapeado(erroDuplicado), FIXAS.duplicado);
+
+  const bloqueado = registroFake({ id: 'crm:77777777-7777-4777-8777-777777777777', empresa: 'Bloqueado', site: BETA.site, status: 'DO_NOT_CONTACT' });
+  const serviceDnc = createCrmService({ authorizeOperation: authorizeCrmOperation, repository: repositorioAssincronoFake([bloqueado]) });
+  const erroDnc = await erroDe(() => serviceDnc.createRecord(ctx, { empresa: 'Novo', site: BETA.site }));
+  assert.match(erroDnc.message, /^CRM: não é possível criar — identidade já bloqueada/);
+  assert.deepEqual(mapeado(erroDnc), FIXAS.bloqueado);
+});
+
+// ---------------------------------------------------------------------------
 // Varredura: toda mensagem "CRM: ..." possível do código-fonte está classificada
 // ---------------------------------------------------------------------------
 const FONTES = ['src/crm/crmDomain.js', 'src/crm/crmRepository.js', 'src/crm/crmRepositoryPort.js', 'src/services/crmService.js'];

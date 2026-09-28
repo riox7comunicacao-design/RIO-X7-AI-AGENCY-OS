@@ -47,9 +47,15 @@ test('[CRMADP-ARQ-3] a lista própria de campos do adapter (crmSupabaseMapping.j
   assert.deepEqual(Object.keys(FIELD_COLUMNS), CRM_WRITABLE_FIELDS);
 });
 
-test('[CRMADP-ARQ-4] nada de produção (server, services) usa src/crm-adapters/ ainda — a composição real continua só com o arquivo local (comentários podem CITAR "crm-adapters" em prosa; o que conta é um import/uso de verdade)', () => {
-  for (const arquivo of ['src/server/index.js', 'src/server/app.js', 'src/server/static.js', 'src/services/crmFileService.js', 'src/services/crmIntegrationFileService.js', 'src/services/prospectingFileService.js', 'src/services/crmRepositoryFactory.js']) {
+test('[CRMADP-ARQ-4] só src/services/crmRepositoryFactory.js usa src/crm-adapters/ na composição real (etapa 3H: é o único ponto que decide ENTRE adapters) — nenhum outro arquivo de produção (server, ou os outros serviços de arquivo) o faz (comentários podem CITAR "crm-adapters" em prosa; o que conta é um import/uso de verdade)', () => {
+  for (const arquivo of ['src/server/index.js', 'src/server/app.js', 'src/server/static.js', 'src/services/crmFileService.js', 'src/services/crmIntegrationFileService.js', 'src/services/prospectingFileService.js']) {
     const semComentarios = fs.readFileSync(path.join(RAIZ, arquivo), 'utf8').replace(/\/\/[^\n]*/g, '');
     assert.doesNotMatch(semComentarios, /crm-adapters/, arquivo);
   }
+  // A composição por modo (etapa 3H) É o ponto decidido para importar os dois adapters — confirmado aqui de
+  // propósito (import de verdade, via analyzeSource, nunca uma menção em comentário).
+  const analise = analyzeSource(fs.readFileSync(path.join(RAIZ, 'src', 'services', 'crmRepositoryFactory.js'), 'utf8'), 'src/services/crmRepositoryFactory.js');
+  const especificadores = analise.refs.map((ref) => ref.specifier);
+  assert.ok(especificadores.includes('../crm-adapters/crmSupabaseRepository'), 'crmRepositoryFactory.js deveria importar createSupabaseCrmRepository de verdade');
+  assert.ok(especificadores.includes('../crm-adapters/crmSupabaseConfig'), 'crmRepositoryFactory.js deveria importar readSupabaseCrmConfig de verdade');
 });

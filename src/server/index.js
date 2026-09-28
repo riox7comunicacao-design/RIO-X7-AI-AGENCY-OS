@@ -9,7 +9,10 @@
 // nem o do CRM: a regra R12 só deixa src/services importar src/crm, e a regra R15/R16 fazem o mesmo para
 // src/crm-adapters) nem arquivos internos de auth. O CRM entra por createConfiguredCrmService
 // (src/services/crmRepositoryFactory.js, etapa 2.3): o servidor passa o CAMINHO do arquivo e o ambiente (para
-// REPOSITORY_MODE), nunca um repositório ou um adapter escolhido aqui.
+// REPOSITORY_MODE), nunca um repositório ou um adapter escolhido aqui. Esse `crmService`, único, é depois INJETADO
+// (etapa 3F) em createFileBackedCrmIntegrationService/createFileBackedProspectingService — a promoção e a
+// prospecção não montam mais o CRM por conta própria: os três consumidores sempre recebem a MESMA instância que
+// REPOSITORY_MODE decidiu, aqui, uma única vez.
 //
 // CONFIGURAÇÃO — o servidor lê SÓ estas variáveis de ambiente, e nenhuma é segredo:
 //   SUPABASE_URL, SUPABASE_ANON_KEY   o projeto Supabase (a chave anon é pública por desenho)
@@ -17,9 +20,12 @@
 //   RIO_X7_USERS_FILE                 o arquivo de usuários (padrão: data/users.json)
 //   RIO_X7_QUEUE_PATH                 o arquivo da fila (padrão: o do domínio, data/approval-queue.json)
 //   RIO_X7_CRM_PATH                   o arquivo do CRM (padrão: data/crm.json; criado no primeiro registro)
-//   REPOSITORY_MODE (etapa 2.3)       "file" (padrão) ou "supabase" — HOJE só "file" funciona; "supabase" é
-//                                     recusado de propósito (ver crmRepositoryFactory.js) e NÃO exige/lê
-//                                     SUPABASE_SERVICE_ROLE_KEY em nenhum dos dois casos.
+//   REPOSITORY_MODE (etapas 2.3/3H)   "file" (padrão, não exige nenhuma credencial nova) ou "supabase" (exige a
+//                                     variável própria da service_role — ver crmRepositoryFactory.js/
+//                                     crmSupabaseConfig.js; falha claro se faltar, nunca cai para "file" em
+//                                     silêncio). NENHUM valor deste servidor foi mudado nesta preparação: em
+//                                     produção este arquivo continua sem REPOSITORY_MODE configurado, então
+//                                     continua em "file", como sempre.
 // Nada além disso é lido do ambiente, e o adapter de auth recebe só as duas variáveis do Supabase — a service_role
 // nunca é lida nem repassada. Um valor que falte ou seja inválido derruba a subida com uma mensagem clara.
 //
@@ -43,9 +49,11 @@ const {
   authorizeProposerForLeadApproval,
 } = require('../auth');
 const { createApprovalQueueService } = require('../services/approvalQueueService');
-// createConfiguredCrmService (etapa 2.3, decisão 0024): decide REPOSITORY_MODE (file, hoje; supabase, bloqueado
-// nesta versão — ver o cabeçalho de crmRepositoryFactory.js) antes de montar o CRM Service. Substitui o import
-// direto de createFileBackedCrmService: agora só a fábrica sabe qual adapter usar, e nunca um caminho escondido.
+// createConfiguredCrmService (etapas 2.3/3H, decisão 0024): decide REPOSITORY_MODE (file ou supabase — ver o
+// cabeçalho de crmRepositoryFactory.js) antes de montar o CRM Service. Substitui o import direto de
+// createFileBackedCrmService: agora só a fábrica sabe qual adapter usar, e nunca um caminho escondido. Este
+// servidor continua sem REPOSITORY_MODE no seu ambiente — continua em "file" — e ativar "supabase" em produção
+// é uma decisão própria, futura, do proprietário (mudar .env), não desta preparação de código.
 const { createConfiguredCrmService } = require('../services/crmRepositoryFactory');
 const { createFileBackedCrmIntegrationService } = require('../services/crmIntegrationFileService');
 const { createFileBackedProspectingService } = require('../services/prospectingFileService');
@@ -153,27 +161,30 @@ function createServer(env = process.env, options = {}) {
     filePath: resolveFile(env.RIO_X7_CRM_PATH, DEFAULT_CRM_FILE),
   });
 
-  // A promoção Approval Queue → CRM (decisão 0016): os MESMOS dois arquivos e as MESMAS portas de autorização.
-  // (etapa 2.3) createFileBackedCrmIntegrationService/createFileBackedProspectingService continuam recebendo
-  // { crmPath } como sempre — o repositório por trás é o MESMO objeto de `crmService` acima, porque
-  // createFileBackedCrmService (chamado tanto por createConfiguredCrmService quanto por estas duas fábricas)
-  // reaproveita o repositório por caminho (sharedFileCrmRepository, em crmFileService.js). Se REPOSITORY_MODE
-  // fosse "supabase", `crmService` já teria lançado a exceção da fábrica ANTES desta linha rodar — nenhuma das
-  // duas composições abaixo chega a ser tentada.
+  // A promoção Approval Queue → CRM (decisão 0016) e a prospecção: as MESMAS portas de autorização e o MESMO
+  // OBJETO `crmService` acima — INJETADO, nunca reconstruído (etapa 3F, corrige o BLOCKER 1 da etapa 3E). Antes,
+  // estas duas fábricas recebiam só um { crmPath } e montavam CADA UMA o seu próprio CRM Service por trás; o
+  // repositório era reaproveitado (cache de crmFileService.js), mas os três Services eram objetos distintos, e
+  // nenhum dos dois consultava REPOSITORY_MODE — se REPOSITORY_MODE=supabase fosse configurado sem essa correção,
+  // promoção e prospecção continuariam silenciosamente no arquivo local enquanto o CRM direto iria para o
+  // Supabase. Passar o MESMO `crmService` aqui elimina esse risco por construção: os três consumidores sempre
+  // operam sobre a instância IDÊNTICA que REPOSITORY_MODE decidiu, UMA VEZ, acima — em qualquer modo (etapa 3H:
+  // "supabase" agora tem um caminho de código real na fábrica, mas continua exigindo REPOSITORY_MODE=supabase
+  // configurado explicitamente — este servidor não o tem, então continua em "file").
   const crmIntegrationService = createFileBackedCrmIntegrationService({
     authorizeReviewer: authorizeReviewerForApprovalQueue,
     authorizeOperation: authorizeCrmOperation,
     queuePath: resolveFile(env.RIO_X7_QUEUE_PATH, undefined),
-    crmPath: resolveFile(env.RIO_X7_CRM_PATH, DEFAULT_CRM_FILE),
+    crmService,
   });
 
-  // O Prospecting Service (submissão de prospecção): os MESMOS arquivos da fila e do CRM e as pontes de PROPOSE:LEAD_APPROVAL e do
+  // O Prospecting Service (submissão de prospecção): a MESMA fila e o MESMO `crmService` e as pontes de PROPOSE:LEAD_APPROVAL e do
   // CRM (READ:CRM). O arquivo dos lotes usa o caminho padrão e seguro do adapter (data/prospecting-batches.json, fora do Git).
   const prospectingService = createFileBackedProspectingService({
     authorizeProposer: authorizeProposerForLeadApproval,
     authorizeOperation: authorizeCrmOperation,
     queuePath: resolveFile(env.RIO_X7_QUEUE_PATH, undefined),
-    crmPath: resolveFile(env.RIO_X7_CRM_PATH, DEFAULT_CRM_FILE),
+    crmService,
   });
 
   const app = createApp({

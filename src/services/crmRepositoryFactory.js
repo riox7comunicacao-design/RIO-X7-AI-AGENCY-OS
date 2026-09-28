@@ -12,34 +12,50 @@
 //     src/services/ já faz;
 //   - src/crm-adapters/ é INFRAESTRUTURA de UM adapter (Supabase) — decidir ENTRE adapters (file vs. Supabase) é
 //     uma decisão de COMPOSIÇÃO da aplicação, não responsabilidade de um adapter sobre o outro (um adapter nunca
-//     deveria saber que o outro existe; ver R16, que proíbe o inverso).
+//     deveria saber que o outro existe; ver R16, que proíbe o inverso). Por isso este arquivo — e só ele, em
+//     src/services/ — pode importar src/crm-adapters/ (etapa 3H): decidir ENTRE adapters é exatamente a
+//     responsabilidade de uma fábrica de composição, nunca de src/server/ nem dos outros arquivos de
+//     src/services/ (crmFileService.js/crmIntegrationFileService.js/prospectingFileService.js continuam sem
+//     conhecer o Supabase — tests/crm-adapters/architecture.test.js [CRMADP-ARQ-4] vigia isso).
 // Mesmo lugar, mesmo raciocínio de crmFileService.js/crmIntegrationFileService.js/prospectingFileService.js.
 //
-// REPOSITORY_MODE (nova variável, etapa 2.3):
+// REPOSITORY_MODE (etapa 2.3; caminho Supabase real implementado na etapa 3H):
 //   ausente ou "file"    -> o adapter de arquivo de sempre (crmFileService.js), SEM NENHUMA mudança de
 //                           comportamento para quem não configurou nada. NÃO exige SUPABASE_SERVICE_ROLE_KEY —
 //                           essa variável não tem nada a ver com este modo.
-//   "supabase"           -> BLOQUEADO nesta etapa, SEMPRE — mesmo com SUPABASE_SERVICE_ROLE_KEY presente e
-//                           válida. "Preparar a composição" (o pedido desta etapa) é diferente de "ativar": o
-//                           adapter Supabase (src/crm-adapters/) já existe e já foi auditado (decisões 0024,
-//                           etapas 2/2.1/2.2), mas ligá-lo de verdade depende de decisões ainda pendentes
-//                           (D-CONCURRENCY-PORT, tradução de erro HTTP, on_conflict explícito — ver
-//                           docs/decisions/0024, seção 11) que esta etapa NÃO resolve. O bloqueio é
-//                           INCONDICIONAL: nunca cai para "file" em silêncio (seria o fallback silencioso
-//                           explicitamente proibido) — SEMPRE lança, com uma mensagem que diz o motivo.
+//   "supabase"           -> monta createSupabaseCrmRepository() de verdade, com a configuração lida de `env`
+//                           (readSupabaseCrmConfig, de src/crm-adapters/crmSupabaseConfig.js — exige AS DUAS
+//                           variáveis, SUPABASE_URL e SUPABASE_SERVICE_ROLE_KEY; lança citando só o NOME da que
+//                           faltar, nunca um valor). Se a configuração estiver ausente ou inválida, a fábrica
+//                           FALHA — nunca cai para "file" em silêncio (seria o fallback silencioso explicitamente
+//                           proibido). D-CONCURRENCY-PORT, `on_conflict` explícito e proteção multi-processo
+//                           continuam FORA do escopo desta etapa (docs/decisions/0024, seção 11/12) — a auditoria
+//                           da etapa 3G concluiu que nenhum dos três é um BLOCKER para uma primeira ativação de
+//                           processo único; nenhum foi implementado aqui.
 //   qualquer outro valor -> erro claro (nunca tratado como "file" por padrão silencioso).
 //
-// NENHUMA chamada de rede acontece aqui, em nenhum modo: "file" só monta o adapter de arquivo (preguiçoso — só
-// lê/escreve quando uma operação roda); "supabase" nem chega a montar nada, porque lança antes.
+// NENHUMA chamada de rede acontece SÓ POR CONFIGURAR — "file" só monta o adapter de arquivo (preguiçoso — só lê/
+// escreve quando uma operação roda); "supabase" monta um repositório que também só fala com a rede quando
+// list()/getById()/save() forem chamados (o mesmo desenho preguiçoso do adapter Supabase — ver
+// crmSupabaseRepository.js). Nada aqui ou em createSupabaseCrmRepository() chama a rede na hora de CRIAR o
+// repositório — só um `fetch` de verdade, feito por uma OPERAÇÃO, tocaria a rede.
 //
-// INSTÂNCIA ÚNICA (decisão 0023 — a serialização de escrita em crmDomain.js é por OBJETO repositório): o modo
-// "file" é resolvido através de crmFileService.js, que reaproveita o MESMO objeto repositório por caminho
-// (sharedFileCrmRepository) — então createConfiguredCrmService()/createConfiguredCrmRepository() aqui, e
-// createFileBackedCrmService() chamado por crmIntegrationFileService.js/prospectingFileService.js, para o MESMO
-// filePath, sempre apontam para o repositório IDÊNTICO. Ver crmFileService.js para o porquê disso ser seguro
-// mesmo sem mudar o adapter de arquivo (que não tem estado: cada operação já relê o disco).
+// INSTÂNCIA ÚNICA (decisão 0023 — a serialização de escrita em crmDomain.js é por OBJETO repositório): no modo
+// "file", resolvida via crmFileService.js (sharedFileCrmRepository, por caminho — decisão 2.3). No modo
+// "supabase", resolvida por sharedSupabaseCrmRepository() abaixo (etapa 3H, por configuração — mesmo padrão,
+// mesmo motivo): sem isso, createConfiguredCrmService() (para o CRM direto) e as fábricas de arquivo de promoção/
+// prospecção — que hoje recebem o `crmService` PRONTO, injetado por quem compõe (etapa 3F) — continuariam
+// seguras entre si (compartilham o MESMO objeto por injeção), mas duas chamadas SEPARADAS a
+// createConfiguredCrmRepository()/createConfiguredCrmService() para a MESMA configuração Supabase (ex.: um script
+// futuro, um teste, uma segunda composição) criariam dois repositórios INDEPENDENTES — reabrindo exatamente o
+// risco que a etapa 2.3/3F já corrigiu para o arquivo, mas agora do lado do Supabase.
 
-const { createFileBackedCrmService, sharedFileCrmRepository } = require('./crmFileService');
+const crypto = require('node:crypto');
+
+const { sharedFileCrmRepository } = require('./crmFileService');
+const { createCrmService } = require('./crmService');
+const { createSupabaseCrmRepository } = require('../crm-adapters/crmSupabaseRepository');
+const { readSupabaseCrmConfig } = require('../crm-adapters/crmSupabaseConfig');
 
 const REPOSITORY_MODE = Object.freeze({ FILE: 'file', SUPABASE: 'supabase' });
 const VALID_MODES = Object.freeze(Object.values(REPOSITORY_MODE));
@@ -55,34 +71,56 @@ function readRepositoryMode(env = process.env) {
   return raw;
 }
 
-function assertModeIsFile(mode) {
-  if (mode === REPOSITORY_MODE.SUPABASE) {
-    throw new Error(
-      'REPOSITORY_MODE=supabase ainda não está habilitado nesta versão: o adapter Postgres/Supabase do CRM ' +
-        '(pasta de adapters já auditada) existe, mas ligá-lo depende de decisões ainda pendentes ' +
-        '(docs/decisions/0024-crm-postgres-schema.md, seção 11 — concorrência entre instâncias, tradução de erro ' +
-        'HTTP, on_conflict explícito). Use REPOSITORY_MODE=file (o padrão) até uma etapa futura decidir e validar ' +
-        'a ativação — não há atalho nem fallback automático para "file" quando "supabase" é pedido explicitamente.'
-    );
+// CACHE do repositório Supabase, por CONFIGURAÇÃO (etapa 3H — mesmo papel de sharedFileCrmRepository, que cacheia
+// por CAMINHO). Chaveado por `url` (não é segredo) + um HASH SHA-256 de `serviceRoleKey` — nunca a chave em texto
+// puro: mesmo que este Map aparecesse inteiro num dump de memória, num log de depuração ou num `console.log`
+// acidental de suas chaves, a service_role original não seria recuperável a partir daqui (SHA-256 não é
+// reversível). O hash só serve para DISTINGUIR configurações — duas chamadas com a MESMA url e a MESMA chave
+// caem na mesma entrada; url igual com chave DIFERENTE (ex.: girar a credencial, ou dois projetos por engano)
+// nunca compartilha o repositório de outra configuração. `createSupabaseCrmRepository()` em si não ganhou
+// nenhum estado mutável nem deixou de ser `Object.freeze()`d — o cache é só um `Map` NESTE módulo, por fora do
+// adapter, exatamente como sharedFileCrmRepository já faz para o arquivo.
+const supabaseRepositoriesByConfig = new Map();
+function supabaseConfigCacheKey(config) {
+  const hashDaChave = crypto.createHash('sha256').update(config.serviceRoleKey).digest('hex');
+  return `${config.url}\u0000${hashDaChave}`;
+}
+function sharedSupabaseCrmRepository(config) {
+  const chave = supabaseConfigCacheKey(config);
+  let repository = supabaseRepositoriesByConfig.get(chave);
+  if (!repository) {
+    repository = createSupabaseCrmRepository({ url: config.url, serviceRoleKey: config.serviceRoleKey });
+    supabaseRepositoriesByConfig.set(chave, repository);
   }
+  return repository;
 }
 
-// { env } (padrão process.env): de onde ler REPOSITORY_MODE. { filePath }: obrigatório SÓ no modo "file" (o
-// caminho é escolhido por quem compõe, nunca por um padrão escondido — mesmo princípio de crmFileService.js).
-// Devolve o REPOSITÓRIO puro (list/getById/save) — mesma porta de src/crm/crmRepositoryPort.js.
+// { env } (padrão process.env): de onde ler REPOSITORY_MODE (e, no modo supabase, SUPABASE_URL/
+// SUPABASE_SERVICE_ROLE_KEY). { filePath }: obrigatório SÓ no modo "file" (o caminho é escolhido por quem compõe,
+// nunca por um padrão escondido — mesmo princípio de crmFileService.js). Devolve o REPOSITÓRIO puro (list/getById/
+// save) — mesma porta de src/crm/crmRepositoryPort.js, em QUALQUER modo (o Port não muda — regra desta etapa).
 function createConfiguredCrmRepository({ env = process.env, filePath } = {}) {
-  assertModeIsFile(readRepositoryMode(env));
+  const modo = readRepositoryMode(env);
+  if (modo === REPOSITORY_MODE.SUPABASE) {
+    // readSupabaseCrmConfig lança um erro claro citando só o NOME da variável ausente (SUPABASE_URL ou
+    // SUPABASE_SERVICE_ROLE_KEY) — nunca um valor, nunca uma mensagem genérica. Sem fallback: se a configuração
+    // faltar ou for inválida, a fábrica FALHA aqui, antes de qualquer tentativa de montar o repositório.
+    const config = readSupabaseCrmConfig(env);
+    return sharedSupabaseCrmRepository(config);
+  }
   if (typeof filePath !== 'string' || filePath.trim().length === 0) {
     throw new Error('createConfiguredCrmRepository (REPOSITORY_MODE=file) exige { filePath } (texto não vazio): o caminho é escolhido por quem compõe.');
   }
   return sharedFileCrmRepository(filePath);
 }
 
-// Como acima, mas devolve o CRM Service já autorizado (o que src/server/index.js precisa) — mesmo modo, mesma
-// validação, mesmo repositório compartilhado por trás.
+// Como acima, mas devolve o CRM Service já autorizado (o que src/server/index.js precisa). Reaproveita
+// createConfiguredCrmRepository() para a escolha de modo (nunca duplica a lógica de seleção) — só acrescenta a
+// camada de autorização por cima, com createCrmService (a MESMA usada pelo modo file, via crmFileService.js;
+// aqui chamada diretamente para que os dois modos passem pelo mesmo caminho de composição).
 function createConfiguredCrmService({ env = process.env, authorizeOperation, filePath } = {}) {
-  assertModeIsFile(readRepositoryMode(env));
-  return createFileBackedCrmService({ authorizeOperation, filePath });
+  const repository = createConfiguredCrmRepository({ env, filePath });
+  return createCrmService({ authorizeOperation, repository });
 }
 
-module.exports = { REPOSITORY_MODE, readRepositoryMode, createConfiguredCrmRepository, createConfiguredCrmService };
+module.exports = { REPOSITORY_MODE, readRepositoryMode, createConfiguredCrmRepository, createConfiguredCrmService, sharedSupabaseCrmRepository };

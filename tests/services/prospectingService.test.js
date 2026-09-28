@@ -190,7 +190,7 @@ test('[PSV-6] um autorizador defeituoso falha fechado: false, undefined, texto, 
   }
 });
 
-test('[PSV-7] a criação exige tudo: portas, CRM Service com listRecords, repositório de lotes válido, dependências da fila e relógio; a fábrica de arquivo exige o caminho do CRM', async (t) => {
+test('[PSV-7] a criação exige tudo: portas, CRM Service com listRecords, repositório de lotes válido, dependências da fila e relógio; a fábrica de arquivo exige um crmService já pronto (etapa 3F, injetado por quem compõe, nunca um crmPath)', async (t) => {
   const env = await ambiente(t);
   const base = { authorizeProposer: authorizeProposerForLeadApproval, authorizeOperation: authorizeCrmOperation, crmService: { listRecords() {} }, batchRepository: createInMemoryBatchRepository(), dossierRepository: createInMemoryDossierRepository(), queuePath: env.queuePath };
   assert.doesNotThrow(() => createProspectingService(base));
@@ -204,9 +204,10 @@ test('[PSV-7] a criação exige tudo: portas, CRM Service com listRecords, repos
   assert.throws(() => createProspectingService({ ...base, queuePath: '' }), /queuePath/);
   assert.throws(() => createProspectingService({ ...base, approvalQueue: {} }), /approvalQueue/);
   assert.throws(() => createProspectingService({ ...base, now: 5 }), /now e newId/);
-  assert.throws(() => createFileBackedProspectingService({ authorizeProposer: authorizeProposerForLeadApproval, authorizeOperation: authorizeCrmOperation }), /crmPath/);
-  assert.throws(() => createFileBackedProspectingService({ authorizeProposer: authorizeProposerForLeadApproval, authorizeOperation: authorizeCrmOperation, crmPath: env.crmPath, batchPath: '' }), /batchPath/);
-  const servico = createFileBackedProspectingService({ authorizeProposer: authorizeProposerForLeadApproval, authorizeOperation: authorizeCrmOperation, crmPath: env.crmPath, queuePath: env.queuePath, batchPath: env.batchPath });
+  const crmServiceDeArquivo = createFileBackedCrmService({ authorizeOperation: authorizeCrmOperation, filePath: env.crmPath });
+  assert.throws(() => createFileBackedProspectingService({ authorizeProposer: authorizeProposerForLeadApproval, authorizeOperation: authorizeCrmOperation }), /crmService/);
+  assert.throws(() => createFileBackedProspectingService({ authorizeProposer: authorizeProposerForLeadApproval, authorizeOperation: authorizeCrmOperation, crmService: crmServiceDeArquivo, batchPath: '' }), /batchPath/);
+  const servico = createFileBackedProspectingService({ authorizeProposer: authorizeProposerForLeadApproval, authorizeOperation: authorizeCrmOperation, crmService: crmServiceDeArquivo, queuePath: env.queuePath, batchPath: env.batchPath });
   assert.deepEqual(Object.keys(servico).sort(), ['getBatch', 'listBatches', 'submitProspecting'], 'nenhuma operação de aprovação, rejeição, promoção ou escrita no CRM');
 });
 
