@@ -386,3 +386,27 @@ table.crm-table td.empty { color: var(--muted); }
   table.crm-table td::before { flex: 0 0 38%; content: attr(data-label); color: var(--muted); font-weight: 600; }
   table.crm-table td.empty { display: none; }
 }
+
+/* Kanban de Funis (reestruturação Prospecção/CRM/Funis, Etapa "Funis 2"). */
+.funnel-head { display: flex; flex-wrap: wrap; align-items: center; gap: 12px; margin-bottom: 14px; }
+.funnel-head h2 { margin-right: auto; }
+.funnel-head select, .funnel-head input[type="search"] { min-height: 38px; }
+.funnel-board { display: flex; gap: 14px; overflow-x: auto; padding-bottom: 8px; }
+.funnel-column { flex: 0 0 260px; background: var(--surface); border: 1px solid var(--line); border-radius: var(--radius); padding: 10px; display: flex; flex-direction: column; gap: 8px; max-height: 70vh; }
+.funnel-column-title { display: flex; justify-content: space-between; align-items: center; font-size: 14px; }
+.funnel-column-count { background: var(--neutral-bg); color: var(--neutral-text); border-radius: 999px; padding: 1px 8px; font-size: 12px; }
+.funnel-column-cards { display: flex; flex-direction: column; gap: 8px; overflow-y: auto; }
+.funnel-card { background: #ffffff; border: 1px solid var(--line); border-radius: 10px; padding: 10px; display: flex; flex-direction: column; gap: 4px; }
+.funnel-card[data-busy="true"] { opacity: 0.6; }
+.funnel-card-title { font-weight: 600; text-decoration: none; color: inherit; }
+.funnel-card-title:hover { text-decoration: underline; }
+.funnel-card-line { margin: 0; font-size: 12.5px; }
+.funnel-card-actions { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; margin-top: 6px; }
+.btn.small { padding: 4px 8px; font-size: 12.5px; }
+.funnel-add-panel { margin-bottom: 14px; }
+.funnel-add-results { max-height: 240px; overflow-y: auto; }
+.funnel-add-results li { display: flex; justify-content: space-between; align-items: center; gap: 10px; padding: 6px 0; border-bottom: 1px solid var(--line); }
+
+@media (max-width: 760px) {
+  .funnel-column { flex-basis: 240px; }
+}

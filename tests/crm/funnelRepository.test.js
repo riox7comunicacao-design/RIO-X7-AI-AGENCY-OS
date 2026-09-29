@@ -82,7 +82,7 @@ function eachRepository(nome, factory) {
     assert.equal(repo.getFunnel('funnel:a').config.x, 1);
   });
 
-  test(`[FUNNEL-REPO-${nome}-7] countCardsByFunnel/countCardsByStage sempre devolvem 0 nesta etapa (nenhum card ainda existe — Etapa "Funis 2")`, () => {
+  test(`[FUNNEL-REPO-${nome}-7] countCardsByFunnel/countCardsByStage começam em 0`, () => {
     const repo = factory();
     assert.equal(repo.countCardsByFunnel('funnel:a'), 0);
     assert.equal(repo.countCardsByStage('stage:a'), 0);
@@ -91,6 +91,63 @@ function eachRepository(nome, factory) {
   test(`[FUNNEL-REPO-${nome}-8] assertValidFunnelRepository aceita o adapter`, () => {
     const repo = factory();
     assert.equal(assertValidFunnelRepository(repo), repo);
+  });
+
+  // ---- card (Etapa "Funis 2") ---------------------------------------------------------------------------------
+  test(`[FUNNEL-REPO-${nome}-CARD-1] saveCard grava; getCard/listCardsByFunnel/getCardByFunnelAndRecord encontram; count reflete o card ATIVO`, () => {
+    const repo = factory();
+    repo.saveCard({ id: 'card:a', funnelId: 'funnel:a', stageId: 'stage:a', crmRecordId: 'crm:a', removedAt: null });
+    assert.equal(repo.getCard('card:a').crmRecordId, 'crm:a');
+    assert.deepEqual(repo.listCardsByFunnel('funnel:a').map((c) => c.id), ['card:a']);
+    assert.equal(repo.getCardByFunnelAndRecord('funnel:a', 'crm:a').id, 'card:a');
+    assert.equal(repo.getCardByFunnelAndRecord('funnel:a', 'crm:outro'), null);
+    assert.equal(repo.countCardsByFunnel('funnel:a'), 1);
+    assert.equal(repo.countCardsByStage('stage:a'), 1);
+  });
+
+  test(`[FUNNEL-REPO-${nome}-CARD-2] archiveCard marca removedAt — nunca apaga a linha: getCard continua achando, mas listCardsByFunnel/getCardByFunnelAndRecord/count deixam de contar`, () => {
+    const repo = factory();
+    repo.saveCard({ id: 'card:a', funnelId: 'funnel:a', stageId: 'stage:a', crmRecordId: 'crm:a', removedAt: null });
+    repo.archiveCard('card:a');
+    const arquivado = repo.getCard('card:a');
+    assert.notEqual(arquivado, null, 'a linha continua existindo');
+    assert.notEqual(arquivado.removedAt, null);
+    assert.deepEqual(repo.listCardsByFunnel('funnel:a'), []);
+    assert.equal(repo.getCardByFunnelAndRecord('funnel:a', 'crm:a'), null);
+    assert.equal(repo.countCardsByFunnel('funnel:a'), 0);
+    assert.equal(repo.countCardsByStage('stage:a'), 0);
+    assert.doesNotThrow(() => repo.archiveCard('card:a'), 'arquivar de novo não lança');
+    assert.doesNotThrow(() => repo.archiveCard('card:nao-existe'), 'arquivar um id inexistente não lança');
+  });
+
+  test(`[FUNNEL-REPO-${nome}-CARD-3] saveCard exige um card com id; id perigoso é recusado`, () => {
+    const repo = factory();
+    assert.throws(() => repo.saveCard({}), /id/);
+    assert.throws(() => repo.saveCard({ id: '__proto__' }), /não permitido/);
+  });
+
+  test(`[FUNNEL-REPO-${nome}-CARD-4] listCardMoves/saveCardMove: histórico append-only, filtrado por cardId, na ordem em que foi gravado`, () => {
+    const repo = factory();
+    repo.saveCardMove({ cardId: 'card:a', stageFrom: null, stageTo: 'stage:1', movedAt: '2026-01-01T00:00:00.000Z' });
+    repo.saveCardMove({ cardId: 'card:a', stageFrom: 'stage:1', stageTo: 'stage:2', movedAt: '2026-01-02T00:00:00.000Z' });
+    repo.saveCardMove({ cardId: 'card:b', stageFrom: null, stageTo: 'stage:1', movedAt: '2026-01-01T00:00:00.000Z' });
+    const historicoA = repo.listCardMoves('card:a');
+    assert.equal(historicoA.length, 2);
+    assert.deepEqual(historicoA.map((m) => m.stageTo), ['stage:1', 'stage:2']);
+    assert.equal(repo.listCardMoves('card:b').length, 1);
+    assert.deepEqual(repo.listCardMoves('card:nao-existe'), []);
+  });
+
+  test(`[FUNNEL-REPO-${nome}-CARD-5] getCard/listCardMoves devolvem CÓPIAS — alterar o retorno nunca muda o guardado`, () => {
+    const repo = factory();
+    repo.saveCard({ id: 'card:a', funnelId: 'funnel:a', stageId: 'stage:a', crmRecordId: 'crm:a', removedAt: null });
+    const lido = repo.getCard('card:a');
+    lido.stageId = 'adulterado';
+    assert.equal(repo.getCard('card:a').stageId, 'stage:a');
+    repo.saveCardMove({ cardId: 'card:a', stageFrom: null, stageTo: 'stage:a' });
+    const [move] = repo.listCardMoves('card:a');
+    move.stageTo = 'adulterado';
+    assert.equal(repo.listCardMoves('card:a')[0].stageTo, 'stage:a');
   });
 }
 

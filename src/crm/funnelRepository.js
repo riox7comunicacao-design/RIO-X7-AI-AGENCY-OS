@@ -1,10 +1,14 @@
-// Adapters de DESENVOLVIMENTO/TESTE da porta de Funis (Etapa "Funis 1") — mesmo par de sempre (memória, arquivo
-// JSON local), mesmo desenho de crmRepository.js. `createJsonFileFunnelRepository(filePath)` grava um ÚNICO
-// arquivo (`{ funnels: {...}, stages: {...} }`, escrita atômica) — os cards ainda não existem (Etapa "Funis 2"),
-// então `countCardsByFunnel`/`countCardsByStage` sempre devolvem 0 aqui: nenhum destes dois adapters cria card.
-// O adapter de produção (Supabase) desta porta é uma etapa futura, documentada mas não escrita ainda — ver a
-// migration de Funis (schema completo, incluindo as tabelas de card, para que a etapa seguinte não precise de
-// uma migration nova só para os cards).
+// Adapters de DESENVOLVIMENTO/TESTE da porta de Funis (Etapa "Funis 1": funil/etapa; Etapa "Funis 2": card) — mesmo
+// par de sempre (memória, arquivo JSON local), mesmo desenho de crmRepository.js. `createJsonFileFunnelRepository`
+// grava um ÚNICO arquivo (`{ funnels, stages, cards, cardMoves }`, escrita atômica).
+//
+// CARD: `archiveCard(id)` nunca apaga a linha — só marca `removedAt` (Etapa "Funis 2", decisão do proprietário: o
+// histórico de movimentação nunca pode ficar orfão nem ser perdido). `countCardsByFunnel`/`countCardsByStage`/
+// `listCardsByFunnel`/`getCardByFunnelAndRecord` só enxergam cards ATIVOS (`removedAt` ausente) — um card
+// arquivado nunca bloqueia excluir o funil/etapa nem recriar o card. `getCard`/`listCardMoves` enxergam cards
+// arquivados também (histórico e detalhe continuam consultáveis).
+//
+// O adapter de produção (Supabase) desta porta é uma etapa futura — ver a migration de Funis (schema completo).
 
 const fs = require('node:fs');
 const path = require('node:path');
@@ -18,10 +22,14 @@ const UNSAFE_IDS = new Set(['__proto__', 'constructor', 'prototype']);
 function assertSafeId(id, label) {
   if (UNSAFE_IDS.has(id)) throw new Error(`Funil: id de ${label} não permitido: ${id}`);
 }
+const isAtiva = (card) => card.removedAt === null || card.removedAt === undefined;
 
 function createInMemoryFunnelRepository() {
   const funnels = new Map();
   const stages = new Map();
+  const cards = new Map();
+  const cardMoves = []; // append-only
+
   return {
     listFunnels() {
       return [...funnels.values()].map(clone);
@@ -57,12 +65,39 @@ function createInMemoryFunnelRepository() {
       assertSafeId(id, 'etapa');
       stages.delete(id);
     },
-    // Nenhum card existe ainda (Etapa "Funis 2") — sempre 0 neste adapter.
-    countCardsByFunnel() {
-      return 0;
+    countCardsByFunnel(funnelId) {
+      return [...cards.values()].filter((card) => card.funnelId === funnelId && isAtiva(card)).length;
     },
-    countCardsByStage() {
-      return 0;
+    countCardsByStage(stageId) {
+      return [...cards.values()].filter((card) => card.stageId === stageId && isAtiva(card)).length;
+    },
+    listCardsByFunnel(funnelId) {
+      return [...cards.values()].filter((card) => card.funnelId === funnelId && isAtiva(card)).map(clone);
+    },
+    getCardByFunnelAndRecord(funnelId, crmRecordId) {
+      const card = [...cards.values()].find((c) => c.funnelId === funnelId && c.crmRecordId === crmRecordId && isAtiva(c));
+      return card ? clone(card) : null;
+    },
+    getCard(id) {
+      const card = cards.get(id);
+      return card ? clone(card) : null;
+    },
+    saveCard(card) {
+      if (!card || typeof card.id !== 'string' || !card.id) throw new Error('Funil: saveCard() exige um card com id');
+      assertSafeId(card.id, 'card');
+      cards.set(card.id, clone(card));
+    },
+    archiveCard(id) {
+      if (typeof id !== 'string' || !id) throw new Error('Funil: archiveCard() exige um id (texto não vazio)');
+      const card = cards.get(id);
+      if (card) cards.set(id, { ...card, removedAt: new Date().toISOString() });
+    },
+    listCardMoves(cardId) {
+      return cardMoves.filter((move) => move.cardId === cardId).map(clone);
+    },
+    saveCardMove(move) {
+      if (!move || typeof move.cardId !== 'string' || !move.cardId) throw new Error('Funil: saveCardMove() exige um move com cardId');
+      cardMoves.push(clone(move));
     },
   };
 }
@@ -72,7 +107,7 @@ function readJsonFile(filePath) {
   try {
     raw = fs.readFileSync(filePath, 'utf8');
   } catch (err) {
-    if (err.code === 'ENOENT') return { funnels: Object.create(null), stages: Object.create(null) };
+    if (err.code === 'ENOENT') return { funnels: Object.create(null), stages: Object.create(null), cards: Object.create(null), cardMoves: [] };
     throw err;
   }
   let parsed;
@@ -81,15 +116,23 @@ function readJsonFile(filePath) {
   } catch (err) {
     throw new Error(`Funil: arquivo de dados corrompido (JSON inválido) em ${filePath}: ${err.message}`);
   }
-  if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed) || typeof parsed.funnels !== 'object' || typeof parsed.stages !== 'object') {
-    throw new Error(`Funil: arquivo de dados corrompido (estrutura inválida, esperava { funnels, stages }) em ${filePath}`);
+  if (
+    !parsed ||
+    typeof parsed !== 'object' ||
+    Array.isArray(parsed) ||
+    typeof parsed.funnels !== 'object' ||
+    typeof parsed.stages !== 'object' ||
+    typeof parsed.cards !== 'object' ||
+    !Array.isArray(parsed.cardMoves)
+  ) {
+    throw new Error(`Funil: arquivo de dados corrompido (estrutura inválida, esperava { funnels, stages, cards, cardMoves }) em ${filePath}`);
   }
   const safe = (source) => {
     const out = Object.create(null);
     for (const key of Object.keys(source)) out[key] = source[key];
     return out;
   };
-  return { funnels: safe(parsed.funnels), stages: safe(parsed.stages) };
+  return { funnels: safe(parsed.funnels), stages: safe(parsed.stages), cards: safe(parsed.cards), cardMoves: parsed.cardMoves.map(clone) };
 }
 
 // Mesmo padrão de escrita atômica de crmRepository.js/approvalQueue.js: arquivo temporário no mesmo diretório,
@@ -171,11 +214,48 @@ function createJsonFileFunnelRepository(filePath) {
         writeJsonFileAtomic(filePath, data);
       }
     },
-    countCardsByFunnel() {
-      return 0;
+    countCardsByFunnel(funnelId) {
+      return Object.values(readJsonFile(filePath).cards).filter((card) => card.funnelId === funnelId && isAtiva(card)).length;
     },
-    countCardsByStage() {
-      return 0;
+    countCardsByStage(stageId) {
+      return Object.values(readJsonFile(filePath).cards).filter((card) => card.stageId === stageId && isAtiva(card)).length;
+    },
+    listCardsByFunnel(funnelId) {
+      return Object.values(readJsonFile(filePath).cards)
+        .filter((card) => card.funnelId === funnelId && isAtiva(card))
+        .map(clone);
+    },
+    getCardByFunnelAndRecord(funnelId, crmRecordId) {
+      const card = Object.values(readJsonFile(filePath).cards).find((c) => c.funnelId === funnelId && c.crmRecordId === crmRecordId && isAtiva(c));
+      return card ? clone(card) : null;
+    },
+    getCard(id) {
+      const data = readJsonFile(filePath);
+      return Object.prototype.hasOwnProperty.call(data.cards, id) ? clone(data.cards[id]) : null;
+    },
+    saveCard(card) {
+      if (!card || typeof card.id !== 'string' || !card.id) throw new Error('Funil: saveCard() exige um card com id');
+      assertSafeId(card.id, 'card');
+      const data = readJsonFile(filePath);
+      data.cards[card.id] = clone(card);
+      writeJsonFileAtomic(filePath, data);
+    },
+    archiveCard(id) {
+      if (typeof id !== 'string' || !id) throw new Error('Funil: archiveCard() exige um id (texto não vazio)');
+      const data = readJsonFile(filePath);
+      if (Object.prototype.hasOwnProperty.call(data.cards, id)) {
+        data.cards[id] = { ...data.cards[id], removedAt: new Date().toISOString() };
+        writeJsonFileAtomic(filePath, data);
+      }
+    },
+    listCardMoves(cardId) {
+      return readJsonFile(filePath).cardMoves.filter((move) => move.cardId === cardId).map(clone);
+    },
+    saveCardMove(move) {
+      if (!move || typeof move.cardId !== 'string' || !move.cardId) throw new Error('Funil: saveCardMove() exige um move com cardId');
+      const data = readJsonFile(filePath);
+      data.cardMoves.push(clone(move));
+      writeJsonFileAtomic(filePath, data);
     },
   };
 }

@@ -10,6 +10,7 @@
 //   #/crm/registro/<id>       ficha de um registro (o id vai codificado: crm%3A...)
 //   #/aprovacoes              a fila de aprovação
 //   #/agentes                 a Central de Agentes IA (só a estrutura visual)
+//   #/funis                   o Kanban de Funis (reestruturação Prospecção/CRM/Funis, Etapa "Funis 2")
 //
 // Um fragmento que não é nenhum destes é "not-found" (uma tela amigável), nunca um erro.
 
@@ -34,6 +35,7 @@ export function parseRoute(hash) {
   }
   if (segments.length === 1 && segments[0] === 'aprovacoes') return { name: 'approvals' };
   if (segments.length === 1 && segments[0] === 'agentes') return { name: 'agents' };
+  if (segments.length === 1 && segments[0] === 'funis') return { name: 'funnels' };
   return { name: 'not-found' };
 }
 
@@ -51,6 +53,8 @@ export function buildHash(route) {
       return '#/aprovacoes';
     case 'agents':
       return '#/agentes';
+    case 'funnels':
+      return '#/funis';
     default:
       return '#/';
   }
@@ -62,6 +66,7 @@ export function sectionOf(route) {
   if (name === 'crm-list' || name === 'crm-new' || name === 'crm-record') return 'crm';
   if (name === 'approvals') return 'approvals';
   if (name === 'agents') return 'agents';
+  if (name === 'funnels') return 'funnels';
   if (name === 'overview') return 'overview';
   return null;
 }

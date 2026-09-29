@@ -88,7 +88,12 @@ test('[CRM-API-ARCH-3] a raiz de composição só chama a fábrica de src/servic
 
 test('[CRM-API-ARCH-4] a composição injeta o autorizador de src/auth e o caminho do arquivo — e o app recebe o Service pronto (não há um segundo caminho até o domínio); promoção e prospecção recebem o MESMO objeto crmService (etapa 3F), nunca um crmPath próprio', () => {
   const codigo = fs.readFileSync(path.join(REPO_ROOT, 'src/server/index.js'), 'utf8');
-  assert.match(codigo, /createConfiguredCrmService\(\{\s*env,\s*authorizeOperation: authorizeCrmOperation,\s*filePath: resolveFile\(env\.RIO_X7_CRM_PATH, DEFAULT_CRM_FILE\),?\s*\}\)/, 'REPOSITORY_MODE decide o adapter (etapa 2.3) antes de montar o CRM Service');
+  // O caminho é resolvido uma vez (crmFilePath) e reaproveitado por createConfiguredCrmService E por
+  // createConfiguredCrmRepository (Etapa "Funis 2" — o repositório bruto que o Funnel Service usa é a MESMA
+  // instância cacheada, nunca um segundo caminho de composição até o CRM).
+  assert.match(codigo, /const crmFilePath = resolveFile\(env\.RIO_X7_CRM_PATH, DEFAULT_CRM_FILE\);/, 'REPOSITORY_MODE decide o adapter (etapa 2.3) antes de montar o CRM Service');
+  assert.match(codigo, /createConfiguredCrmService\(\{\s*env,\s*authorizeOperation:\s*authorizeCrmOperation,\s*filePath:\s*crmFilePath\s*\}\)/);
+  assert.match(codigo, /createConfiguredCrmRepository\(\{\s*env,\s*filePath:\s*crmFilePath\s*\}\)/, 'o repositório bruto do CRM usa o MESMO caminho/cache que o crmService');
   assert.match(codigo, /createApp\(\{[^}]*\bcrmService,/);
   assert.match(codigo, /createApp\(\{[^}]*\bcrmIntegrationService,/);
   assert.match(codigo, /createApp\(\{[^}]*\bprospectingService,/);

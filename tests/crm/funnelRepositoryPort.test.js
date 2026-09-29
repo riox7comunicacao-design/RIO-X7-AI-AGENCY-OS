@@ -19,14 +19,22 @@ function completo() {
     deleteStage: () => {},
     countCardsByFunnel: () => 0,
     countCardsByStage: () => 0,
+    listCardsByFunnel: () => [],
+    getCardByFunnelAndRecord: () => null,
+    getCard: () => null,
+    saveCard: () => {},
+    archiveCard: () => {},
+    listCardMoves: () => [],
+    saveCardMove: () => {},
   };
 }
 
-test('[FUNNEL-PORT-1] o contrato tem exatamente os 10 métodos documentados, congelado, e funnelRepository.js reexporta a MESMA definição', () => {
+test('[FUNNEL-PORT-1] o contrato tem exatamente os 17 métodos documentados (Etapa "Funis 2" acrescentou os 7 de card), congelado, e funnelRepository.js reexporta a MESMA definição', () => {
   assert.deepEqual([...REQUIRED_FUNNEL_REPOSITORY_METHODS], [
     'listFunnels', 'getFunnel', 'saveFunnel', 'deleteFunnel',
     'listStages', 'getStage', 'saveStage', 'deleteStage',
     'countCardsByFunnel', 'countCardsByStage',
+    'listCardsByFunnel', 'getCardByFunnelAndRecord', 'getCard', 'saveCard', 'archiveCard', 'listCardMoves', 'saveCardMove',
   ]);
   assert.ok(Object.isFrozen(REQUIRED_FUNNEL_REPOSITORY_METHODS));
   assert.equal(funnelRepository.assertValidFunnelRepository, assertValidFunnelRepository);

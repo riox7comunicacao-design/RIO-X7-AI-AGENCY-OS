@@ -37,8 +37,15 @@
 //   POST   /api/funnels/:id/stages/reorder     corpo { orderedIds: [...] }                       -> 200 { items }
 //   PATCH  /api/funnel-stages/:id              edita; corpo = só os campos a mudar               -> 200 { item }
 //   DELETE /api/funnel-stages/:id              recusa se houver cards vinculados (409)           -> 200 { deleted: true, id }
-// Cards (vincular um registro do CRM a um funil/etapa, mover, Kanban) são a Etapa "Funis 2" — ainda não existem.
-// Não há filtro nem busca: o Service não os tem, e a API não inventa operação.
+// Card (Etapa "Funis 2" — a posição comercial de um registro do CRM dentro de um funil). Ler exige READ:CRM;
+// criar/mover exige PROPOSE:CRM (ADMIN e COMMERCIAL_CLOSER); arquivar exige WRITE:CRM (só ADMIN):
+//   GET    /api/funnels/:id/cards              os cards ATIVOS do funil, enriquecidos com dados do CRM -> 200 { items }
+//   POST   /api/funnels/:id/cards              corpo { crmRecordId, reason? }                    -> 201 { item }
+//   GET    /api/funnel-cards/:id               um card                                           -> 200 { item }
+//   PATCH  /api/funnel-cards/:id               move; corpo { stageId, reason? }                  -> 200 { item }
+//   GET    /api/funnel-cards/:id/history       histórico de movimentação (append-only)            -> 200 { historico }
+//   DELETE /api/funnel-cards/:id               ARQUIVA (nunca apaga; nunca afeta o CRM Record)     -> 200 { deleted: true, id }
+// Não há filtro nem busca (além do funil) nesta etapa: o Service não os tem, e a API não inventa operação.
 // Tudo fora de /api é arquivo estático (ver static.js).
 //
 // PIPELINE de toda rota de /api, sempre nesta ordem:
@@ -99,10 +106,12 @@ const DEFAULT_ESTADO = 'AGUARDANDO_REVISAO';
 
 // As operações do CRM Service que a API usa (o contrato de src/services/crmService.js). Verificadas na criação do app.
 const CRM_OPERATIONS = Object.freeze(['listRecords', 'getRecord', 'getHistory', 'createRecord', 'updateRecord', 'moveStatus', 'markDoNotContact', 'deleteRecord']);
-// Funis configuráveis (reestruturação Prospecção/CRM/Funis, Etapa "Funis 1") — as 12 operações do Funnel Service.
+// Funis configuráveis (reestruturação Prospecção/CRM/Funis) — as 18 operações do Funnel Service (12 de
+// funil/etapa da Etapa "Funis 1", 6 de card da Etapa "Funis 2").
 const FUNNEL_OPERATIONS = Object.freeze([
   'listFunnels', 'getFunnel', 'createFunnel', 'updateFunnel', 'deleteFunnel', 'copyFunnel', 'reorderFunnels',
   'listStages', 'createStage', 'updateStage', 'deleteStage', 'reorderStages',
+  'listCardsByFunnel', 'getCard', 'getCardHistory', 'createCard', 'moveCard', 'deleteCard',
 ]);
 
 // A operação da promoção Approval Queue → CRM (src/services/crmIntegrationService.js) que a API usa. Verificada na criação.
@@ -153,6 +162,10 @@ const CATALOG = Object.freeze({
   // quais funis/etapas foram vinculados a um card não é dito (o card ainda nem existe nesta etapa).
   FUNNEL_HAS_CARDS: [409, 'Este funil possui cards vinculados e não pode ser excluído.'],
   STAGE_HAS_CARDS: [409, 'Esta etapa possui cards vinculados e não pode ser excluída.'],
+  // Card (Etapa "Funis 2").
+  FUNNEL_CARD_DUPLICATE: [409, 'Este registro já tem um card ativo neste funil.'],
+  FUNNEL_STAGE_MISMATCH: [400, 'A etapa informada não pertence a este funil.'],
+  FUNNEL_HAS_NO_STAGES: [409, 'Este funil ainda não tem nenhuma etapa.'],
   PAYLOAD_TOO_LARGE: [413, 'Requisição grande demais.'],
   UNSUPPORTED_MEDIA_TYPE: [415, 'Envie o corpo como application/json.'],
   INVALID_REQUEST: [400, 'Requisição inválida.'],
@@ -213,13 +226,18 @@ const KNOWN_MESSAGES = Object.freeze([
   [/^CRM: reason é obrigatório para excluir um registro/, 'INVALID_REQUEST', 'Informe o motivo da exclusão.'],
   // Funis configuráveis (Etapa "Funis 1"). O prefixo "Funil: " distingue estas mensagens das do CRM/fila; só as
   // que uma requisição HTTP consegue produzir entram aqui (repositório/composição inválidos são bug: 500).
-  [/^Funil: (?:funil|etapa) não encontrad[oa]/, 'NOT_FOUND'],
-  [/^Funil: id de (?:funil|etapa) deve ser um texto não vazio/, 'INVALID_REQUEST', 'Identificador inválido.'],
+  [/^Funil: (?:funil|etapa|card) não encontrad[oa]/, 'NOT_FOUND'],
+  [/^Funil: registro do CRM não encontrado/, 'NOT_FOUND'],
+  [/^Funil: id de (?:funil|etapa|card) deve ser um texto não vazio/, 'INVALID_REQUEST', 'Identificador inválido.'],
   [/^Funil: (?:criar|editar) (?:um funil|uma etapa) exige "nome"/, 'INVALID_REQUEST', 'Informe o nome.'],
   [/^Funil: reordenar/, 'INVALID_REQUEST', 'Lista de reordenação inválida.'],
   [/^Funil: a lista de reordenação/, 'INVALID_REQUEST', 'Lista de reordenação inválida.'],
   [/^Funil: .* deve ser um objeto simples/, 'INVALID_REQUEST', 'Campos não permitidos na requisição.'],
   [/^Funil: .* tem campos desconhecidos/, 'INVALID_REQUEST', 'Campos não permitidos na requisição.'],
+  // Card (Etapa "Funis 2").
+  [/^Funil: criar um card exige "crmRecordId"/, 'INVALID_REQUEST', 'Informe o registro do CRM.'],
+  [/^Funil: mover um card exige "stageId"/, 'INVALID_REQUEST', 'Informe a etapa de destino.'],
+  [/^Funil: (?:reason|motivo) deve ser um texto/, 'INVALID_REQUEST', 'O motivo deve ser um texto.'],
 ]);
 
 // Os `code` do serviço de promoção que a API reconhece. PROMOTION_INVALID_INPUT e PROMOTION_PROSPECT_NOT_FOUND viram os
@@ -242,6 +260,10 @@ const PROMOTION_CODES = Object.freeze({
 const FUNNEL_CODES = Object.freeze({
   FUNNEL_HAS_CARDS: 'FUNNEL_HAS_CARDS',
   STAGE_HAS_CARDS: 'STAGE_HAS_CARDS',
+  // Etapa "Funis 2" (card).
+  FUNNEL_CARD_DUPLICATE: 'FUNNEL_CARD_DUPLICATE',
+  FUNNEL_STAGE_MISMATCH: 'FUNNEL_STAGE_MISMATCH',
+  FUNNEL_HAS_NO_STAGES: 'FUNNEL_HAS_NO_STAGES',
 });
 
 // Os `code` que um adapter de REPOSITÓRIO do CRM pode anexar a um erro (contrato comum entre adapters, etapa 3F —
@@ -513,10 +535,18 @@ function matchRoute(pathname, { crm, promotion, prospecting, funnels }) {
     if (stages) return { family: 'funnel', name: 'funnel-stages', label: '/api/funnels/:id/stages', methods: ['GET', 'POST'], rawId: stages[1] };
     const copy = /^\/api\/funnels\/([^/]+)\/copy$/.exec(pathname);
     if (copy) return { family: 'funnel', name: 'funnel-copy', label: '/api/funnels/:id/copy', methods: ['POST'], rawId: copy[1] };
+    // Card (Etapa "Funis 2"): /api/funnels/:id/cards (listar/criar) e /api/funnel-cards/:id (ler/mover/arquivar) —
+    // mesmo padrão de nomeação de /api/funnel-stages/:id (uma coleção "achatada", fora de /api/funnels/:id/...).
+    const cards = /^\/api\/funnels\/([^/]+)\/cards$/.exec(pathname);
+    if (cards) return { family: 'funnel', name: 'funnel-cards', label: '/api/funnels/:id/cards', methods: ['GET', 'POST'], rawId: cards[1] };
     const item = /^\/api\/funnels\/([^/]+)$/.exec(pathname);
     if (item) return { family: 'funnel', name: 'funnel-item', label: '/api/funnels/:id', methods: ['GET', 'PATCH', 'DELETE'], rawId: item[1] };
     const stageItem = /^\/api\/funnel-stages\/([^/]+)$/.exec(pathname);
     if (stageItem) return { family: 'funnel', name: 'funnel-stage-item', label: '/api/funnel-stages/:id', methods: ['PATCH', 'DELETE'], rawId: stageItem[1] };
+    const cardHistory = /^\/api\/funnel-cards\/([^/]+)\/history$/.exec(pathname);
+    if (cardHistory) return { family: 'funnel', name: 'funnel-card-history', label: '/api/funnel-cards/:id/history', methods: ['GET'], rawId: cardHistory[1] };
+    const cardItem = /^\/api\/funnel-cards\/([^/]+)$/.exec(pathname);
+    if (cardItem) return { family: 'funnel', name: 'funnel-card-item', label: '/api/funnel-cards/:id', methods: ['GET', 'PATCH', 'DELETE'], rawId: cardItem[1] };
   }
   if (pathname === '/api' || pathname.startsWith('/api/')) return { name: 'unknown', label: '/api/*', methods: [] };
   return null;
@@ -718,6 +748,13 @@ function createApp(dependencies) {
       if (req.method === 'GET') return respond(200, { items: await funnelService.listStages(context, id) });
       return respond(201, { item: await funnelService.createStage(context, id, await readJsonBody(req)) });
     }
+    if (route.name === 'funnel-cards') {
+      // Card (Etapa "Funis 2"). GET: os cards ATIVOS deste funil, já enriquecidos com a projeção do CRM. POST: cria
+      // um card vinculando um registro do CRM (`crmRecordId`) a este funil, na etapa de menor ordem — corpo
+      // { crmRecordId, reason? }; nenhum outro campo (funnelId/stageId/userId/role/permissions...) é aceito.
+      if (req.method === 'GET') return respond(200, { items: await funnelService.listCardsByFunnel(context, id) });
+      return respond(201, { item: await funnelService.createCard(context, id, await readJsonBody(req)) });
+    }
     if (route.name === 'funnel-item') {
       if (req.method === 'GET') {
         const item = await funnelService.getFunnel(context, id);
@@ -737,6 +774,25 @@ function createApp(dependencies) {
         return respond(200, { deleted: true, id: deleted.id });
       }
       return respond(200, { item: await funnelService.updateStage(context, id, await readJsonBody(req)) });
+    }
+    if (route.name === 'funnel-card-history') {
+      return respond(200, { historico: await funnelService.getCardHistory(context, id) });
+    }
+    if (route.name === 'funnel-card-item') {
+      if (req.method === 'GET') {
+        const item = await funnelService.getCard(context, id);
+        if (item === null) throw new HttpError('NOT_FOUND');
+        return respond(200, { item });
+      }
+      if (req.method === 'DELETE') {
+        // Arquiva (nunca apaga fisicamente — ver funnelDomain.js). Sem corpo: nada decide isso além do id na URL
+        // e da autorização do CONTEXTO (WRITE:CRM, hoje só ADMIN).
+        const deleted = await funnelService.deleteCard(context, id);
+        return respond(200, { deleted: true, id: deleted.id });
+      }
+      // Mover: corpo { stageId, reason? } — nenhum outro campo decide a movimentação.
+      const picked = readActionBody(await readJsonBody(req), ['stageId', 'reason']);
+      return respond(200, { item: await funnelService.moveCard(context, id, picked) });
     }
     throw new HttpError('ROUTE_NOT_FOUND');
   }

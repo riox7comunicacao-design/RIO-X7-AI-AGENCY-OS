@@ -23,6 +23,7 @@ import { permissionsOf } from './crm-model.mjs';
 import { createAgentsView } from './views/agents.mjs';
 import { createApprovalsView } from './views/approvals.mjs';
 import { createCrmView } from './views/crm.mjs';
+import { createFunnelsView } from './views/funnels.mjs';
 import { createOverviewView } from './views/overview.mjs';
 
 const NO_ACCESS = 'Esta conta não possui acesso a esta área.';
@@ -34,6 +35,7 @@ const PAGE_TITLES = Object.freeze({
   'crm-record': 'Registro · CRM',
   approvals: 'Aprovações',
   agents: 'Agentes IA',
+  funnels: 'Funis',
   'not-found': 'Página não encontrada',
 });
 
@@ -53,7 +55,17 @@ const NAV_GROUPS = Object.freeze([
       { label: 'Agenda' },
     ],
   },
-  { title: 'Comercial', items: [{ label: 'Prospecção' }, { label: 'Leads' }, { label: 'Conversas' }, { label: 'Reuniões' }, { label: 'Propostas' }] },
+  {
+    title: 'Comercial',
+    items: [
+      { label: 'Prospecção' },
+      { label: 'Leads' },
+      { section: 'funnels', label: 'Funis', route: { name: 'funnels' }, needs: 'canReadCrm' },
+      { label: 'Conversas' },
+      { label: 'Reuniões' },
+      { label: 'Propostas' },
+    ],
+  },
   { title: 'Agentes IA', items: [{ section: 'agents', label: 'Central de Agentes', route: { name: 'agents' } }] },
   { title: 'Gestão', items: [{ label: 'Relatórios' }, { label: 'Configurações' }] },
 ]);
@@ -315,6 +327,15 @@ export function startDashboard({ document, root, fetchImpl, sdk, navigation }) {
           main.replaceChildren(target);
           transient = createAgentsView({ document, root: target });
           transient.render();
+        } else if (section === 'funnels') {
+          if (!permissions.canReadCrm) {
+            main.replaceChildren(h(document, 'p', { className: 'message error', role: 'alert', text: NO_ACCESS }));
+            return;
+          }
+          const target = container();
+          main.replaceChildren(target);
+          transient = createFunnelsView({ document, root: target, api, permissions, navigate });
+          transient.load();
         } else if (section === 'overview') {
           const target = container();
           main.replaceChildren(target);

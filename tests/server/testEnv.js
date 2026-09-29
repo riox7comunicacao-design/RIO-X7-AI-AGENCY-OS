@@ -13,7 +13,7 @@ const path = require('node:path');
 const domain = require('../../src/research-prospector/approvalQueue');
 const { runDiscoveryPipeline, SOURCE_TYPE } = require('../../src/research-prospector/discovery');
 const { createApprovalQueueService } = require('../../src/services/approvalQueueService');
-const { createFileBackedCrmService } = require('../../src/services/crmFileService');
+const { createFileBackedCrmService, sharedFileCrmRepository } = require('../../src/services/crmFileService');
 const { createFileBackedCrmIntegrationService } = require('../../src/services/crmIntegrationFileService');
 const { createFileBackedProspectingService } = require('../../src/services/prospectingFileService');
 const { createFileBackedFunnelService } = require('../../src/services/funnelFileService');
@@ -126,10 +126,23 @@ function montarAmbiente(t, { usuarios = [BRENO, RAFAEL], queue, authTimeoutMs, s
     (prospeccao
       ? createFileBackedProspectingService({ authorizeProposer: authorizeProposerForLeadApproval, authorizeOperation: authorizeCrmOperation, queuePath: filePath, crmService, batchPath, dossierPath })
       : undefined);
-  // Funnel Service (opcional, Etapa "Funis 1"): `funnels: true` liga a fábrica REAL de produção sobre um arquivo
-  // temporário próprio (independente do CRM); `funnelService` injeta um double no lugar.
+  // Funnel Service (opcional): `funnels: true` liga a fábrica REAL de produção — funil/etapa sobre um arquivo
+  // temporário PRÓPRIO (independente do CRM); card (Etapa "Funis 2") exige `crm: true` (o mesmo `crmRepository`/
+  // `crmService` do CRM acima, nunca uma segunda instância — `sharedFileCrmRepository` é o MESMO cache que
+  // `createFileBackedCrmService` usa por baixo). `funnelService` injeta um double no lugar de tudo isto.
+  if (funnels && !arquivoCrm) throw new Error('montarAmbiente: funnels exige crm: true (as operações de card precisam do CRM)');
   const arquivoFunnels = funnels ? funnelFilePath || novoArquivoFunnels(t) : undefined;
-  const funnelService = funnelServiceInjetado || (funnels ? createFileBackedFunnelService({ authorizeOperation: authorizeFunnelOperation, filePath: arquivoFunnels }) : undefined);
+  const funnelService =
+    funnelServiceInjetado ||
+    (funnels
+      ? createFileBackedFunnelService({
+          authorizeOperation: authorizeFunnelOperation,
+          authorizeCrmOperation,
+          filePath: arquivoFunnels,
+          crmRepository: sharedFileCrmRepository(arquivoCrm),
+          crmService,
+        })
+      : undefined);
   const logs = [];
   const publicConfig = { supabaseUrl: FAKE_ENV.SUPABASE_URL, supabaseAnonKey: FAKE_ENV.SUPABASE_ANON_KEY };
   const resolvedStaticFiles = staticFiles === undefined ? (fs.existsSync(SUPABASE_BUNDLE) ? { '/lib/supabase.js': SUPABASE_BUNDLE } : {}) : staticFiles;

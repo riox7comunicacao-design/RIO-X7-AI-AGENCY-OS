@@ -48,7 +48,7 @@ test('[DASH-CENTRAL-1] o menu lateral é agrupado (Operacional, Comercial, Agent
   );
 
   const nav = t.browser.by.tag(lateral, 'nav')[0];
-  assert.deepEqual(t.browser.by.tag(nav, 'a').map((link) => link.textContent), ['Visão Geral', 'CRM', 'Aprovações', 'Central de Agentes']);
+  assert.deepEqual(t.browser.by.tag(nav, 'a').map((link) => link.textContent), ['Visão Geral', 'CRM', 'Aprovações', 'Funis', 'Central de Agentes']);
 
   // as áreas ainda não implementadas: desabilitadas, marcadas, sem link e sem rota
   const emBreve = t.browser.by.cls(nav, 'soon');

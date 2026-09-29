@@ -7,8 +7,16 @@ const assert = require('node:assert/strict');
 
 const funnelDomain = require('../../src/crm/funnelDomain');
 const { createInMemoryFunnelRepository } = require('../../src/crm/funnelRepository');
+const crmDomain = require('../../src/crm/crmDomain');
+const { createInMemoryCrmRepository } = require('../../src/crm/crmRepository');
 
 const memRepo = () => createInMemoryFunnelRepository();
+const OPERADOR = { userId: 'user-1', name: 'Alguém', role: 'ADMIN' };
+
+// Um registro do CRM real (para os testes de Card — a existência do registro é verificada de verdade, nunca fingida).
+async function crmRecord(crmRepo, empresa = 'Clínica Teste') {
+  return (await crmDomain.createRecord(crmRepo, { empresa })).record;
+}
 
 // ===========================================================================
 // FUNIL
@@ -185,4 +193,166 @@ test('[FUNNEL-DOM-15] um repositório inválido é recusado em toda operação (
   for (const ruim of [null, undefined, {}, { listFunnels: () => [] }]) {
     await assert.rejects(() => funnelDomain.listFunnels(ruim), /repositório inválido/, JSON.stringify(ruim));
   }
+});
+
+// ===========================================================================
+// CARD (Etapa "Funis 2")
+// ===========================================================================
+test('[FUNNEL-DOM-16] createCard exige um funil existente e um registro do CRM existente; posiciona o card na etapa de MENOR ordem; registra a movimentação inicial (stageFrom null)', async () => {
+  const repo = memRepo();
+  const crmRepo = createInMemoryCrmRepository();
+  const funnel = await funnelDomain.createFunnel(repo, { nome: 'Outbound' });
+  await funnelDomain.createStage(repo, funnel.id, { nome: 'Sem contato' });
+  const segunda = await funnelDomain.createStage(repo, funnel.id, { nome: 'Contatado' });
+  await funnelDomain.reorderStages(repo, funnel.id, [segunda.id, (await funnelDomain.listStages(repo, funnel.id)).find((s) => s.nome === 'Sem contato').id]);
+  // Depois de reordenar, "Contatado" é a de MENOR ordem — deve ser a primeira etapa do card.
+
+  await assert.rejects(() => funnelDomain.createCard(repo, crmRepo, { funnelId: 'funnel:nao-existe', crmRecordId: 'crm:x' }), /funil não encontrado/);
+
+  const record = await crmRecord(crmRepo, 'Clínica Alfa');
+  await assert.rejects(() => funnelDomain.createCard(repo, crmRepo, { funnelId: funnel.id, crmRecordId: 'crm:nao-existe' }), /registro do CRM não encontrado/);
+
+  const card = await funnelDomain.createCard(repo, crmRepo, { funnelId: funnel.id, crmRecordId: record.id }, { reviewedBy: OPERADOR });
+  assert.match(card.id, /^card:[0-9a-f-]{36}$/);
+  assert.equal(card.funnelId, funnel.id);
+  assert.equal(card.crmRecordId, record.id);
+  assert.equal(card.stageId, segunda.id, 'a etapa de MENOR ordem, mesmo depois de reordenar');
+  assert.equal(card.removedAt, null);
+
+  const historico = await funnelDomain.getCardHistory(repo, card.id);
+  assert.equal(historico.length, 1);
+  assert.equal(historico[0].stageFrom, null);
+  assert.equal(historico[0].stageTo, segunda.id);
+  assert.deepEqual(historico[0].movedBy, OPERADOR);
+});
+
+test('[FUNNEL-DOM-17] createCard recusa (FUNNEL_HAS_NO_STAGES) um funil sem nenhuma etapa', async () => {
+  const repo = memRepo();
+  const crmRepo = createInMemoryCrmRepository();
+  const funnel = await funnelDomain.createFunnel(repo, { nome: 'Vazio' });
+  const record = await crmRecord(crmRepo);
+  const erro = await funnelDomain.createCard(repo, crmRepo, { funnelId: funnel.id, crmRecordId: record.id }).catch((e) => e);
+  assert.equal(erro.code, 'FUNNEL_HAS_NO_STAGES');
+});
+
+test('[FUNNEL-DOM-18] REGRA DE IDENTIDADE (seção 3): 1 CRM Record + 1 Funil = no máximo 1 card ATIVO — a segunda tentativa recusa (FUNNEL_CARD_DUPLICATE); o mesmo registro PODE ter um card em OUTRO funil', async () => {
+  const repo = memRepo();
+  const crmRepo = createInMemoryCrmRepository();
+  const funnelA = await funnelDomain.createFunnel(repo, { nome: 'Outbound' });
+  await funnelDomain.createStage(repo, funnelA.id, { nome: 'Etapa 1' });
+  const funnelB = await funnelDomain.createFunnel(repo, { nome: 'Renovação' });
+  await funnelDomain.createStage(repo, funnelB.id, { nome: 'Etapa 1' });
+  const record = await crmRecord(crmRepo, 'Clínica ABC');
+
+  await funnelDomain.createCard(repo, crmRepo, { funnelId: funnelA.id, crmRecordId: record.id });
+  const erro = await funnelDomain.createCard(repo, crmRepo, { funnelId: funnelA.id, crmRecordId: record.id }).catch((e) => e);
+  assert.equal(erro.code, 'FUNNEL_CARD_DUPLICATE');
+
+  // Mas o MESMO registro pode ter um card em OUTRO funil — isso é permitido (seção 3).
+  const cardB = await funnelDomain.createCard(repo, crmRepo, { funnelId: funnelB.id, crmRecordId: record.id });
+  assert.equal(cardB.funnelId, funnelB.id);
+  assert.equal((await funnelDomain.listCardsByFunnel(repo, funnelA.id)).length, 1);
+  assert.equal((await funnelDomain.listCardsByFunnel(repo, funnelB.id)).length, 1);
+});
+
+test('[FUNNEL-DOM-19] moveCard troca a etapa e registra o histórico (stageFrom/stageTo); é IDEMPOTENTE (mover para a mesma etapa não duplica histórico)', async () => {
+  const repo = memRepo();
+  const crmRepo = createInMemoryCrmRepository();
+  const funnel = await funnelDomain.createFunnel(repo, { nome: 'F' });
+  const s1 = await funnelDomain.createStage(repo, funnel.id, { nome: 'S1' });
+  const s2 = await funnelDomain.createStage(repo, funnel.id, { nome: 'S2' });
+  const record = await crmRecord(crmRepo);
+  const card = await funnelDomain.createCard(repo, crmRepo, { funnelId: funnel.id, crmRecordId: record.id });
+  assert.equal(card.stageId, s1.id);
+
+  const movido = await funnelDomain.moveCard(repo, card.id, s2.id, { reviewedBy: OPERADOR, motivo: 'avançou' });
+  assert.equal(movido.stageId, s2.id);
+  let historico = await funnelDomain.getCardHistory(repo, card.id);
+  assert.equal(historico.length, 2, 'criação + 1 movimentação');
+  assert.equal(historico[1].stageFrom, s1.id);
+  assert.equal(historico[1].stageTo, s2.id);
+  assert.equal(historico[1].motivo, 'avançou');
+
+  const repetido = await funnelDomain.moveCard(repo, card.id, s2.id);
+  assert.equal(repetido.stageId, s2.id);
+  historico = await funnelDomain.getCardHistory(repo, card.id);
+  assert.equal(historico.length, 2, 'mover para a MESMA etapa não cria uma nova entrada — idempotente');
+});
+
+test('[FUNNEL-DOM-20] moveCard recusa (FUNNEL_STAGE_MISMATCH) mover para uma etapa de OUTRO funil; recusa etapa/card inexistente', async () => {
+  const repo = memRepo();
+  const crmRepo = createInMemoryCrmRepository();
+  const funnelA = await funnelDomain.createFunnel(repo, { nome: 'A' });
+  await funnelDomain.createStage(repo, funnelA.id, { nome: 'A1' });
+  const funnelB = await funnelDomain.createFunnel(repo, { nome: 'B' });
+  const stageB = await funnelDomain.createStage(repo, funnelB.id, { nome: 'B1' });
+  const record = await crmRecord(crmRepo);
+  const card = await funnelDomain.createCard(repo, crmRepo, { funnelId: funnelA.id, crmRecordId: record.id });
+
+  const erro = await funnelDomain.moveCard(repo, card.id, stageB.id).catch((e) => e);
+  assert.equal(erro.code, 'FUNNEL_STAGE_MISMATCH');
+
+  await assert.rejects(() => funnelDomain.moveCard(repo, 'card:nao-existe', stageB.id), /card não encontrado/);
+  await assert.rejects(() => funnelDomain.moveCard(repo, card.id, 'stage:nao-existe'), /etapa não encontrada/);
+});
+
+test('[FUNNEL-DOM-21] deleteCard ARQUIVA (nunca apaga fisicamente): o card some de listCardsByFunnel, mas getCard e o histórico continuam acessíveis; arquivar de novo é um no-op idempotente', async () => {
+  const repo = memRepo();
+  const crmRepo = createInMemoryCrmRepository();
+  const funnel = await funnelDomain.createFunnel(repo, { nome: 'F' });
+  await funnelDomain.createStage(repo, funnel.id, { nome: 'S1' });
+  const record = await crmRecord(crmRepo);
+  const card = await funnelDomain.createCard(repo, crmRepo, { funnelId: funnel.id, crmRecordId: record.id });
+
+  const arquivado = await funnelDomain.deleteCard(repo, card.id);
+  assert.equal(arquivado.id, card.id);
+  assert.equal((await funnelDomain.listCardsByFunnel(repo, funnel.id)).length, 0, 'some das listagens ativas');
+  const lido = await funnelDomain.getCard(repo, card.id);
+  assert.notEqual(lido, null, 'mas o card continua acessível por id');
+  assert.notEqual(lido.removedAt, null);
+  assert.equal((await funnelDomain.getCardHistory(repo, card.id)).length, 1, 'o histórico nunca é apagado');
+
+  await assert.doesNotReject(() => funnelDomain.deleteCard(repo, card.id), 'arquivar de novo é idempotente');
+  await assert.rejects(() => funnelDomain.deleteCard(repo, 'card:nao-existe'), /card não encontrado/);
+});
+
+test('[FUNNEL-DOM-22] depois de ARQUIVAR um card, o MESMO par (funil, registro) pode ganhar um card NOVO (a regra de duplicidade só vale entre cards ATIVOS)', async () => {
+  const repo = memRepo();
+  const crmRepo = createInMemoryCrmRepository();
+  const funnel = await funnelDomain.createFunnel(repo, { nome: 'F' });
+  await funnelDomain.createStage(repo, funnel.id, { nome: 'S1' });
+  const record = await crmRecord(crmRepo);
+  const primeiro = await funnelDomain.createCard(repo, crmRepo, { funnelId: funnel.id, crmRecordId: record.id });
+  await funnelDomain.deleteCard(repo, primeiro.id);
+
+  const segundo = await funnelDomain.createCard(repo, crmRepo, { funnelId: funnel.id, crmRecordId: record.id });
+  assert.notEqual(segundo.id, primeiro.id);
+  assert.equal((await funnelDomain.listCardsByFunnel(repo, funnel.id)).length, 1);
+});
+
+test('[FUNNEL-DOM-23] um card ARQUIVADO nunca bloqueia excluir o funil/etapa (os guardas de exclusão só contam cards ATIVOS)', async () => {
+  const repo = memRepo();
+  const crmRepo = createInMemoryCrmRepository();
+  const funnel = await funnelDomain.createFunnel(repo, { nome: 'F' });
+  const stage = await funnelDomain.createStage(repo, funnel.id, { nome: 'S1' });
+  const record = await crmRecord(crmRepo);
+  const card = await funnelDomain.createCard(repo, crmRepo, { funnelId: funnel.id, crmRecordId: record.id });
+  await funnelDomain.deleteCard(repo, card.id);
+
+  await assert.doesNotReject(() => funnelDomain.deleteStage(repo, stage.id));
+  await assert.doesNotReject(() => funnelDomain.deleteFunnel(repo, funnel.id));
+});
+
+test('[FUNNEL-DOM-24] um card ATIVO BLOQUEIA excluir o funil (FUNNEL_HAS_CARDS) e a etapa (STAGE_HAS_CARDS) — os guardas da Etapa "Funis 1" agora valem de verdade', async () => {
+  const repo = memRepo();
+  const crmRepo = createInMemoryCrmRepository();
+  const funnel = await funnelDomain.createFunnel(repo, { nome: 'F' });
+  const stage = await funnelDomain.createStage(repo, funnel.id, { nome: 'S1' });
+  const record = await crmRecord(crmRepo);
+  await funnelDomain.createCard(repo, crmRepo, { funnelId: funnel.id, crmRecordId: record.id });
+
+  const erroEtapa = await funnelDomain.deleteStage(repo, stage.id).catch((e) => e);
+  assert.equal(erroEtapa.code, 'STAGE_HAS_CARDS');
+  const erroFunil = await funnelDomain.deleteFunnel(repo, funnel.id).catch((e) => e);
+  assert.equal(erroFunil.code, 'FUNNEL_HAS_CARDS');
 });

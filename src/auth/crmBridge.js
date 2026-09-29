@@ -20,17 +20,21 @@
 const { requireActiveUser, requirePermission } = require('./authorizationContext');
 const { PERMISSION } = require('./constants');
 
-// As ÚNICAS permissões que esta ponte autoriza: leitura, escrita e exclusão do CRM. Não há padrão: omitir a
-// permissão é uma recusa, nunca "leitura" nem "escrita" por omissão (diferente da ponte da fila, que só tem uma
-// permissão possível). ANALYZE:CRM e PROPOSE:CRM existem na matriz, mas nenhuma operação do CRM Service as usa (o
-// domínio não tem análise nem proposta) — ficam FORA daqui até uma operação real precisar delas (decisão 0014).
-// DELETE:CRM (decisão 0025) entrou aqui porque deleteRecord() é uma operação real do Service que a exige — sem
-// esta entrada, a ponte recusaria a exclusão mesmo para um ADMIN com a permissão. Uma permissão diferente destas
-// (deriva do Service, ou uso indevido) é recusada, mesmo que o contexto a possua.
-const CRM_PERMISSIONS = Object.freeze([PERMISSION.READ_CRM, PERMISSION.WRITE_CRM, PERMISSION.DELETE_CRM]);
+// As ÚNICAS permissões que esta ponte autoriza: leitura, escrita, exclusão e proposta comercial do CRM. Não há
+// padrão: omitir a permissão é uma recusa, nunca "leitura" nem "escrita" por omissão (diferente da ponte da fila,
+// que só tem uma permissão possível). ANALYZE:CRM existe na matriz, mas nenhuma operação do CRM Service a usa (o
+// domínio não tem análise) — fica FORA daqui até uma operação real precisar dela (decisão 0014). DELETE:CRM
+// (decisão 0025) entrou aqui porque deleteRecord() é uma operação real do Service que a exige. PROPOSE:CRM
+// (reestruturação Prospecção/CRM/Funis, Etapa "Funis 2") entrou aqui porque createCard()/moveCard() do Funnel
+// Service a exigem — é a AÇÃO COMERCIAL de vincular/mover um registro do CRM num funil, deliberadamente diferente
+// de WRITE:CRM (que só ADMIN tem): ADMIN e COMMERCIAL_CLOSER têm PROPOSE:CRM, então os dois podem trabalhar num
+// card, sem precisar de uma permissão nova. Sem cada uma destas entradas, a ponte recusaria a operação mesmo para
+// quem tem a permissão. Uma permissão diferente destas (deriva do Service, ou uso indevido) é recusada, mesmo que
+// o contexto a possua.
+const CRM_PERMISSIONS = Object.freeze([PERMISSION.READ_CRM, PERMISSION.WRITE_CRM, PERMISSION.DELETE_CRM, PERMISSION.PROPOSE_CRM]);
 
 // Autoriza uma operação do CRM. Lança — nunca devolve "não autorizado" — quando qualquer condição falha:
-//  - a permissão pedida não é READ:CRM, WRITE:CRM nem DELETE:CRM (inclui omitida, null e qualquer outra);
+//  - a permissão pedida não é READ:CRM, WRITE:CRM, DELETE:CRM nem PROPOSE:CRM (inclui omitida, null e qualquer outra);
 //  - `context` não é um AuthorizationContext emitido (objeto simples, literal, cópia ou clone, mesmo com a forma
 //    perfeita, nunca é aceito);
 //  - o usuário está inativo;

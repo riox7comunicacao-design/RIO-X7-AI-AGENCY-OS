@@ -136,5 +136,22 @@ export function createApiClient({ getAccessToken, refreshAccessToken, onSessionL
     // (400) um motivo ausente/vazio; a tela já exige o motivo ANTES de chamar isto (ver views/crm.mjs), mas o corpo
     // sempre leva `reason` como veio, sem inventar nem completar nada aqui. 200 devolve { deleted: true, id }.
     deleteCrm: (id, reason) => request('DELETE', crmPath(id), { reason: typeof reason === 'string' ? reason : '' }),
+
+    // Funis configuráveis (reestruturação Prospecção/CRM/Funis). Funil/etapa exigem MANAGE:FUNNELS (só ADMIN);
+    // card exige READ:CRM (ler), PROPOSE:CRM (criar/mover, ADMIN e COMMERCIAL_CLOSER) ou WRITE:CRM (arquivar, só
+    // ADMIN) — o servidor decide; esta tela só mostra/esconde os controles.
+    listFunnels: () => request('GET', '/api/funnels'),
+    listFunnelCards: (funnelId) => request('GET', `/api/funnels/${encodeURIComponent(funnelId)}/cards`),
+    listFunnelStages: (funnelId) => request('GET', `/api/funnels/${encodeURIComponent(funnelId)}/stages`),
+    // Corpo só { crmRecordId, reason? } — nunca funnelId/stageId/userId/role: a etapa inicial e a identidade vêm
+    // sempre do servidor.
+    createFunnelCard: (funnelId, crmRecordId, reason) =>
+      request('POST', `/api/funnels/${encodeURIComponent(funnelId)}/cards`, typeof reason === 'string' && reason.trim() !== '' ? { crmRecordId, reason } : { crmRecordId }),
+    // Corpo só { stageId, reason? } — a etapa de destino precisa ser do MESMO funil do card (o servidor recusa, 400, senão).
+    moveFunnelCard: (cardId, stageId, reason) =>
+      request('PATCH', `/api/funnel-cards/${encodeURIComponent(cardId)}`, typeof reason === 'string' && reason.trim() !== '' ? { stageId, reason } : { stageId }),
+    getFunnelCardHistory: (cardId) => request('GET', `/api/funnel-cards/${encodeURIComponent(cardId)}/history`),
+    // ARQUIVA o card (nunca exclui o registro do CRM) — sem corpo: nada decide isso além do id e da sessão.
+    deleteFunnelCard: (cardId) => request('DELETE', `/api/funnel-cards/${encodeURIComponent(cardId)}`, {}),
   };
 }

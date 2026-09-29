@@ -39,21 +39,23 @@ function erroDe(fn) {
   return null;
 }
 
-test('[CRM-BRIDGE-1] a ponte autoriza exatamente READ:CRM, WRITE:CRM e DELETE:CRM (decisão 0025) — e nenhuma outra permissão', () => {
-  assert.deepEqual([...CRM_PERMISSIONS].sort(), [PERMISSION.READ_CRM, PERMISSION.WRITE_CRM, PERMISSION.DELETE_CRM].sort());
+test('[CRM-BRIDGE-1] a ponte autoriza exatamente READ:CRM, WRITE:CRM, DELETE:CRM (decisão 0025) e PROPOSE:CRM (Etapa "Funis 2") — e nenhuma outra permissão', () => {
+  assert.deepEqual([...CRM_PERMISSIONS].sort(), [PERMISSION.READ_CRM, PERMISSION.WRITE_CRM, PERMISSION.DELETE_CRM, PERMISSION.PROPOSE_CRM].sort());
   assert.ok(Object.isFrozen(CRM_PERMISSIONS), 'a lista de permissões da ponte não pode ser alterada em tempo de execução');
 });
 
-test('[CRM-BRIDGE-2] ADMIN é autorizado para READ:CRM, WRITE:CRM e DELETE:CRM', () => {
+test('[CRM-BRIDGE-2] ADMIN é autorizado para READ:CRM, WRITE:CRM, DELETE:CRM e PROPOSE:CRM', () => {
   const admin = contexto({ role: ROLE.ADMIN });
   assert.equal(authorizeCrmOperation(admin, PERMISSION.READ_CRM).userId, 'user-crm-1');
   assert.equal(authorizeCrmOperation(admin, PERMISSION.WRITE_CRM).userId, 'user-crm-1');
   assert.equal(authorizeCrmOperation(admin, PERMISSION.DELETE_CRM).userId, 'user-crm-1');
+  assert.equal(authorizeCrmOperation(admin, PERMISSION.PROPOSE_CRM).userId, 'user-crm-1');
 });
 
-test('[CRM-BRIDGE-3] COMMERCIAL_CLOSER é autorizado para READ:CRM, e RECUSADO para WRITE:CRM e para DELETE:CRM (não possui as permissões — nunca "por ser closer")', () => {
+test('[CRM-BRIDGE-3] COMMERCIAL_CLOSER é autorizado para READ:CRM e para PROPOSE:CRM (Etapa "Funis 2" — criar/mover um card é comercial, não administrativo), e RECUSADO para WRITE:CRM e para DELETE:CRM (não possui as permissões — nunca "por ser closer")', () => {
   const closer = contexto({ role: ROLE.COMMERCIAL_CLOSER });
   assert.equal(authorizeCrmOperation(closer, PERMISSION.READ_CRM).role, ROLE.COMMERCIAL_CLOSER);
+  assert.equal(authorizeCrmOperation(closer, PERMISSION.PROPOSE_CRM).role, ROLE.COMMERCIAL_CLOSER);
   const erroEscrita = erroDe(() => authorizeCrmOperation(closer, PERMISSION.WRITE_CRM));
   assert.ok(erroEscrita, 'o closer não pode escrever no CRM');
   assert.match(erroEscrita.message, /acesso negado/);
@@ -138,7 +140,6 @@ test('[CRM-BRIDGE-9] qualquer OUTRA permissão é recusada, mesmo para um ADMIN 
   const admin = contexto({ role: ROLE.ADMIN });
   for (const permissao of [
     PERMISSION.ANALYZE_CRM,
-    PERMISSION.PROPOSE_CRM,
     PERMISSION.APPROVE_LEAD_APPROVAL,
     PERMISSION.APPROVE_OUTBOUND_APPROVAL,
     PERMISSION.MANAGE_USERS,
