@@ -11,6 +11,13 @@
 //                                                                        decisão do proprietário: um DELETE físico
 //                                                                        quebraria a FK do histórico)
 //   listCardMoves(cardId)/saveCardMove(m)                              — histórico de movimentação, append-only
+//   countActiveCardsByCrmRecord(crmRecordId)                          — só cards ATIVOS de UM registro do CRM,
+//                                                                        em QUALQUER funil (Etapa "Funis 2 —
+//                                                                        correção de integridade CRM ↔ Card"): é
+//                                                                        a consulta que o CRM Service usa, por
+//                                                                        injeção (ver src/services/crmService.js),
+//                                                                        para recusar excluir um registro do CRM
+//                                                                        enquanto ele ainda tiver Cards ativos.
 //
 // A porta aceita implementações síncronas E assíncronas (mesmo desenho da decisão 0023 do CRM).
 
@@ -32,6 +39,7 @@ const REQUIRED_FUNNEL_REPOSITORY_METHODS = Object.freeze([
   'archiveCard',
   'listCardMoves',
   'saveCardMove',
+  'countActiveCardsByCrmRecord',
 ]);
 
 function assertValidFunnelRepository(repository) {

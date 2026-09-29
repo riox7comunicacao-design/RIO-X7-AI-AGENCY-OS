@@ -53,7 +53,7 @@ const {
 const { createApprovalQueueService } = require('../services/approvalQueueService');
 // Funnel Service (reestruturação Prospecção/CRM/Funis, Etapa "Funis 1") — só o adapter de arquivo local existe
 // ainda (ver o cabeçalho de src/crm/funnelRepository.js); um adapter Supabase é uma etapa futura.
-const { createFileBackedFunnelService } = require('../services/funnelFileService');
+const { createFileBackedFunnelService, createFileBackedActiveFunnelCardsChecker } = require('../services/funnelFileService');
 // createConfiguredCrmService (etapas 2.3/3H, decisão 0024): decide REPOSITORY_MODE (file ou supabase — ver o
 // cabeçalho de crmRepositoryFactory.js) antes de montar o CRM Service. Substitui o import direto de
 // createFileBackedCrmService: agora só a fábrica sabe qual adapter usar, e nunca um caminho escondido. Este
@@ -162,7 +162,13 @@ function createServer(env = process.env, options = {}) {
     queuePath: resolveFile(env.RIO_X7_QUEUE_PATH, undefined),
   });
   const crmFilePath = resolveFile(env.RIO_X7_CRM_PATH, DEFAULT_CRM_FILE);
-  const crmService = createConfiguredCrmService({ env, authorizeOperation: authorizeCrmOperation, filePath: crmFilePath });
+  const funnelsFilePath = resolveFile(env.RIO_X7_FUNNELS_PATH, DEFAULT_FUNNELS_FILE);
+  // A checagem de integridade CRM ↔ Card (Etapa "Funis 2 — correção final"): uma FUNÇÃO só (nunca o repositório
+  // de Funil inteiro — ver o cabeçalho de funnelFileService.js), injetada no CRM Service abaixo para recusar
+  // excluir um registro do CRM enquanto ele tiver Cards ativos. Não é o mesmo objeto que o Funnel Service usa por
+  // baixo, mas lê o MESMO arquivo (RIO_X7_FUNNELS_PATH) — o adapter é sem estado, então isso nunca diverge.
+  const hasActiveFunnelCards = createFileBackedActiveFunnelCardsChecker({ filePath: funnelsFilePath });
+  const crmService = createConfiguredCrmService({ env, authorizeOperation: authorizeCrmOperation, filePath: crmFilePath, hasActiveFunnelCards });
   // O repositório BRUTO do CRM (Etapa "Funis 2"): a MESMA instância que `crmService` usa por baixo (o cache de
   // createConfiguredCrmRepository/sharedFileCrmRepository é por `filePath`) — o Funnel Service o usa só para
   // confirmar que um registro existe antes de criar um card; ele NUNCA autoriza nem decide nada sozinho.
@@ -200,7 +206,7 @@ function createServer(env = process.env, options = {}) {
   const funnelService = createFileBackedFunnelService({
     authorizeOperation: authorizeFunnelOperation,
     authorizeCrmOperation,
-    filePath: resolveFile(env.RIO_X7_FUNNELS_PATH, DEFAULT_FUNNELS_FILE),
+    filePath: funnelsFilePath,
     crmRepository,
     crmService,
   });

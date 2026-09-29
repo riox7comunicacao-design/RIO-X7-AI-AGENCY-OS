@@ -4,9 +4,10 @@
 //
 // CARD: `archiveCard(id)` nunca apaga a linha — só marca `removedAt` (Etapa "Funis 2", decisão do proprietário: o
 // histórico de movimentação nunca pode ficar orfão nem ser perdido). `countCardsByFunnel`/`countCardsByStage`/
-// `listCardsByFunnel`/`getCardByFunnelAndRecord` só enxergam cards ATIVOS (`removedAt` ausente) — um card
-// arquivado nunca bloqueia excluir o funil/etapa nem recriar o card. `getCard`/`listCardMoves` enxergam cards
-// arquivados também (histórico e detalhe continuam consultáveis).
+// `listCardsByFunnel`/`getCardByFunnelAndRecord`/`countActiveCardsByCrmRecord` só enxergam cards ATIVOS
+// (`removedAt` ausente) — um card arquivado nunca bloqueia excluir o funil/etapa, recriar o card, nem excluir o
+// registro do CRM (Etapa "Funis 2 — correção de integridade CRM ↔ Card"). `getCard`/`listCardMoves` enxergam
+// cards arquivados também (histórico e detalhe continuam consultáveis).
 //
 // O adapter de produção (Supabase) desta porta é uma etapa futura — ver a migration de Funis (schema completo).
 
@@ -98,6 +99,9 @@ function createInMemoryFunnelRepository() {
     saveCardMove(move) {
       if (!move || typeof move.cardId !== 'string' || !move.cardId) throw new Error('Funil: saveCardMove() exige um move com cardId');
       cardMoves.push(clone(move));
+    },
+    countActiveCardsByCrmRecord(crmRecordId) {
+      return [...cards.values()].filter((card) => card.crmRecordId === crmRecordId && isAtiva(card)).length;
     },
   };
 }
@@ -256,6 +260,9 @@ function createJsonFileFunnelRepository(filePath) {
       const data = readJsonFile(filePath);
       data.cardMoves.push(clone(move));
       writeJsonFileAtomic(filePath, data);
+    },
+    countActiveCardsByCrmRecord(crmRecordId) {
+      return Object.values(readJsonFile(filePath).cards).filter((card) => card.crmRecordId === crmRecordId && isAtiva(card)).length;
     },
   };
 }

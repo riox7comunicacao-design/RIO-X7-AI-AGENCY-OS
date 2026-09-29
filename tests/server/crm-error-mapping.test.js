@@ -378,6 +378,10 @@ const INTERNAS_POR_DESENHO = Object.freeze([
   [/^CRM: as opções devem ser um objeto simples/, 'a API só entrega objetos simples ao Service'],
   [/^CRM: opções não reconhecidas/, 'a API só envia as opções que conhece (status, reason)'],
   [/^CRM: registro inválido no armazenamento/, 'a projeção do Service recusa um registro adulterado'],
+  // Etapa "Funis 2 — correção final de integridade CRM ↔ Card": `hasActiveFunnelCards` é escolhido por quem
+  // compõe (src/server/index.js) — a mesma falha fechada de "autorização recusada" para um autorizador defeituoso,
+  // aplicada ao checker de Cards ativos; nunca decide silenciosamente "sem cards ativos" para um valor inválido.
+  [/^CRM: hasActiveFunnelCards devolveu um valor inválido/, 'defeito de composição: quem compõe garante uma função que devolve um número >= 0'],
 ]);
 
 // Substituições dos marcadores que só existem no código: cada mensagem é testada com todos os valores possíveis.
@@ -442,4 +446,28 @@ test('[CRM-ERRMAP-9] todo código de erro do CRM que o app.js emite tem status d
     assert.equal(typeof resultado.message, 'string');
     assert.ok(resultado.message.length > 0 && resultado.message.length < 120, 'mensagens são curtas e fixas');
   }
+});
+
+// ---------------------------------------------------------------------------
+// Integridade CRM ↔ Card (Etapa "Funis 2 — correção final"): deleteRecord recusado por Cards ativos -> 409, por
+// `code` (nunca por mensagem — mesmo padrão de FUNNEL_CARD_DUPLICATE etc.), com a mensagem FIXA do catálogo.
+// ---------------------------------------------------------------------------
+test('[CRM-ERRMAP-19] deleteRecord recusado por Cards ativos em funis (CRM_HAS_ACTIVE_FUNNEL_CARDS) -> 409, com a mensagem fixa do catálogo; sem o checker (padrão), a exclusão não é bloqueada por isso', async () => {
+  const repository = createInMemoryCrmRepository();
+  const ctx = createAuthorizationContext(usuario());
+  const semChecker = createCrmService({ authorizeOperation: authorizeCrmOperation, repository });
+  const alfa = (await semChecker.createRecord(ctx, ALFA)).record;
+
+  const comChecker = createCrmService({ authorizeOperation: authorizeCrmOperation, repository, hasActiveFunnelCards: () => 1 });
+  const erro = await erroDe(async () => await comChecker.deleteRecord(ctx, alfa.id, { reason: 'tem card ativo' }));
+  assert.equal(erro.code, 'CRM_HAS_ACTIVE_FUNNEL_CARDS');
+  assert.deepEqual(mapeado(erro), {
+    status: 409,
+    code: 'CRM_HAS_ACTIVE_FUNNEL_CARDS',
+    message: 'Este registro não pode ser excluído enquanto possuir Cards ativos em funis. Arquive os Cards primeiro.',
+  });
+
+  // Sem `hasActiveFunnelCards` (o padrão, a maioria dos Services deste arquivo): a exclusão segue normalmente.
+  const resultado = await semChecker.deleteRecord(ctx, alfa.id, { reason: 'sem funis nesta composição' });
+  assert.deepEqual(resultado, { id: alfa.id });
 });

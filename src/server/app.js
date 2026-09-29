@@ -138,6 +138,10 @@ const CATALOG = Object.freeze({
   DNC_BLOCKED: [409, 'Esta identidade está bloqueada como "não contatar".'],
   RECORD_LOCKED: [409, 'Este registro está bloqueado como "não contatar" e não pode ser alterado.'],
   INVALID_TRANSITION: [409, 'Esta mudança de status não é permitida.'],
+  // Integridade CRM ↔ Card (Etapa "Funis 2 — correção final"), por `code` estável do CRM Service (crmService.js) —
+  // nunca por mensagem: quais Cards/Funis estão vinculados a este registro não é dito (mesmo padrão de
+  // FUNNEL_HAS_CARDS/STAGE_HAS_CARDS abaixo).
+  CRM_HAS_ACTIVE_FUNNEL_CARDS: [409, 'Este registro não pode ser excluído enquanto possuir Cards ativos em funis. Arquive os Cards primeiro.'],
   // Promoção Approval Queue → CRM (decisão 0016), por `code` estável do serviço. Mensagens FIXAS: nunca o id do registro
   // existente, o critério que casou nem o texto do serviço.
   PROMOTION_NOT_APPROVED: [409, 'Este prospect não está aprovado para o CRM.'],
@@ -266,6 +270,12 @@ const FUNNEL_CODES = Object.freeze({
   FUNNEL_HAS_NO_STAGES: 'FUNNEL_HAS_NO_STAGES',
 });
 
+// O `code` do CRM Service (crmService.js) que a API reconhece — mesmo mapeamento identidade de FUNNEL_CODES acima,
+// só que para o CRM (Etapa "Funis 2 — correção final de integridade CRM ↔ Card").
+const CRM_CODES = Object.freeze({
+  CRM_HAS_ACTIVE_FUNNEL_CARDS: 'CRM_HAS_ACTIVE_FUNNEL_CARDS',
+});
+
 // Os `code` que um adapter de REPOSITÓRIO do CRM pode anexar a um erro (contrato comum entre adapters, etapa 3F —
 // corrige o BLOCKER 2 da etapa 3E). app.js NUNCA importa src/crm-adapters/ nem src/crm/ (R12/R16, e a lista de
 // imports fechada de [CRM-API-ARCH-1]: só `../auth`/`./static`) — por isso o reconhecimento é por STRING, igual a
@@ -339,6 +349,8 @@ function mapErrorToHttp(error) {
     code = CRM_REPOSITORY_CODES[error.code];
   } else if (error && typeof error === 'object' && Object.prototype.hasOwnProperty.call(FUNNEL_CODES, error.code)) {
     code = FUNNEL_CODES[error.code];
+  } else if (error && typeof error === 'object' && Object.prototype.hasOwnProperty.call(CRM_CODES, error.code)) {
+    code = CRM_CODES[error.code];
   } else {
     const message = error && typeof error.message === 'string' ? error.message : '';
     const known = KNOWN_MESSAGES.find(([pattern]) => pattern.test(message));

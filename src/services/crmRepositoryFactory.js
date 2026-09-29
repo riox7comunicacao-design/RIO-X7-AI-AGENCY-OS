@@ -118,9 +118,12 @@ function createConfiguredCrmRepository({ env = process.env, filePath } = {}) {
 // createConfiguredCrmRepository() para a escolha de modo (nunca duplica a lógica de seleção) — só acrescenta a
 // camada de autorização por cima, com createCrmService (a MESMA usada pelo modo file, via crmFileService.js;
 // aqui chamada diretamente para que os dois modos passem pelo mesmo caminho de composição).
-function createConfiguredCrmService({ env = process.env, authorizeOperation, filePath } = {}) {
+// hasActiveFunnelCards (opcional, Etapa "Funis 2 — correção final"): repassada intacta — ver o cabeçalho de
+// crmService.js. Vale nos dois modos (file e supabase): é uma checagem de APLICAÇÃO, antes do repositório, e não
+// depende de qual adapter o CRM usa.
+function createConfiguredCrmService({ env = process.env, authorizeOperation, filePath, hasActiveFunnelCards } = {}) {
   const repository = createConfiguredCrmRepository({ env, filePath });
-  return createCrmService({ authorizeOperation, repository });
+  return createCrmService({ authorizeOperation, repository, hasActiveFunnelCards });
 }
 
 module.exports = { REPOSITORY_MODE, readRepositoryMode, createConfiguredCrmRepository, createConfiguredCrmService, sharedSupabaseCrmRepository };

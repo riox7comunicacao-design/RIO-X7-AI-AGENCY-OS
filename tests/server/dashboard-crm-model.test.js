@@ -278,6 +278,8 @@ test('[DASH-MODEL-10] mensagens de erro: 401 é da sessão (null); 403, 404, 409
   assert.match(messageForCrmError(erro(409, 'DNC_BLOCKED', 'x')), /bloqueada como "Não contatar"/);
   assert.match(messageForCrmError(erro(409, 'RECORD_LOCKED', 'x')), /não pode mais ser alterado/);
   assert.match(messageForCrmError(erro(409, 'INVALID_TRANSITION', 'x')), /mudança de status não é permitida/);
+  // Integridade CRM ↔ Card (Etapa "Funis 2 — correção final").
+  assert.match(messageForCrmError(erro(409, 'CRM_HAS_ACTIVE_FUNNEL_CARDS', 'x')), /Cards ativos em funis/);
   assert.match(messageForCrmError(erro(409, 'CODIGO_NOVO', 'x')), /estado atual do registro/, 'um 409 desconhecido tem uma frase segura');
   assert.equal(messageForCrmError(erro(400, 'INVALID_REQUEST', 'Informe a empresa.')), 'Informe a empresa.', 'a frase fixa do servidor para 400 é mostrada');
   assert.match(messageForCrmError(erro(400, 'INVALID_REQUEST', '')), /Dados inválidos/);

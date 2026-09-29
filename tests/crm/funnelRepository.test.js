@@ -149,6 +149,34 @@ function eachRepository(nome, factory) {
     move.stageTo = 'adulterado';
     assert.equal(repo.listCardMoves('card:a')[0].stageTo, 'stage:a');
   });
+
+  // Etapa "Funis 2 — correção final de integridade CRM ↔ Card": a consulta que o CRM Service usa (por injeção) para
+  // recusar excluir um registro do CRM com Cards ativos — em QUALQUER funil, e ignorando Cards arquivados.
+  test(`[FUNNEL-REPO-${nome}-CARD-6] countActiveCardsByCrmRecord: 0 sem cards; conta cards ATIVOS de um registro em VÁRIOS funis; ignora cards ARQUIVADOS; nunca conta o card de OUTRO registro`, () => {
+    const repo = factory();
+    assert.equal(repo.countActiveCardsByCrmRecord('crm:a'), 0, 'sem nenhum card, a contagem é 0');
+
+    repo.saveCard({ id: 'card:1', funnelId: 'funnel:outbound', stageId: 'stage:a', crmRecordId: 'crm:a', removedAt: null });
+    assert.equal(repo.countActiveCardsByCrmRecord('crm:a'), 1);
+
+    // O MESMO registro do CRM, num SEGUNDO funil (seção 3 da Etapa "Funis 2": permitido) — a contagem soma os dois.
+    repo.saveCard({ id: 'card:2', funnelId: 'funnel:renovacao', stageId: 'stage:x', crmRecordId: 'crm:a', removedAt: null });
+    assert.equal(repo.countActiveCardsByCrmRecord('crm:a'), 2);
+
+    // Um card de OUTRO registro nunca entra na conta.
+    repo.saveCard({ id: 'card:3', funnelId: 'funnel:outbound', stageId: 'stage:a', crmRecordId: 'crm:outro', removedAt: null });
+    assert.equal(repo.countActiveCardsByCrmRecord('crm:a'), 2);
+    assert.equal(repo.countActiveCardsByCrmRecord('crm:outro'), 1);
+
+    // Arquivar um dos dois cards de crm:a reduz a contagem para 1 — nunca para 0: o outro continua ativo.
+    repo.archiveCard('card:1');
+    assert.equal(repo.countActiveCardsByCrmRecord('crm:a'), 1);
+
+    // Arquivar o último também: a contagem cai para 0 — mesmo com a linha do card ainda existindo (getCard a acha).
+    repo.archiveCard('card:2');
+    assert.equal(repo.countActiveCardsByCrmRecord('crm:a'), 0);
+    assert.notEqual(repo.getCard('card:2'), null, 'sanidade: archiveCard nunca apaga a linha');
+  });
 }
 
 eachRepository('MEM', () => createInMemoryFunnelRepository());

@@ -382,6 +382,9 @@ const CONFLICT_MESSAGES = Object.freeze({
   DNC_BLOCKED: 'Esta identidade está bloqueada como "Não contatar": o cadastro não pode usar estes dados.',
   RECORD_LOCKED: 'Este registro está bloqueado como "Não contatar" e não pode mais ser alterado.',
   INVALID_TRANSITION: 'Esta mudança de status não é permitida a partir do status atual.',
+  // Integridade CRM ↔ Card (Etapa "Funis 2 — correção final"): excluir é recusado enquanto o registro tiver Cards
+  // ativos em algum Funil — a regra é sempre do servidor (seção 8); esta tela só mostra a explicação.
+  CRM_HAS_ACTIVE_FUNNEL_CARDS: 'Este registro possui Cards ativos em funis. Arquive os Cards antes de excluir o registro.',
 });
 
 // 401 devolve null: quem cuida é o fluxo de login (a sessão acabou). As mensagens de 400/409 do servidor são FIXAS e

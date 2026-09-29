@@ -16,7 +16,7 @@ const { createApprovalQueueService } = require('../../src/services/approvalQueue
 const { createFileBackedCrmService, sharedFileCrmRepository } = require('../../src/services/crmFileService');
 const { createFileBackedCrmIntegrationService } = require('../../src/services/crmIntegrationFileService');
 const { createFileBackedProspectingService } = require('../../src/services/prospectingFileService');
-const { createFileBackedFunnelService } = require('../../src/services/funnelFileService');
+const { createFileBackedFunnelService, createFileBackedActiveFunnelCardsChecker } = require('../../src/services/funnelFileService');
 const { defineUser, createUserStore, ROLE, USER_STATUS, authorizeReviewerForApprovalQueue, authorizeCrmOperation, authorizeProposerForLeadApproval, authorizeFunnelOperation, createSupabaseAuthAdapter } = require('../../src/auth');
 const { createApp } = require('../../src/server/app');
 const { FAKE_ENV, fakeAccessToken, installFakeSupabaseAuth, supabaseUserBody } = require('../helpers/authFixtures');
@@ -107,7 +107,18 @@ function montarAmbiente(t, { usuarios = [BRENO, RAFAEL], queue, authTimeoutMs, s
   const userStore = createUserStore(usuarios.map((usuario) => defineUser(usuario)));
   const approvalQueueService = createApprovalQueueService({ authorizeReviewer: authorizeReviewerForApprovalQueue, queuePath: filePath });
   const arquivoCrm = crm ? crmFilePath || novoArquivoCrm(t) : undefined;
-  const crmService = crmServiceInjetado || (crm ? createFileBackedCrmService({ authorizeOperation: authorizeCrmOperation, filePath: arquivoCrm }) : undefined);
+  // Funnel Service (opcional): `funnels: true` liga a fábrica REAL de produção — funil/etapa sobre um arquivo
+  // temporário PRÓPRIO (independente do CRM); card (Etapa "Funis 2") exige `crm: true` (o mesmo `crmRepository`/
+  // `crmService` do CRM acima, nunca uma segunda instância — `sharedFileCrmRepository` é o MESMO cache que
+  // `createFileBackedCrmService` usa por baixo). O caminho é resolvido AQUI (antes do crmService, logo abaixo) —
+  // Etapa "Funis 2 — correção final de integridade CRM ↔ Card": quando `funnels: true`, o CRM Service de teste já
+  // nasce com a MESMA checagem de produção (ver src/server/index.js/funnelFileService.js), sobre o MESMO arquivo
+  // que o Funnel Service usará (o adapter é sem estado — isso nunca diverge). `funnelService` injeta um double no
+  // lugar de tudo isto.
+  if (funnels && !arquivoCrm) throw new Error('montarAmbiente: funnels exige crm: true (as operações de card precisam do CRM)');
+  const arquivoFunnels = funnels ? funnelFilePath || novoArquivoFunnels(t) : undefined;
+  const hasActiveFunnelCards = arquivoFunnels ? createFileBackedActiveFunnelCardsChecker({ filePath: arquivoFunnels }) : undefined;
+  const crmService = crmServiceInjetado || (crm ? createFileBackedCrmService({ authorizeOperation: authorizeCrmOperation, filePath: arquivoCrm, hasActiveFunnelCards }) : undefined);
   // Promoção Approval Queue → CRM (opcional): `integracao: true` liga a fábrica REAL de produção sobre a MESMA fila e o MESMO
   // arquivo do CRM (exige `crm: true`); `crmIntegrationService` injeta um double no lugar.
   if (integracao && !arquivoCrm) throw new Error('montarAmbiente: integracao exige crm: true');
@@ -126,12 +137,6 @@ function montarAmbiente(t, { usuarios = [BRENO, RAFAEL], queue, authTimeoutMs, s
     (prospeccao
       ? createFileBackedProspectingService({ authorizeProposer: authorizeProposerForLeadApproval, authorizeOperation: authorizeCrmOperation, queuePath: filePath, crmService, batchPath, dossierPath })
       : undefined);
-  // Funnel Service (opcional): `funnels: true` liga a fábrica REAL de produção — funil/etapa sobre um arquivo
-  // temporário PRÓPRIO (independente do CRM); card (Etapa "Funis 2") exige `crm: true` (o mesmo `crmRepository`/
-  // `crmService` do CRM acima, nunca uma segunda instância — `sharedFileCrmRepository` é o MESMO cache que
-  // `createFileBackedCrmService` usa por baixo). `funnelService` injeta um double no lugar de tudo isto.
-  if (funnels && !arquivoCrm) throw new Error('montarAmbiente: funnels exige crm: true (as operações de card precisam do CRM)');
-  const arquivoFunnels = funnels ? funnelFilePath || novoArquivoFunnels(t) : undefined;
   const funnelService =
     funnelServiceInjetado ||
     (funnels

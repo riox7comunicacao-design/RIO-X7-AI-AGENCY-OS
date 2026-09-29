@@ -1148,3 +1148,139 @@ test('[CRM-SVC-59] falha do repositório ao excluir (ex.: o RPC do Supabase falh
   await assert.rejects(async () => await servico.deleteRecord(admin(), id, { reason: 'tentativa que falha' }), /falha ao excluir \(simulado\)/);
   assert.notEqual(inicial.getById(id), null, 'o registro continua existindo: a falha do repositório não é mascarada como sucesso');
 });
+
+// ===========================================================================
+// 11) INTEGRIDADE CRM ↔ CARD (Etapa "Funis 2 — correção final") — deleteRecord recusa excluir um registro que
+// ainda tenha Cards ATIVOS num Funil. `hasActiveFunnelCards` é uma dependência OPCIONAL — uma função
+// (crmRecordId) -> número de cards ativos, síncrona ou assíncrona — injetada por quem compõe (em produção,
+// createFileBackedActiveFunnelCardsChecker de src/services/funnelFileService.js); o Service NUNCA importa o
+// domínio nem o repositório de Funil. Sem ela (o padrão, e todos os testes ACIMA), o comportamento é o de sempre:
+// nunca bloqueia por Cards.
+// ===========================================================================
+test('[CRM-SVC-60] hasActiveFunnelCards, se informado, deve ser uma função — qualquer outro valor é recusado na criação; AUSENTE é aceito (o padrão de sempre)', async () => {
+  const repository = createInMemoryCrmRepository();
+  for (const ruim of [0, 1, true, false, 'sim', [], {}]) {
+    assert.match(
+      (await erroDe(() => createCrmService({ authorizeOperation: authorizeCrmOperation, repository, hasActiveFunnelCards: ruim }))).message,
+      /hasActiveFunnelCards.*deve ser uma função/,
+      String(ruim)
+    );
+  }
+  assert.ok(criarServico(repository), 'sem hasActiveFunnelCards o Service continua existindo normalmente');
+  assert.ok(criarServico(repository, { hasActiveFunnelCards: null }), 'null é aceito como "ausente"');
+});
+
+test('[CRM-SVC-61] CASO 1 — CRM sem Cards (checker devolve 0): deleteRecord funciona normalmente (200), com o checker consultado pelo id certo', async () => {
+  const inicial = createInMemoryCrmRepository();
+  const id = await semear(criarServico(inicial));
+  const chamadas = [];
+  const servico = criarServico(inicial, {
+    hasActiveFunnelCards: (crmRecordId) => {
+      chamadas.push(crmRecordId);
+      return 0;
+    },
+  });
+  const resultado = await servico.deleteRecord(admin(), id, { reason: 'sem cards' });
+  assert.deepEqual(resultado, { id });
+  assert.equal(inicial.getById(id), null, 'o registro foi excluído de verdade');
+  assert.deepEqual(chamadas, [id]);
+});
+
+test('[CRM-SVC-62] CASO 2/3 — CRM com 1 ou vários Cards ativos: deleteRecord é BLOQUEADO (CRM_HAS_ACTIVE_FUNNEL_CARDS), o registro e o repositório continuam intocados, e o domínio NUNCA é chamado (logo, nenhuma auditoria)', async () => {
+  for (const quantidade of [1, 3]) {
+    const inicial = createInMemoryCrmRepository();
+    const id = await semear(criarServico(inicial));
+    const chamadasDominio = [];
+    const servico = criarServico(inicial, { crm: dominioObservado(chamadasDominio), hasActiveFunnelCards: () => quantidade });
+    const erro = await erroDe(async () => await servico.deleteRecord(admin(), id, { reason: 'tem cards ativos' }));
+    assert.equal(erro.code, 'CRM_HAS_ACTIVE_FUNNEL_CARDS', `quantidade=${quantidade}`);
+    assert.match(erro.message, /não pode ser excluído enquanto possuir Cards ativos em funis/);
+    assert.notEqual(inicial.getById(id), null, 'o registro do CRM continua existindo');
+    assert.deepEqual(
+      chamadasDominio.filter(([nome]) => nome === 'deleteRecord'),
+      [],
+      'o domínio deleteRecord nunca é chamado — nada é excluído nem auditado'
+    );
+  }
+});
+
+test('[CRM-SVC-63] CASO 4/8 — CRM só com Cards arquivados (o checker, que já ignora arquivados — ver funnelRepository.js, devolve 0): deleteRecord continua permitido', async () => {
+  const inicial = createInMemoryCrmRepository();
+  const id = await semear(criarServico(inicial));
+  // O checker real (countActiveCardsByCrmRecord) já devolve 0 para um registro com só Cards arquivados — aqui só
+  // se prova que o Service, recebendo 0, nunca inventa um bloqueio por conta própria.
+  const servico = criarServico(inicial, { hasActiveFunnelCards: () => 0 });
+  const resultado = await servico.deleteRecord(admin(), id, { reason: 'só cards arquivados' });
+  assert.deepEqual(resultado, { id });
+});
+
+test('[CRM-SVC-64] CASO 5 — CRM com Cards ativos E arquivados (o checker conta só os ativos): deleteRecord continua BLOQUEADO', async () => {
+  const inicial = createInMemoryCrmRepository();
+  const id = await semear(criarServico(inicial));
+  const servico = criarServico(inicial, { hasActiveFunnelCards: () => 1 }); // 1 ativo, arquivados não entram na conta
+  const erro = await erroDe(async () => await servico.deleteRecord(admin(), id, { reason: 'ativos e arquivados' }));
+  assert.equal(erro.code, 'CRM_HAS_ACTIVE_FUNNEL_CARDS');
+  assert.notEqual(inicial.getById(id), null);
+});
+
+test('[CRM-SVC-65] CASO 6 — COMMERCIAL_CLOSER tentando excluir, mesmo com Cards ativos: recusado com "acesso negado" (403), e o checker NUNCA é consultado — a autorização vem antes de qualquer regra de Cards', async () => {
+  const inicial = createInMemoryCrmRepository();
+  const id = await semear(criarServico(inicial));
+  let consultado = false;
+  const servico = criarServico(inicial, {
+    hasActiveFunnelCards: () => {
+      consultado = true;
+      return 5;
+    },
+  });
+  const erro = await erroDe(async () => await servico.deleteRecord(closer(), id, { reason: 'closer tentando excluir' }));
+  assert.match(erro.message, /acesso negado/);
+  assert.notEqual(erro.code, 'CRM_HAS_ACTIVE_FUNNEL_CARDS', 'o motivo da recusa é autorização, não Cards ativos');
+  assert.equal(consultado, false, 'sem DELETE:CRM, o Service nunca chega a consultar Cards ativos');
+  assert.notEqual(inicial.getById(id), null);
+});
+
+test('[CRM-SVC-66] um id INEXISTENTE nunca é "bloqueado por Cards ativos" (o checker devolve 0 — nenhum card aponta para um id que não existe): o erro continua sendo "registro não encontrado" (404), não CRM_HAS_ACTIVE_FUNNEL_CARDS', async () => {
+  const servico = criarServico(createInMemoryCrmRepository(), { hasActiveFunnelCards: () => 0 });
+  const erro = await erroDe(async () => await servico.deleteRecord(admin(), 'crm:nao-existe', { reason: 'não existe' }));
+  assert.match(erro.message, /registro não encontrado/);
+  assert.notEqual(erro.code, 'CRM_HAS_ACTIVE_FUNNEL_CARDS');
+});
+
+test('[CRM-SVC-67] o checker pode ser ASSÍNCRONO (devolve uma Promise<número>) — funciona igual, tanto para permitir quanto para bloquear', async () => {
+  const permiteAssincrono = criarServico(createInMemoryCrmRepository(), { hasActiveFunnelCards: async () => 0 });
+  const id1 = await semear(permiteAssincrono);
+  assert.deepEqual(await permiteAssincrono.deleteRecord(admin(), id1, { reason: 'checker assíncrono, 0' }), { id: id1 });
+
+  const bloqueiaAssincrono = criarServico(createInMemoryCrmRepository(), { hasActiveFunnelCards: async () => 2 });
+  const id2 = await semear(bloqueiaAssincrono);
+  const erro = await erroDe(async () => await bloqueiaAssincrono.deleteRecord(admin(), id2, { reason: 'checker assíncrono, 2' }));
+  assert.equal(erro.code, 'CRM_HAS_ACTIVE_FUNNEL_CARDS');
+});
+
+test('[CRM-SVC-68] FALHA FECHADA: um checker DEFEITUOSO (devolve algo que não é um número >= 0 — texto, negativo, NaN, undefined, objeto) nunca deixa a exclusão prosseguir silenciosamente; nada é excluído', async () => {
+  for (const valorRuim of ['2', -1, NaN, undefined, null, {}, [], true]) {
+    const inicial = createInMemoryCrmRepository();
+    const id = await semear(criarServico(inicial));
+    const servico = criarServico(inicial, { hasActiveFunnelCards: () => valorRuim });
+    const erro = await erroDe(async () => await servico.deleteRecord(admin(), id, { reason: 'checker defeituoso' }));
+    assert.match(erro.message, /hasActiveFunnelCards devolveu um valor inválido/, String(valorRuim));
+    assert.notEqual(erro.code, 'CRM_HAS_ACTIVE_FUNNEL_CARDS', String(valorRuim));
+    assert.notEqual(inicial.getById(id), null, `o registro continua existindo para ${JSON.stringify(valorRuim)}`);
+  }
+});
+
+test('[CRM-SVC-69] o checker é chamado exatamente UMA vez por deleteRecord, com o id exato (texto), nunca o objeto do registro nem o context', async () => {
+  const inicial = createInMemoryCrmRepository();
+  const id = await semear(criarServico(inicial));
+  const chamadas = [];
+  const servico = criarServico(inicial, {
+    hasActiveFunnelCards: (...args) => {
+      chamadas.push(args);
+      return 0;
+    },
+  });
+  await servico.deleteRecord(admin(), id, { reason: 'contagem de chamadas' });
+  assert.equal(chamadas.length, 1);
+  assert.deepEqual(chamadas[0], [id]);
+});

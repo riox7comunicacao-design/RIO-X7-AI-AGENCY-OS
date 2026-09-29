@@ -43,6 +43,22 @@
 // propósito: filtros e busca (etapas CRM-API/CRM-DASHBOARD); a promoção de um prospect aprovado (etapa
 // CRM-INTEGRATION, em crmIntegrationService.js); qualquer coisa de IA.
 //
+// INTEGRIDADE CRM ↔ CARD (Etapa "Funis 2 — correção final"): um registro do CRM NUNCA pode ser excluído enquanto
+// tiver Cards ATIVOS (`removed_at IS NULL`) num Funil — um Card arquivado nunca bloqueia. A checagem é feita por
+// `hasActiveFunnelCards` (dependência OPCIONAL: uma função `(crmRecordId) => número de cards ativos`, síncrona ou
+// assíncrona), chamada só dentro de deleteRecord, ANTES do domínio e do repositório — nada é apagado nem auditado
+// se ela recusar. É uma ABSTRAÇÃO, nunca um import: este módulo não conhece o domínio de Funil, o Funnel Service
+// nem nenhum adapter — quem a implementa (em produção, src/services/funnelFileService.js,
+// createFileBackedActiveFunnelCardsChecker) é quem compõe (src/server/index.js), exatamente como já faz para
+// `authorizeOperation`/`repository`. Isso evita a dependência circular CRM -> Funil -> CRM: o CRM Service recebe
+// só uma FUNÇÃO, nunca o Funnel Service nem o Funnel Repository inteiro. Sem essa dependência informada (a
+// maioria dos testes deste arquivo, e qualquer composição que não tenha Funis), o padrão é "nenhum card ativo" —
+// o comportamento de sempre, sem regressão: NUNCA bloqueia por omissão, só quando alguém injeta a checagem real.
+// Ver docs/decisions (Etapa "Funis 2 — correção final") para o motivo de a checagem morar no SERVICE (um gate
+// ANTES do domínio) e não no domínio do CRM: diferente de funnelDomain.createCard (que recebe o `crmRepository`
+// bruto porque a checagem está TECIDA na decisão de negócio de criar o card), aqui é um pré-requisito único,
+// isolado, que não precisa mudar a assinatura de crmDomain.deleteRecord nem dos testes que já a chamam direto.
+//
 // PERSISTÊNCIA: o Service recebe o repositório (a porta de src/crm/crmRepositoryPort.js) e NUNCA conhece um adapter
 // nem um arquivo — trocar o adapter não muda o Service: as operações são assíncronas (`async`) e fazem `await` do domínio, então a porta pode ser síncrona ou assíncrona (decisão 0023).
 //
@@ -218,7 +234,7 @@ function toPublicDuplicidade(duplicidade) {
 // autorizador o Service nem existe. repository: a porta de persistência — OBRIGATÓRIA, sem padrão: o Service nunca
 // escolhe (nem conhece) um adapter.
 function createCrmService(dependencies) {
-  const { crm = crmDomainDefault, authorizeOperation, repository } = dependencies || {};
+  const { crm = crmDomainDefault, authorizeOperation, repository, hasActiveFunnelCards } = dependencies || {};
 
   if (typeof authorizeOperation !== 'function') {
     throw new Error('createCrmService exige { authorizeOperation } (função): sem autorizador injetado o Service não existe');
@@ -238,6 +254,14 @@ function createCrmService(dependencies) {
       throw new Error(`createCrmService: a dependência crm não tem a função ${name}()`);
     }
   }
+  // OPCIONAL (ver o cabeçalho): ausente (undefined) OU null contam como "não informada" (mesmo padrão de
+  // repository/readOptions acima: null nunca é tratado como um valor real). Qualquer OUTRO valor que não seja uma
+  // função é recusado — nunca um valor fixo nem uma Promise já resolvida (um booleano/número constante esconderia
+  // que a checagem nunca é reavaliada por registro).
+  if (hasActiveFunnelCards !== undefined && hasActiveFunnelCards !== null && typeof hasActiveFunnelCards !== 'function') {
+    throw new Error('createCrmService: hasActiveFunnelCards, se informado, deve ser uma função (crmRecordId) => número de cards ativos');
+  }
+  const countActiveFunnelCards = typeof hasActiveFunnelCards === 'function' ? hasActiveFunnelCards : () => 0;
 
   // As funções do domínio ficam capturadas aqui: alterar o objeto injetado depois da criação não muda o Service.
   const domainCreateRecord = crm.createRecord;
@@ -326,9 +350,26 @@ function createCrmService(dependencies) {
   // ausente, vazio ou só espaços é recusado ANTES de qualquer chamada ao domínio ou ao repositório — nada é
   // apagado). A resposta é uma confirmação MÍNIMA (mesmo padrão de promoteProspect em crmIntegrationService.js):
   // nunca o registro inteiro de volta, porque ele acabou de deixar de existir.
+  // INTEGRIDADE CRM ↔ CARD (Etapa "Funis 2 — correção final", ver o cabeçalho): depois de autorizar e validar o
+  // motivo, e ANTES de tocar o domínio/repositório, consulta `hasActiveFunnelCards(id)`. Um id inexistente conta
+  // 0 cards ativos (nenhum card aponta para ele) — o fluxo segue normalmente até o domínio, que recusa com "CRM:
+  // registro não encontrado" como sempre (404); a recusa por Cards ativos (409, CRM_HAS_ACTIVE_FUNNEL_CARDS) só
+  // acontece quando o registro EXISTE e tem ao menos um card ativo. Um COMMERCIAL_CLOSER (sem DELETE:CRM) nunca
+  // chega até aqui: authorize() já lançou "acesso negado" antes — Cards ativos nunca mudam essa recusa.
   async function deleteRecord(context, id, options) {
     const operator = authorize(context, 'deleteRecord');
     const reason = readReason(readOptions(options, ['reason']), { required: true });
+    const cardsAtivos = await countActiveFunnelCards(id);
+    // Falha FECHADA (mesmo princípio de readOperator() para o autorizador): um checker que devolve algo que não é
+    // um número >= 0 é um DEFEITO de composição — nunca decide silenciosamente que "não há cards ativos".
+    if (!(typeof cardsAtivos === 'number' && Number.isFinite(cardsAtivos) && cardsAtivos >= 0)) {
+      throw new Error('CRM: hasActiveFunnelCards devolveu um valor inválido (esperava um número >= 0 de cards ativos)');
+    }
+    if (cardsAtivos > 0) {
+      const err = new Error('Este registro não pode ser excluído enquanto possuir Cards ativos em funis. Arquive os Cards primeiro.');
+      err.code = 'CRM_HAS_ACTIVE_FUNNEL_CARDS';
+      throw err;
+    }
     const deleted = await domainDeleteRecord(repository, id, { actor: ACTOR.HUMAN, reviewedBy: operator, motivo: reason });
     return { id: deleted.id };
   }

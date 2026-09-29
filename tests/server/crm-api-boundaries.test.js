@@ -84,6 +84,10 @@ test('[CRM-API-ARCH-3] a raiz de composição só chama a fábrica de src/servic
   }
   assert.equal(identificadores.has('createConfiguredCrmService'), true);
   assert.equal(identificadores.has('authorizeCrmOperation'), true, 'o autorizador real é injetado pela composição');
+  // Etapa "Funis 2 — correção final de integridade CRM ↔ Card": a composição usa a fábrica de src/services/
+  // funnelFileService.js para obter a checagem (uma FUNÇÃO só — ver o cabeçalho desse arquivo), nunca o
+  // repositório de Funil nem o domínio diretamente (regra R12: src/server/ não pode importar src/crm/).
+  assert.equal(identificadores.has('createFileBackedActiveFunnelCardsChecker'), true);
 });
 
 test('[CRM-API-ARCH-4] a composição injeta o autorizador de src/auth e o caminho do arquivo — e o app recebe o Service pronto (não há um segundo caminho até o domínio); promoção e prospecção recebem o MESMO objeto crmService (etapa 3F), nunca um crmPath próprio', () => {
@@ -92,7 +96,16 @@ test('[CRM-API-ARCH-4] a composição injeta o autorizador de src/auth e o camin
   // createConfiguredCrmRepository (Etapa "Funis 2" — o repositório bruto que o Funnel Service usa é a MESMA
   // instância cacheada, nunca um segundo caminho de composição até o CRM).
   assert.match(codigo, /const crmFilePath = resolveFile\(env\.RIO_X7_CRM_PATH, DEFAULT_CRM_FILE\);/, 'REPOSITORY_MODE decide o adapter (etapa 2.3) antes de montar o CRM Service');
-  assert.match(codigo, /createConfiguredCrmService\(\{\s*env,\s*authorizeOperation:\s*authorizeCrmOperation,\s*filePath:\s*crmFilePath\s*\}\)/);
+  // Etapa "Funis 2 — correção final de integridade CRM ↔ Card": o caminho de Funis também é resolvido uma vez
+  // (funnelsFilePath) e reaproveitado — pela checagem injetada no CRM Service E por createFileBackedFunnelService,
+  // nunca dois caminhos de composição diferentes até o mesmo arquivo.
+  assert.match(codigo, /const funnelsFilePath = resolveFile\(env\.RIO_X7_FUNNELS_PATH, DEFAULT_FUNNELS_FILE\);/);
+  assert.match(
+    codigo,
+    /const hasActiveFunnelCards = createFileBackedActiveFunnelCardsChecker\(\{\s*filePath:\s*funnelsFilePath\s*\}\);/,
+    'a checagem é uma FUNÇÃO só (ver o cabeçalho de funnelFileService.js), nunca o repositório de Funil inteiro'
+  );
+  assert.match(codigo, /createConfiguredCrmService\(\{\s*env,\s*authorizeOperation:\s*authorizeCrmOperation,\s*filePath:\s*crmFilePath,\s*hasActiveFunnelCards\s*\}\)/);
   assert.match(codigo, /createConfiguredCrmRepository\(\{\s*env,\s*filePath:\s*crmFilePath\s*\}\)/, 'o repositório bruto do CRM usa o MESMO caminho/cache que o crmService');
   assert.match(codigo, /createApp\(\{[^}]*\bcrmService,/);
   assert.match(codigo, /createApp\(\{[^}]*\bcrmIntegrationService,/);

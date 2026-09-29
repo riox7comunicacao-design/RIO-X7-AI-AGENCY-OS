@@ -46,13 +46,14 @@ function sharedFileCrmRepository(filePath) {
 }
 
 // authorizeOperation: a porta de autorização (em produção, authorizeCrmOperation de src/auth) — o Service a valida.
-// filePath: o arquivo JSON do CRM (dados locais, fora do Git).
+// filePath: o arquivo JSON do CRM (dados locais, fora do Git). hasActiveFunnelCards (opcional, Etapa "Funis 2 —
+// correção final"): repassada intacta para createCrmService — ver o cabeçalho de crmService.js.
 function createFileBackedCrmService(dependencies) {
-  const { authorizeOperation, filePath } = dependencies || {};
+  const { authorizeOperation, filePath, hasActiveFunnelCards } = dependencies || {};
   if (typeof filePath !== 'string' || filePath.trim().length === 0) {
     throw new Error('createFileBackedCrmService exige { filePath } (texto não vazio): o caminho do arquivo do CRM é escolhido por quem compõe, nunca por um padrão escondido');
   }
-  return createCrmService({ authorizeOperation, repository: sharedFileCrmRepository(filePath) });
+  return createCrmService({ authorizeOperation, repository: sharedFileCrmRepository(filePath), hasActiveFunnelCards });
 }
 
 module.exports = { createFileBackedCrmService, sharedFileCrmRepository };
