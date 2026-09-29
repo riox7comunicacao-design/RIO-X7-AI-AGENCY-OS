@@ -613,3 +613,93 @@ test('[CRM-SEC-15] a identidade só é reverificada quando MUDA: reenviar o form
   await crmDomain.updateRecord(repo, 'crm:b', { site: 'livre.example.test' });
   await assert.rejects(async () => await crmDomain.updateRecord(repo, 'crm:b', { site: 'legado.example.test' }), /coincide com a de outro registro/, 'mudar PARA a identidade de outro registro é recusado');
 });
+
+// ===========================================================================
+// 11) deleteRecord — exclusão ADMINISTRATIVA e IRREVERSÍVEL (decisão 0025)
+// ===========================================================================
+// A AUTORIZAÇÃO (DELETE:CRM) é do Service, nunca do domínio — estes testes chamam deleteRecord diretamente, sem
+// nenhum autorizador, exatamente como as demais operações do domínio (createRecord, moveStatus, ...) já são
+// testadas neste arquivo.
+
+test('[CRM-DELETE-1] deleteRecord remove o registro de verdade: some de getById() e de listRecords(); a chamada devolve o registro como estava (cópia) ANTES da exclusão', async () => {
+  const repo = memRepo();
+  const { record } = await crmDomain.createRecord(repo, { empresa: 'Para Excluir', site: 'excluir-dominio.example.test' });
+  await crmDomain.moveStatus(repo, record.id, CRM_STATUS.RESEARCH, { motivo: 'avançou' });
+
+  const devolvido = await crmDomain.deleteRecord(repo, record.id, { reviewedBy: { userId: 'u1', name: 'Um', role: 'ADMIN' }, motivo: 'exclusão de teste' });
+  assert.equal(devolvido.id, record.id);
+  assert.equal(devolvido.status, CRM_STATUS.RESEARCH, 'o snapshot devolvido é o estado JUSTO ANTES da exclusão');
+  assert.equal(devolvido.historico.length, 2, 'o histórico completo (criação + a mudança de status) vem no snapshot');
+
+  assert.equal(await crmDomain.getRecord(repo, record.id), null);
+  assert.equal((await crmDomain.listRecords(repo)).length, 0);
+
+  // O snapshot devolvido é uma CÓPIA: alterá-lo depois não ressuscita nem afeta o repositório.
+  devolvido.empresa = 'Adulterado depois';
+  assert.equal(await crmDomain.getRecord(repo, record.id), null);
+});
+
+test('[CRM-DELETE-2] deleteRecord de um id INEXISTENTE recusa com "registro não encontrado" — a mesma mensagem das demais operações por id — e nada muda', async () => {
+  const repo = memRepo();
+  await crmDomain.createRecord(repo, { empresa: 'Fica' });
+  await assert.rejects(async () => await crmDomain.deleteRecord(repo, 'crm:nao-existe'), /registro não encontrado/);
+  assert.equal((await crmDomain.listRecords(repo)).length, 1, 'nada foi apagado');
+});
+
+test('[CRM-DELETE-3] um registro DO_NOT_CONTACT (bloqueado, terminal para status/edição) PODE ser excluído — deleteRecord não verifica DNC nem nenhuma outra regra de negócio: excluir não é uma transição de status', async () => {
+  const repo = memRepo();
+  const { record } = await crmDomain.createRecord(repo, { empresa: 'Bloqueada', site: 'bloqueada-delete.example.test' });
+  await crmDomain.markDoNotContact(repo, record.id, { motivo: 'pediu para sair' });
+  assert.equal((await crmDomain.getRecord(repo, record.id)).status, CRM_STATUS.DO_NOT_CONTACT);
+
+  const devolvido = await crmDomain.deleteRecord(repo, record.id);
+  assert.equal(devolvido.status, CRM_STATUS.DO_NOT_CONTACT);
+  assert.equal(await crmDomain.getRecord(repo, record.id), null);
+});
+
+test('[CRM-DELETE-4] deleteRecord repassa reviewedBy/motivo ao repositório como delete(id, { reviewedBy, motivo }) — a MESMA forma que save()/moveStatus() já recebem por meta; ausentes viram null, nunca undefined', async () => {
+  const interno = memRepo();
+  const chamadasDelete = [];
+  const repo = { ...interno, delete: (id, meta) => { chamadasDelete.push({ id, meta }); return interno.delete(id, meta); } };
+  const { record } = await crmDomain.createRecord(repo, { empresa: 'Auditoria de Exclusão' });
+
+  await crmDomain.deleteRecord(repo, record.id, { reviewedBy: { userId: 'u1', name: 'Um', role: 'ADMIN' }, motivo: 'motivo informado' });
+  assert.equal(chamadasDelete.length, 1);
+  assert.equal(chamadasDelete[0].id, record.id);
+  assert.deepEqual(chamadasDelete[0].meta, { reviewedBy: { userId: 'u1', name: 'Um', role: 'ADMIN' }, motivo: 'motivo informado' });
+
+  const { record: outro } = await crmDomain.createRecord(repo, { empresa: 'Sem Meta' });
+  await crmDomain.deleteRecord(repo, outro.id);
+  assert.deepEqual(chamadasDelete[1].meta, { reviewedBy: null, motivo: null }, 'meta ausente vira { reviewedBy: null, motivo: null }, nunca undefined');
+});
+
+test('[CRM-DELETE-5] ids INVÁLIDOS (vazio, só espaços, não-texto) são recusados ANTES de tocar o repositório — a mesma validação das demais operações por id', async () => {
+  const repo = memRepo();
+  for (const ruim of ['', '   ', null, undefined, 42, {}, []]) {
+    await assert.rejects(async () => await crmDomain.deleteRecord(repo, ruim), /id deve ser um texto não vazio/, String(ruim));
+  }
+});
+
+test('[CRM-DELETE-6] ids herdados do protótipo do Object ("__proto__", "constructor", "prototype", "toString") nunca são tratados como um registro existente — deleteRecord recusa com "registro não encontrado", nunca um erro opaco', async () => {
+  const repo = memRepo();
+  await crmDomain.createRecord(repo, { empresa: 'Fica' });
+  for (const herdado of ['__proto__', 'constructor', 'prototype', 'toString', 'hasOwnProperty']) {
+    await assert.rejects(async () => await crmDomain.deleteRecord(repo, herdado), /registro não encontrado/, herdado);
+  }
+  assert.equal((await crmDomain.listRecords(repo)).length, 1, 'nada foi apagado');
+});
+
+test('[CRM-DELETE-7] deleteRecord funciona igual sobre o repositório de ARQUIVO JSON: exclui de verdade e uma SEGUNDA instância sobre o mesmo arquivo enxerga a ausência', async (t) => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'crm-delete-json-'));
+  t.after(() => fs.rmSync(dir, { recursive: true, force: true }));
+  const file = path.join(dir, 'crm.json');
+
+  const repoA = createJsonFileCrmRepository(file);
+  const { record } = await crmDomain.createRecord(repoA, { empresa: 'Persistente' });
+  await crmDomain.deleteRecord(repoA, record.id, { motivo: 'excluir do arquivo' });
+  assert.equal(await crmDomain.getRecord(repoA, record.id), null);
+
+  const repoB = createJsonFileCrmRepository(file);
+  assert.equal(await crmDomain.getRecord(repoB, record.id), null, 'a segunda instância, sobre o mesmo arquivo, também não vê mais o registro');
+  assert.equal((await crmDomain.listRecords(repoB)).length, 0);
+});

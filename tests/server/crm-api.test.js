@@ -98,6 +98,7 @@ function criarServicoDuplo(chamadas, { falhar = {} } = {}) {
     updateRecord: operacao('updateRecord', { id: 'crm:duplo' }),
     moveStatus: operacao('moveStatus', { id: 'crm:duplo' }),
     markDoNotContact: operacao('markDoNotContact', { id: 'crm:duplo' }),
+    deleteRecord: operacao('deleteRecord', { id: 'crm:duplo' }),
   };
 }
 
@@ -540,14 +541,13 @@ test('[CRM-API-19] Content-Type diferente de application/json (ou ausente) -> 41
   assert.equal(aceito.status, 201);
 });
 
-test('[CRM-API-20] método errado -> 405 com o cabeçalho Allow exato, antes de qualquer outra coisa (inclusive sem autenticação); não existe exclusão, e um DELETE nunca apaga nada', async (t) => {
+test('[CRM-API-20] método errado -> 405 com o cabeçalho Allow exato, antes de qualquer outra coisa (inclusive sem autenticação); DELETE em /api/crm/:id passou a ser um método válido (decisão 0025 — ver CRM-API-39/40) e não aparece mais aqui', async (t) => {
   const env = montarAmbiente(t, { usuarios: [BRENO], crm: true });
   const alfa = await semear(env, ALFA);
   const antes = bytes(env);
   const casos = [
-    ['DELETE', rota(alfa.id), 'GET, PATCH'],
-    ['PUT', rota(alfa.id), 'GET, PATCH'],
-    ['POST', rota(alfa.id), 'GET, PATCH'],
+    ['PUT', rota(alfa.id), 'GET, PATCH, DELETE'],
+    ['POST', rota(alfa.id), 'GET, PATCH, DELETE'],
     ['DELETE', '/api/crm', 'GET, POST'],
     ['PUT', '/api/crm', 'GET, POST'],
     ['PATCH', '/api/crm', 'GET, POST'],
@@ -561,7 +561,7 @@ test('[CRM-API-20] método errado -> 405 com o cabeçalho Allow exato, antes de 
     ['DELETE', rota(alfa.id, '/dnc'), 'POST'],
     ['OPTIONS', '/api/crm', 'GET, POST'],
     ['HEAD', '/api/crm', 'GET, POST'],
-    ['PROPFIND', rota(alfa.id), 'GET, PATCH'],
+    ['PROPFIND', rota(alfa.id), 'GET, PATCH, DELETE'],
   ];
   for (const [method, url, permitidos] of casos) {
     for (const usuario of [null, BRENO]) {
@@ -1181,4 +1181,108 @@ test('[CRM-API-38] persistência: o que uma instância do app grava, OUTRA inst�
   const tentativa = await chamar(segundo, BRENO, { method: 'POST', url: '/api/crm', body: { empresa: 'Nova', site: ALFA.site } });
   assert.equal(tentativa.status, 409, 'a segunda instância também enxerga o bloqueio DNC gravado pela primeira');
   assert.equal(tentativa.json().error.code, 'DNC_BLOCKED');
+});
+
+// ===========================================================================
+// EXCLUSÃO ADMINISTRATIVA E IRREVERSÍVEL — DELETE /api/crm/:id (decisão 0025)
+// ===========================================================================
+test('[CRM-API-39] DELETE /api/crm/:id (ADMIN, com motivo) -> 200 { deleted: true, id }, e o registro REALMENTE some (GET depois -> 404)', async (t) => {
+  const env = montarAmbiente(t, { usuarios: [BRENO], crm: true });
+  const alfa = await semear(env, ALFA);
+  assert.equal(registros(env).length, 1);
+
+  const resposta = await chamar(env, BRENO, { method: 'DELETE', url: rota(alfa.id), body: { reason: 'registro de teste, duplicado' } });
+  assert.equal(resposta.status, 200);
+  assert.deepEqual(resposta.json(), { deleted: true, id: alfa.id });
+  assert.equal(registros(env).length, 0, 'o registro foi realmente apagado do armazenamento');
+
+  const depois = await chamar(env, BRENO, { url: rota(alfa.id) });
+  assert.equal(depois.status, 404, 'o registro excluído não existe mais para nenhuma leitura');
+  const historico = await chamar(env, BRENO, { url: rota(alfa.id, '/history') });
+  assert.equal(historico.status, 404);
+});
+
+test('[CRM-API-40] DELETE: autorização é só DELETE:CRM (só ADMIN) — CLOSER recebe 403 mesmo chamando a API diretamente, sem autenticação é 401, e nos dois casos o registro continua intacto', async (t) => {
+  const env = montarAmbiente(t, { usuarios: [BRENO, RAFAEL], crm: true });
+  const alfa = await semear(env, ALFA);
+  const antes = bytes(env);
+
+  const semAuth = await chamar(env, null, { method: 'DELETE', url: rota(alfa.id), body: { reason: 'tentativa sem token' } });
+  assert.equal(semAuth.status, 401);
+  assert.equal(bytes(env), antes);
+
+  const comoCloser = await chamar(env, RAFAEL, { method: 'DELETE', url: rota(alfa.id), body: { reason: 'tentativa do closer' } });
+  assert.equal(comoCloser.status, 403);
+  assert.deepEqual(comoCloser.json(), { error: { code: 'FORBIDDEN', message: 'Esta conta não possui acesso a esta área.' } });
+  assert.equal(bytes(env), antes, 'nenhuma das duas tentativas apagou ou alterou o arquivo');
+  assert.equal(registros(env).length, 1, 'o registro continua existindo');
+
+  // READ:CRM sozinho (sem DELETE:CRM) também não basta — RAFAEL tem READ:CRM e ainda assim é recusado acima.
+  const aindaLegivel = await chamar(env, RAFAEL, { url: rota(alfa.id) });
+  assert.equal(aindaLegivel.status, 200, 'READ:CRM continua funcionando para quem não tem DELETE:CRM');
+});
+
+test('[CRM-API-41] DELETE: registro inexistente -> 404, mesmo para ADMIN com motivo válido', async (t) => {
+  const env = montarAmbiente(t, { usuarios: [BRENO], crm: true });
+  const antes = bytes(env);
+  const resposta = await chamar(env, BRENO, { method: 'DELETE', url: rota('crm:00000000-0000-0000-0000-000000000000'), body: { reason: 'não existe' } });
+  assert.equal(resposta.status, 404);
+  assert.equal(bytes(env), antes);
+});
+
+test('[CRM-API-42] DELETE: motivo ausente, vazio ou só espaços -> 400, e o registro NUNCA é apagado (o motivo é a ÚNICA operação do CRM em que ele é obrigatório)', async (t) => {
+  const env = montarAmbiente(t, { usuarios: [BRENO], crm: true });
+  const alfa = await semear(env, ALFA);
+  const antes = bytes(env);
+
+  for (const corpo of [{}, { reason: '' }, { reason: '   ' }]) {
+    const resposta = await chamar(env, BRENO, { method: 'DELETE', url: rota(alfa.id), body: corpo });
+    assert.equal(resposta.status, 400, JSON.stringify(corpo));
+    assert.equal(resposta.json().error.code, 'INVALID_REQUEST', JSON.stringify(corpo));
+  }
+  assert.equal(bytes(env), antes);
+  assert.equal(registros(env).length, 1, 'nenhuma das tentativas sem motivo apagou o registro');
+
+  // reason de tipo errado -> 400 também, com a mensagem genérica de "motivo deve ser um texto".
+  const tipoErrado = await chamar(env, BRENO, { method: 'DELETE', url: rota(alfa.id), body: { reason: 123 } });
+  assert.equal(tipoErrado.status, 400);
+  assert.equal(bytes(env), antes);
+});
+
+test('[CRM-API-43] DELETE: um corpo tentando forjar role/permissions/userId/actor/reviewedBy junto do motivo -> 400 (campo não permitido), nunca chega a decidir nada, e o registro não é apagado', async (t) => {
+  const env = montarAmbiente(t, { usuarios: [BRENO], crm: true });
+  const alfa = await semear(env, ALFA);
+  const antes = bytes(env);
+
+  for (const [chave, valor] of Object.entries(FORJADOS)) {
+    const resposta = await chamar(env, BRENO, { method: 'DELETE', url: rota(alfa.id), body: { reason: 'motivo válido', [chave]: valor } });
+    assert.equal(resposta.status, 400, chave);
+    assert.deepEqual(resposta.json(), { error: { code: 'INVALID_REQUEST', message: 'Campos não permitidos na requisição.' } }, chave);
+  }
+  assert.equal(bytes(env), antes, 'nenhum corpo forjado apagou o registro');
+  assert.equal(registros(env).length, 1);
+
+  // O mesmo corpo forjado, vindo de um COMMERCIAL_CLOSER: continua 400 (a validação da API roda antes de qualquer
+  // chamada ao Service) — nunca uma escalada que levasse a um 403 "quase autorizado" ou, pior, a um 200.
+  const ambiente2 = montarAmbiente(t, { usuarios: [RAFAEL], crm: true, crmFilePath: env.crmFilePath });
+  const comoCloser = await chamar(ambiente2, RAFAEL, { method: 'DELETE', url: rota(alfa.id), body: { reason: 'motivo válido', role: 'ADMIN', permissions: ['DELETE:CRM'] } });
+  assert.equal(comoCloser.status, 400);
+  assert.equal(registros(env).length, 1, 'ainda intacto');
+});
+
+test('[CRM-API-44] DELETE: query string, Content-Type errado/ausente e corpo grande demais recebem o MESMO tratamento das demais rotas de escrita', async (t) => {
+  const env = montarAmbiente(t, { usuarios: [BRENO], crm: true });
+  const alfa = await semear(env, ALFA);
+
+  const comQuery = await chamar(env, BRENO, { method: 'DELETE', url: `${rota(alfa.id)}?x=1`, body: { reason: 'motivo válido' } });
+  assert.equal(comQuery.status, 400);
+  assert.deepEqual(comQuery.json(), { error: { code: 'INVALID_REQUEST', message: 'Parâmetros não permitidos.' } });
+
+  const semContentType = await chamar(env, BRENO, { method: 'DELETE', url: rota(alfa.id), body: { reason: 'motivo válido' }, contentType: 'text/plain' });
+  assert.equal(semContentType.status, 415);
+
+  const grande = await chamar(env, BRENO, { method: 'DELETE', url: rota(alfa.id), body: { reason: 'x'.repeat(17 * 1024) } });
+  assert.equal(grande.status, 413);
+
+  assert.equal(registros(env).length, 1, 'nenhuma dessas tentativas recusadas apagou o registro');
 });

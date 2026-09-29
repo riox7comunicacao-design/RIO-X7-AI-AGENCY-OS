@@ -16,7 +16,7 @@ const { createAuthorizationContext } = require('../helpers/authFixtures');
 const { analyzeSource } = require('../helpers/staticImports');
 
 const REPO_ROOT = path.resolve(__dirname, '..', '..');
-const OPERACOES = ['createRecord', 'getHistory', 'getRecord', 'listRecords', 'markDoNotContact', 'moveStatus', 'updateRecord'];
+const OPERACOES = ['createRecord', 'deleteRecord', 'getHistory', 'getRecord', 'listRecords', 'markDoNotContact', 'moveStatus', 'updateRecord'];
 
 function novoDiretorio(t) {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'crm-file-service-'));
@@ -46,7 +46,7 @@ test('[CRM-FILE-2] sem autorizador válido a fábrica falha fechada (quem valida
   assert.throws(() => createFileBackedCrmService({ authorizeOperation: async () => ({}), filePath }), /síncrono/);
 });
 
-test('[CRM-FILE-3] devolve o Service completo e congelado — as 7 operações, e nada mais (nem o repositório)', (t) => {
+test('[CRM-FILE-3] devolve o Service completo e congelado — as 8 operações, e nada mais (nem o repositório)', (t) => {
   const service = createFileBackedCrmService({ authorizeOperation: authorizeCrmOperation, filePath: path.join(novoDiretorio(t), 'crm.json') });
   assert.deepEqual(Object.keys(service).sort(), OPERACOES);
   assert.equal(Object.isFrozen(service), true);

@@ -4,8 +4,8 @@ Este diretório guarda o SQL da persistência do CRM em Postgres/Supabase, como 
 
 ## Estado atual
 
-- `migrations/20260927120000_crm_initial_schema.sql`: proposta de esquema para o CRM (decisão [0024](../docs/decisions/0024-crm-postgres-schema.md)). **Não aplicada** ao projeto Supabase real (`rio-x7-ai-agency-os`, `sa-east-1`).
-- O CRM operacional continua em `data/crm.json` (adapter de arquivo, `src/crm/crmRepository.js`). Nenhum código lê ou escreve nas tabelas descritas aqui — elas não existem ainda no banco.
+- `migrations/20260927120000_crm_initial_schema.sql`: esquema do CRM (decisão [0024](../docs/decisions/0024-crm-postgres-schema.md)), já aplicado ao projeto Supabase real (`rio-x7-ai-agency-os`, `sa-east-1`) — `REPOSITORY_MODE=supabase` é a persistência oficial desde a etapa 3M.
+- `migrations/20260928090000_crm_delete_audit.sql`: tabela `crm_record_deletions` e a função transacional `delete_crm_record_with_audit`, para a exclusão administrativa e irreversível do CRM (decisão [0025](../docs/decisions/0025-crm-admin-delete.md)). **Não aplicada** — aguarda revisão do proprietário antes de ser executada no Supabase real.
 
 ## Código de preparação (etapa 2)
 

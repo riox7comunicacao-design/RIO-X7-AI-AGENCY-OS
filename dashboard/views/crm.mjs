@@ -1,5 +1,6 @@
 // Tela CRM — a lista de registros, a ficha de um registro e as ações de escrita (criar, editar, mudar status, marcar
-// DO_NOT_CONTACT). Primeira versão operacional do CRM no Dashboard (decisão 0015 traz os contratos da API).
+// DO_NOT_CONTACT, excluir). Primeira versão operacional do CRM no Dashboard (decisão 0015 traz os contratos da API;
+// a exclusão administrativa é a decisão 0025).
 //
 //   Browser -> esta tela -> api.mjs -> HTTP /api/crm -> CRM-API -> CRM Service -> CRM Domain -> repositório
 //
@@ -56,9 +57,14 @@ const MAX_TEXT = '4000';
 const DNC_LABEL = 'Não contatar';
 
 // document/root: onde desenhar. api: o cliente de api.mjs (listCrm, getCrm, getCrmHistory, createCrm, updateCrm,
-// moveCrmStatus, markCrmDnc). permissions: { canWriteCrm } (de permissionsOf(me)). navigate(hash): muda a rota.
+// moveCrmStatus, markCrmDnc, deleteCrm). permissions: { canWriteCrm, canDeleteCrm } (de permissionsOf(me)).
+// navigate(hash): muda a rota.
 export function createCrmView({ document, root, api, permissions, navigate }) {
   const canWrite = Boolean(permissions && permissions.canWriteCrm);
+  // DELETE_CRM (decisão 0025): só MOSTRA/ESCONDE o botão "Excluir registro" — quem decide de verdade é o servidor
+  // (403 mesmo que a tela seja manipulada). Deliberadamente independente de canWrite: excluir é uma ação diferente
+  // de criar/editar/mudar status, e continua disponível mesmo num registro bloqueado como DNC (ver paintActions).
+  const canDelete = Boolean(permissions && permissions.canDeleteCrm);
   const state = {
     route: { name: 'crm-list' },
     list: { status: 'idle', items: [], error: null },
@@ -433,6 +439,13 @@ export function createCrmView({ document, root, api, permissions, navigate }) {
     else state.list.items.push(item);
   }
 
+  // Exclusão (decisão 0025): o registro deixou de existir — some da lista local para feedback imediato; a navegação
+  // de volta à lista (ver buildDeletePanel) ainda recarrega do servidor, que é a fonte real.
+  function removeListItem(id) {
+    const index = state.list.items.findIndex((entry) => entry.id === id);
+    if (index >= 0) state.list.items.splice(index, 1);
+  }
+
   // Um registro devolvido por uma escrita passa a ser o atual (ficha e lista).
   function applyRecord(item) {
     if (!isRecordLike(item) || item.id !== state.record.id) throw Object.assign(new Error('resposta inesperada'), { status: 500 });
@@ -465,19 +478,27 @@ export function createCrmView({ document, root, api, permissions, navigate }) {
       fill(refs.actions);
       return;
     }
+    const button = (text, panel, className) =>
+      el('button', { type: 'button', className: `btn ${className}`, text, 'aria-pressed': state.panel === panel ? 'true' : 'false', disabled: state.busy, onclick: () => togglePanel(panel) });
+    // Excluir (decisão 0025) continua disponível mesmo com o registro bloqueado como DNC: excluir não é uma mudança
+    // de estado do CRM, e um registro DNC é exatamente o cenário que motivou a exclusão existir.
     if (isLocked(item)) {
       fill(refs.actions,
-        el('p', { className: 'notice bad', role: 'note', text: `Este registro está bloqueado como "${DNC_LABEL}". Ele não pode mais ser editado nem mudar de status.` })
+        el('p', { className: 'notice bad', role: 'note', text: `Este registro está bloqueado como "${DNC_LABEL}". Ele não pode mais ser editado nem mudar de status.` }),
+        canDelete ? button('Excluir registro', 'delete', 'danger') : null
       );
       return;
     }
-    if (!canWrite) {
+    if (!canWrite && !canDelete) {
       fill(refs.actions, el('p', { className: 'muted', text: 'Seu perfil pode consultar o CRM, mas não pode criar nem alterar registros.' }));
       return;
     }
-    const button = (text, panel, className) =>
-      el('button', { type: 'button', className: `btn ${className}`, text, 'aria-pressed': state.panel === panel ? 'true' : 'false', disabled: state.busy, onclick: () => togglePanel(panel) });
-    fill(refs.actions, button('Editar', 'edit', 'secondary'), button('Mudar status', 'status', 'secondary'), button(`Marcar como ${DNC_LABEL}`, 'dnc', 'danger'));
+    fill(refs.actions,
+      canWrite ? button('Editar', 'edit', 'secondary') : null,
+      canWrite ? button('Mudar status', 'status', 'secondary') : null,
+      canWrite ? button(`Marcar como ${DNC_LABEL}`, 'dnc', 'danger') : null,
+      canDelete ? button('Excluir registro', 'delete', 'danger') : null
+    );
   }
 
   function togglePanel(panel) {
@@ -501,7 +522,24 @@ export function createCrmView({ document, root, api, permissions, navigate }) {
   function paintPanel() {
     if (!refs.panel) return;
     refs.panelApi = null;
-    if (state.panel === null || state.record.status !== 'ready' || !canWrite || isLocked(state.record.item)) {
+    if (state.panel === null || state.record.status !== 'ready') {
+      state.panel = null;
+      fill(refs.panel);
+      return;
+    }
+    // Excluir (decisão 0025) é o ÚNICO painel que abre mesmo sem canWrite e mesmo com o registro bloqueado (DNC) —
+    // as demais ações continuam exigindo canWrite e um registro não bloqueado, como sempre.
+    if (state.panel === 'delete') {
+      if (!canDelete) {
+        state.panel = null;
+        fill(refs.panel);
+        return;
+      }
+      refs.panelApi = buildDeletePanel();
+      fill(refs.panel, refs.panelApi.element);
+      return;
+    }
+    if (!canWrite || isLocked(state.record.item)) {
       state.panel = null;
       fill(refs.panel);
       return;
@@ -634,6 +672,66 @@ export function createCrmView({ document, root, api, permissions, navigate }) {
         setMessage('success', `Registro marcado como "${DNC_LABEL}". Ele agora está bloqueado.`);
         loadHistory(id);
       });
+    });
+    return { element: shell.element, setBusy: shell.setBusy, setMessage: shell.setMessage, focus: () => reason.focus() };
+  }
+
+  // ---- painel: excluir (exclusão ADMINISTRATIVA e IRREVERSÍVEL — decisão 0025) -----------------------
+  // Diferente dos demais painéis (que continuam na ficha, com o registro atualizado): excluir faz o registro deixar
+  // de existir, então o sucesso aqui NUNCA chama applyRecord/runWrite — ele tira o registro da lista local e navega
+  // de volta para "/crm", exatamente como as regras de negócio exigem (nunca deixar a ficha do registro excluído
+  // aberta). O motivo é OBRIGATÓRIO e a confirmação (checkbox) também — os dois são exigidos AQUI, antes de qualquer
+  // chamada à API; o servidor exige o motivo de novo (400 se ausente/vazio), porque a tela nunca é a camada de
+  // segurança: mesmo que o JavaScript fosse manipulado para pular esta checagem, o servidor recusaria.
+  function buildDeletePanel() {
+    const reason = el('textarea', { id: 'crm-delete-reason', name: 'reason', rows: '2', maxlength: MAX_TEXT });
+    const understood = el('input', { id: 'crm-delete-understood', type: 'checkbox', name: 'understood' });
+    const submit = el('button', { type: 'submit', className: 'btn danger', text: 'Excluir permanentemente' });
+    const cancel = el('button', { type: 'button', className: 'btn secondary', text: 'Cancelar', onclick: closePanel });
+    const shell = panelShell(
+      'Excluir registro',
+      [
+        el('div', { className: 'notice bad', role: 'note' }, el('p', { text: 'Esta ação removerá permanentemente este registro do CRM.' })),
+        el('div', { className: 'field' }, el('label', { for: 'crm-delete-reason', text: 'Motivo da exclusão (obrigatório)' }), reason),
+        el('div', { className: 'field checkbox' }, understood, el('label', { for: 'crm-delete-understood', text: 'Entendo que esta ação é irreversível.' })),
+      ],
+      [submit, cancel]
+    );
+    shell.element.addEventListener('submit', async () => {
+      if (state.busy) return;
+      const motivo = String(reason.value || '').trim();
+      if (motivo === '') {
+        shell.setMessage('error', 'Informe o motivo da exclusão.');
+        reason.focus();
+        return;
+      }
+      if (!understood.checked) {
+        shell.setMessage('error', 'Confirme que você entende que esta ação é irreversível.');
+        understood.focus();
+        return;
+      }
+      const id = state.record.id;
+      state.busy = true;
+      shell.setBusy(true);
+      shell.setMessage(null);
+      paintActions();
+      try {
+        await api.deleteCrm(id, motivo);
+        state.busy = false;
+        if (state.destroyed) return; // saiu-se (logout) durante o envio: nada mais a fazer nesta ficha
+        removeListItem(id);
+        state.flash = { kind: 'success', text: 'Registro excluído.' };
+        navigate(buildHash({ name: 'crm-list' }));
+      } catch (error) {
+        state.busy = false;
+        if (!isCurrentRecord(id)) return;
+        paintActions();
+        shell.setBusy(false);
+        const text = messageForCrmError(error);
+        if (text) shell.setMessage('error', text);
+        // Registro já não existe (excluído por outra sessão, ou nunca existiu): recarrega a ficha, que mostrará o 404.
+        if (error && error.status === 404) loadRecord(id);
+      }
     });
     return { element: shell.element, setBusy: shell.setBusy, setMessage: shell.setMessage, focus: () => reason.focus() };
   }

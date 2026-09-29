@@ -74,6 +74,7 @@ test('[SBR-2] config explícita (url + serviceRoleKey) tem prioridade sobre o am
   assert.equal(typeof repo.list, 'function');
   assert.equal(typeof repo.getById, 'function');
   assert.equal(typeof repo.save, 'function');
+  assert.equal(typeof repo.delete, 'function');
 });
 
 test('[SBR-3] fetchImpl inválido é recusado antes de qualquer outra coisa', () => {
@@ -163,6 +164,91 @@ test('[SBR-9] save() recusa um registro sem id, ou com id inseguro (__proto__/co
     await assert.rejects(() => repo.save(registro({ id })), /id de registro não permitido/);
   }
   assert.deepEqual(fetchImpl.chamadas, []);
+});
+
+// ===========================================================================
+// delete() — exclusão ADMINISTRATIVA e IRREVERSÍVEL, via RPC transacional (decisão 0025)
+// ===========================================================================
+const OPERADOR = Object.freeze({ userId: 'user-admin-1', name: 'Administradora', role: 'ADMIN' });
+
+test('[SBR-21] delete(): chama o RPC delete_crm_record_with_audit por POST — NUNCA um DELETE simples do PostgREST —, com os cinco parâmetros certos e a service_role só no cabeçalho', async () => {
+  const fetchImpl = fetchFalso({ ok: true, status: 200, text: async () => '' });
+  const repo = createSupabaseCrmRepository({ url: URL_DE_TESTE, serviceRoleKey: CHAVE_DE_TESTE, fetchImpl });
+  const id = 'crm:55555555-5555-4555-8555-555555555555';
+
+  const resultado = await repo.delete(id, { reviewedBy: OPERADOR, motivo: 'registro de teste, duplicado' });
+  assert.equal(resultado, undefined, 'delete() não devolve nada, como os outros adapters');
+  assert.equal(fetchImpl.chamadas.length, 1);
+  const { url, init } = fetchImpl.chamadas[0];
+  assert.equal(init.method, 'POST');
+  assert.equal(url.pathname, '/rest/v1/rpc/delete_crm_record_with_audit');
+  assert.equal(init.headers.apikey, CHAVE_DE_TESTE);
+  assert.equal(init.headers.Authorization, `Bearer ${CHAVE_DE_TESTE}`);
+  assert.deepEqual(JSON.parse(init.body), {
+    p_id: id,
+    p_deleted_by_user_id: OPERADOR.userId,
+    p_deleted_by_name: OPERADOR.name,
+    p_deleted_by_role: OPERADOR.role,
+    p_reason: 'registro de teste, duplicado',
+  });
+  assert.equal(JSON.stringify(init.body).includes(CHAVE_DE_TESTE), false, 'a service_role nunca vai no CORPO, só no cabeçalho');
+});
+
+test('[SBR-22] delete() exige um id (texto não vazio) e recusa ids inseguros (__proto__/constructor/prototype) — SEM chamar fetch', async () => {
+  const fetchImpl = fetchFalso();
+  const repo = createSupabaseCrmRepository({ url: URL_DE_TESTE, serviceRoleKey: CHAVE_DE_TESTE, fetchImpl });
+  for (const invalido of [undefined, null, 42, '', {}, []]) {
+    await assert.rejects(() => repo.delete(invalido, { reviewedBy: OPERADOR, motivo: 'x' }), /delete\(\) exige um id/, String(invalido));
+  }
+  for (const id of ['__proto__', 'constructor', 'prototype']) {
+    await assert.rejects(() => repo.delete(id, { reviewedBy: OPERADOR, motivo: 'x' }), /id de registro não permitido/, id);
+  }
+  assert.deepEqual(fetchImpl.chamadas, []);
+});
+
+test('[SBR-23] delete() exige meta.reviewedBy = { userId, name, role } (defesa em profundidade — o Service já valida antes) — ausente ou incompleto recusa SEM chamar fetch', async () => {
+  const fetchImpl = fetchFalso();
+  const repo = createSupabaseCrmRepository({ url: URL_DE_TESTE, serviceRoleKey: CHAVE_DE_TESTE, fetchImpl });
+  const id = 'crm:11111111-1111-4111-8111-111111111111';
+  for (const reviewedBy of [undefined, null, {}, { userId: 'u' }, { userId: 'u', name: 'n' }, { userId: '', name: 'n', role: 'ADMIN' }, { userId: 'u', name: 'n', role: '' }, 'texto']) {
+    await assert.rejects(() => repo.delete(id, { reviewedBy, motivo: 'x' }), /delete\(\) exige meta\.reviewedBy/, JSON.stringify(reviewedBy));
+  }
+  assert.deepEqual(fetchImpl.chamadas, []);
+});
+
+test('[SBR-24] delete() exige meta.motivo (texto não vazio) — ausente, vazio ou só espaços recusa SEM chamar fetch', async () => {
+  const fetchImpl = fetchFalso();
+  const repo = createSupabaseCrmRepository({ url: URL_DE_TESTE, serviceRoleKey: CHAVE_DE_TESTE, fetchImpl });
+  const id = 'crm:11111111-1111-4111-8111-111111111112';
+  for (const motivo of [undefined, null, '', '   ', 42, {}]) {
+    await assert.rejects(() => repo.delete(id, { reviewedBy: OPERADOR, motivo }), /delete\(\) exige meta\.motivo/, String(motivo));
+  }
+  assert.deepEqual(fetchImpl.chamadas, []);
+});
+
+test('[SBR-25] o RPC de exclusão recusando (ex.: 404 "registro não encontrado", simulando a rede de segurança da função SQL) vira um erro com a mensagem do PostgREST — mas a chave de teste NUNCA aparece', async () => {
+  const fetchImpl = fetchFalso(jsonResposta({ message: 'delete_crm_record_with_audit: registro crm:x não encontrado' }, 404));
+  const repo = createSupabaseCrmRepository({ url: URL_DE_TESTE, serviceRoleKey: CHAVE_DE_TESTE, fetchImpl });
+  await assert.rejects(
+    () => repo.delete('crm:11111111-1111-4111-8111-111111111113', { reviewedBy: OPERADOR, motivo: 'x' }),
+    (erro) => {
+      assert.match(erro.message, /PostgREST recusou a operação/);
+      assert.match(erro.message, /não encontrado/);
+      assert.doesNotMatch(erro.message, new RegExp(CHAVE_DE_TESTE));
+      return true;
+    }
+  );
+});
+
+test('[SBR-26] falha de REDE no RPC de exclusão: erro estável, sem repassar a mensagem bruta nem a chave de teste — e o registro fica como estava (a chamada nunca "meio aconteceu")', async () => {
+  const fetchImpl = async () => { throw new TypeError('fetch failed: getaddrinfo ENOTFOUND projeto-de-teste.supabase.co'); };
+  const repo = createSupabaseCrmRepository({ url: URL_DE_TESTE, serviceRoleKey: CHAVE_DE_TESTE, fetchImpl });
+  await assert.rejects(() => repo.delete('crm:11111111-1111-4111-8111-111111111114', { reviewedBy: OPERADOR, motivo: 'x' }), (erro) => {
+    assert.match(erro.message, /CRM \(Supabase\): falha de rede/);
+    assert.doesNotMatch(erro.message, /ENOTFOUND/);
+    assert.doesNotMatch(erro.message, new RegExp(CHAVE_DE_TESTE));
+    return true;
+  });
 });
 
 // ===========================================================================

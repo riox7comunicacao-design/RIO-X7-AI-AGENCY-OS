@@ -264,13 +264,14 @@ test('[HARD-3] resolveAuthenticatedIdentity e getSessionStatus (caminho por sess
 // ===========================================================================
 // [HARD-4] Fronteira 9 — nenhuma permissão extra ou faltante entra em um USER
 // ===========================================================================
-const ADMIN_LITERAL = ['READ:CRM', 'ANALYZE:CRM', 'PROPOSE:CRM', 'WRITE:CRM', 'PROPOSE:LEAD_APPROVAL', 'APPROVE:LEAD_APPROVAL', 'APPROVE:OUTBOUND_APPROVAL', 'MANAGE:USERS'];
+const ADMIN_LITERAL = ['READ:CRM', 'ANALYZE:CRM', 'PROPOSE:CRM', 'WRITE:CRM', 'DELETE:CRM', 'PROPOSE:LEAD_APPROVAL', 'APPROVE:LEAD_APPROVAL', 'APPROVE:OUTBOUND_APPROVAL', 'MANAGE:USERS'];
 const CLOSER_LITERAL = ['READ:CRM', 'ANALYZE:CRM', 'PROPOSE:CRM', 'APPROVE:LEAD_APPROVAL', 'APPROVE:OUTBOUND_APPROVAL'];
 
 test('[HARD-4] nenhuma permissão extra, faltante ou de outra role entra em um USER — ADMIN e CLOSER, uma a uma', () => {
   const naoPodemDiferir = /não podem diferir das permissions da role/;
   // Permissões de formato válido e ação reconhecida, mas FORA da matriz atual (o USER-2 só cobre duplicatas para o ADMIN).
-  const foraDaMatriz = ['DELETE:CRM', 'EXECUTE:CRM', 'SEND:CRM', 'PUBLISH:CRM', 'MANAGE:CRM', 'APPROVE:BILLING', 'READ:USERS', 'WRITE:USERS', 'DELETE:USERS'];
+  // DELETE:CRM NÃO entra aqui: desde a decisão 0025 ela É uma permissão do ADMIN (está em ADMIN_LITERAL acima).
+  const foraDaMatriz = ['EXECUTE:CRM', 'SEND:CRM', 'PUBLISH:CRM', 'MANAGE:CRM', 'APPROVE:BILLING', 'READ:USERS', 'WRITE:USERS', 'DELETE:USERS'];
   for (const extra of foraDaMatriz) {
     assert.throws(() => defineUser(userInput({ role: ROLE.ADMIN, permissions: [...ADMIN_LITERAL, extra] })), naoPodemDiferir, `ADMIN + ${extra}`);
     assert.throws(() => defineUser(userInput({ role: ROLE.ADMIN, permissions: [extra] })), naoPodemDiferir, `ADMIN só com ${extra}`);

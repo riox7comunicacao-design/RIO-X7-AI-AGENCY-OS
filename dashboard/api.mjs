@@ -132,5 +132,9 @@ export function createApiClient({ getAccessToken, refreshAccessToken, onSessionL
     updateCrm: async (id, patch) => request('PATCH', crmPath(id), crmFields(patch)),
     moveCrmStatus: (id, to, reason) => request('POST', crmPath(id, '/status'), typeof reason === 'string' && reason.trim() !== '' ? { to, reason } : { to }),
     markCrmDnc: (id, reason) => request('POST', crmPath(id, '/dnc'), typeof reason === 'string' && reason.trim() !== '' ? { reason } : {}),
+    // Exclusão ADMINISTRATIVA e IRREVERSÍVEL (decisão 0025): DELETE:CRM (só ADMIN) e um motivo — o servidor recusa
+    // (400) um motivo ausente/vazio; a tela já exige o motivo ANTES de chamar isto (ver views/crm.mjs), mas o corpo
+    // sempre leva `reason` como veio, sem inventar nem completar nada aqui. 200 devolve { deleted: true, id }.
+    deleteCrm: (id, reason) => request('DELETE', crmPath(id), { reason: typeof reason === 'string' ? reason : '' }),
   };
 }

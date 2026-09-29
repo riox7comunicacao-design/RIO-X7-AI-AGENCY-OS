@@ -1,11 +1,11 @@
 // Testes da ponte de autorização do CRM (src/auth/crmBridge.js) — a implementação real da porta
 // authorizeOperation(context, requiredPermission) -> { userId, name, role } que o CRM Service recebe por injeção.
 //
-// O que estes testes protegem: a ponte autoriza SÓ READ:CRM e WRITE:CRM (nenhuma outra permissão, nenhum padrão por
-// omissão); só aceita um AuthorizationContext emitido (nada de userId/role/permissions soltos, nem cópias/clones de um
-// contexto); recusa um usuário inativo; decide pelas `permissions` do contexto e nunca pelo nome da role
-// (ROLE != PERMISSION); e devolve SÓ a identidade mínima { userId, name, role } — nunca permissions, authUserId,
-// e-mail ou qualquer outro dado do contexto.
+// O que estes testes protegem: a ponte autoriza SÓ READ:CRM, WRITE:CRM e DELETE:CRM (decisão 0025 — nenhuma outra
+// permissão, nenhum padrão por omissão); só aceita um AuthorizationContext emitido (nada de userId/role/permissions
+// soltos, nem cópias/clones de um contexto); recusa um usuário inativo; decide pelas `permissions` do contexto e
+// nunca pelo nome da role (ROLE != PERMISSION); e devolve SÓ a identidade mínima { userId, name, role } — nunca
+// permissions, authUserId, e-mail ou qualquer outro dado do contexto.
 //
 // Contextos REAIS, emitidos pelo emissor interno a partir de um USER definido (helpers de testes): nada é fabricado.
 // As marcas de contexto são uma fronteira arquitetural interna confiável, NÃO criptografia.
@@ -39,24 +39,29 @@ function erroDe(fn) {
   return null;
 }
 
-test('[CRM-BRIDGE-1] a ponte autoriza exatamente READ:CRM e WRITE:CRM — e nenhuma outra permissão', () => {
-  assert.deepEqual([...CRM_PERMISSIONS].sort(), [PERMISSION.READ_CRM, PERMISSION.WRITE_CRM].sort());
+test('[CRM-BRIDGE-1] a ponte autoriza exatamente READ:CRM, WRITE:CRM e DELETE:CRM (decisão 0025) — e nenhuma outra permissão', () => {
+  assert.deepEqual([...CRM_PERMISSIONS].sort(), [PERMISSION.READ_CRM, PERMISSION.WRITE_CRM, PERMISSION.DELETE_CRM].sort());
   assert.ok(Object.isFrozen(CRM_PERMISSIONS), 'a lista de permissões da ponte não pode ser alterada em tempo de execução');
 });
 
-test('[CRM-BRIDGE-2] ADMIN é autorizado para READ:CRM e para WRITE:CRM', () => {
+test('[CRM-BRIDGE-2] ADMIN é autorizado para READ:CRM, WRITE:CRM e DELETE:CRM', () => {
   const admin = contexto({ role: ROLE.ADMIN });
   assert.equal(authorizeCrmOperation(admin, PERMISSION.READ_CRM).userId, 'user-crm-1');
   assert.equal(authorizeCrmOperation(admin, PERMISSION.WRITE_CRM).userId, 'user-crm-1');
+  assert.equal(authorizeCrmOperation(admin, PERMISSION.DELETE_CRM).userId, 'user-crm-1');
 });
 
-test('[CRM-BRIDGE-3] COMMERCIAL_CLOSER é autorizado para READ:CRM, e RECUSADO para WRITE:CRM (não possui a permissão — nunca "por ser closer")', () => {
+test('[CRM-BRIDGE-3] COMMERCIAL_CLOSER é autorizado para READ:CRM, e RECUSADO para WRITE:CRM e para DELETE:CRM (não possui as permissões — nunca "por ser closer")', () => {
   const closer = contexto({ role: ROLE.COMMERCIAL_CLOSER });
   assert.equal(authorizeCrmOperation(closer, PERMISSION.READ_CRM).role, ROLE.COMMERCIAL_CLOSER);
-  const erro = erroDe(() => authorizeCrmOperation(closer, PERMISSION.WRITE_CRM));
-  assert.ok(erro, 'o closer não pode escrever no CRM');
-  assert.match(erro.message, /acesso negado/);
-  assert.match(erro.message, /WRITE:CRM/);
+  const erroEscrita = erroDe(() => authorizeCrmOperation(closer, PERMISSION.WRITE_CRM));
+  assert.ok(erroEscrita, 'o closer não pode escrever no CRM');
+  assert.match(erroEscrita.message, /acesso negado/);
+  assert.match(erroEscrita.message, /WRITE:CRM/);
+  const erroExclusao = erroDe(() => authorizeCrmOperation(closer, PERMISSION.DELETE_CRM));
+  assert.ok(erroExclusao, 'o closer não pode excluir do CRM');
+  assert.match(erroExclusao.message, /acesso negado/);
+  assert.match(erroExclusao.message, /DELETE:CRM/);
 });
 
 test('[CRM-BRIDGE-4] um usuário INACTIVE é recusado para READ:CRM e para WRITE:CRM, seja qual for a role', () => {

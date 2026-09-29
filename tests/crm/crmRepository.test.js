@@ -1,9 +1,10 @@
 // Testes do repositório de CRM (porta + adapters de desenvolvimento) — decisão 0012.
 //
-// O que estes testes protegem: o CONTRATO { list, getById, save } é o mesmo para os dois
-// adapters (memória e arquivo JSON) — o domínio nunca precisa saber qual está por trás; os dados
-// que saem são sempre CÓPIAS (nunca o objeto interno do repositório); e nenhum dos dois aceita um
-// id que corrompesse o objeto de armazenamento (constructor/__proto__/prototype).
+// O que estes testes protegem: o CONTRATO { list, getById, save, delete } (delete, obrigatório desde a decisão
+// 0025) é o mesmo para os dois adapters (memória e arquivo JSON) — o domínio nunca precisa saber qual está por
+// trás; os dados que saem são sempre CÓPIAS (nunca o objeto interno do repositório); nenhum dos dois aceita um id
+// que corrompesse o objeto de armazenamento (constructor/__proto__/prototype); e nenhum dos dois audita exclusões
+// (delete() ignora `meta` de propósito) — só o adapter Supabase audita (tests/crm-adapters/).
 
 const test = require('node:test');
 const assert = require('node:assert/strict');
@@ -74,6 +75,41 @@ function eachRepository(nome, factory) {
     const [daLista] = repo.list();
     daLista.empresa = 'Também adulterada';
     assert.equal(repo.getById('a1').empresa, 'Empresa A');
+  });
+
+  // ---- delete() (decisão 0025 — exclusão administrativa) ------------------------------------------------------
+  test(`[CRM-REPO-${nome}-DEL-1] delete() remove o registro: some de getById() e de list()`, () => {
+    const repo = factory();
+    repo.save({ id: 'a1', empresa: 'Para excluir' });
+    repo.save({ id: 'a2', empresa: 'Fica' });
+    repo.delete('a1');
+    assert.equal(repo.getById('a1'), null);
+    assert.deepEqual(repo.list().map((registro) => registro.id), ['a2']);
+  });
+
+  test(`[CRM-REPO-${nome}-DEL-2] delete() de um id INEXISTENTE não lança (idempotente) — garantir que o registro existe é responsabilidade do domínio (requireRecord), antes de chamar delete()`, () => {
+    const repo = factory();
+    repo.save({ id: 'a1', empresa: 'x' });
+    assert.doesNotThrow(() => repo.delete('nao-existe'));
+    assert.equal(repo.list().length, 1, 'nada mudou');
+  });
+
+  test(`[CRM-REPO-${nome}-DEL-3] delete() exige um id (texto não vazio); ids perigosos (__proto__/constructor/prototype) são recusados, nunca corrompem o armazenamento`, () => {
+    const repo = factory();
+    for (const ruim of [undefined, null, 42, '', {}, []]) {
+      assert.throws(() => repo.delete(ruim), /id/, String(ruim));
+    }
+    for (const perigoso of ['__proto__', 'constructor', 'prototype']) {
+      assert.throws(() => repo.delete(perigoso), /não permitido/, perigoso);
+    }
+    assert.equal(Object.getPrototypeOf({}), Object.prototype, 'sanidade: o protótipo global não foi alterado');
+  });
+
+  test(`[CRM-REPO-${nome}-DEL-4] delete() ignora "meta" de propósito — este adapter (memória/arquivo) não audita exclusões; só o adapter Supabase audita`, () => {
+    const repo = factory();
+    repo.save({ id: 'a1', empresa: 'x' });
+    assert.doesNotThrow(() => repo.delete('a1', { reviewedBy: { userId: 'u', name: 'n', role: 'ADMIN' }, motivo: 'teste' }));
+    assert.equal(repo.getById('a1'), null);
   });
 }
 

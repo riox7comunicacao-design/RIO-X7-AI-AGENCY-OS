@@ -186,7 +186,7 @@ test('[CRM-ERRMAP-6] o que é INTERNO por desenho -> 500 genérico: arquivo corr
   const estruturaInvalida = await erroDe(async () => await doArquivo.listRecords(ctx));
   assert.match(estruturaInvalida.message, /^CRM: arquivo de dados corrompido/);
 
-  const adulterado = createCrmService({ authorizeOperation: authorizeCrmOperation, repository: { list: () => [{ semId: true }], getById: () => null, save() {} } });
+  const adulterado = createCrmService({ authorizeOperation: authorizeCrmOperation, repository: { list: () => [{ semId: true }], getById: () => null, save() {}, delete() {} } });
   const registroInvalido = await erroDe(async () => await adulterado.listRecords(ctx));
   assert.match(registroInvalido.message, /^CRM: registro inválido no armazenamento/);
 
@@ -194,7 +194,8 @@ test('[CRM-ERRMAP-6] o que é INTERNO por desenho -> 500 genérico: arquivo corr
   const autorizadorDefeituoso = await erroDe(async () => await defeituoso.listRecords(ctx));
   assert.match(autorizadorDefeituoso.message, /^autorização recusada/);
 
-  const naoSuportada = await erroDe(() => authorizeCrmOperation(ctx, PERMISSION.WRITE_CRM.replace('WRITE', 'DELETE')));
+  // MANAGE:CRM não existe: READ:CRM, WRITE:CRM e, desde a decisão 0025, DELETE:CRM são as ÚNICAS que a ponte suporta.
+  const naoSuportada = await erroDe(() => authorizeCrmOperation(ctx, PERMISSION.WRITE_CRM.replace('WRITE', 'MANAGE')));
   assert.match(naoSuportada.message, /^ponte do CRM só autoriza/);
 
   const { service } = ambiente();
@@ -310,6 +311,10 @@ function repositorioAssincronoFake(registrosIniciais = []) {
       if (indice === -1) registros.push(structuredClone(record));
       else registros[indice] = structuredClone(record);
     },
+    async delete(id) {
+      const indice = registros.findIndex((r) => r.id === id);
+      if (indice !== -1) registros.splice(indice, 1);
+    },
   };
 }
 
@@ -367,6 +372,7 @@ const INTERNAS_POR_DESENHO = Object.freeze([
   [/^CRM: id de registro não permitido/, 'só o save() com um id gerado pelo domínio, que nunca é um id inseguro'],
   [/^CRM: registro inicial inválido/, 'só na criação do adapter em memória (testes)'],
   [/^CRM: save\(\) exige um registro com id/, 'defeito interno: o domínio sempre grava com id'],
+  [/^CRM: delete\(\) exige um id/, 'defeito interno: o domínio sempre chama delete() com um id já validado (requireRecordId)'],
   [/^CRM: arquivo de dados corrompido/, 'armazenamento corrompido: 500 com dica no log (nunca o conteúdo nem o caminho)'],
   [/^CRM: createJsonFileCrmRepository exige/, 'defeito de composição'],
   [/^CRM: as opções devem ser um objeto simples/, 'a API só entrega objetos simples ao Service'],

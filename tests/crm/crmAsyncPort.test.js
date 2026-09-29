@@ -51,6 +51,17 @@ function assincrono(interno) {
       await tick();
       interno.save(registro);
     },
+    async delete(id, meta) {
+      estado.chamadas.push('delete');
+      await tick();
+      if (estado.falhar) {
+        const erro = estado.falhar;
+        estado.falhar = null;
+        throw erro;
+      }
+      await tick();
+      interno.delete(id, meta);
+    },
   };
 }
 
@@ -202,7 +213,49 @@ test('[CRM-ASYNC-6] a validação da entrada continua ANTES de tudo: um pedido i
   assert.deepEqual(repo.estado.chamadas, [], 'nenhuma chamada ao repositório');
 });
 
-test('[CRM-ASYNC-7] o CRM Service sobre a porta assíncrona: o repositório é aceito, e criar, mudar status, DNC e histórico dão o resultado de sempre, com a identidade do CONTEXTO', async (t) => {
+test('[CRM-ASYNC-7] deleteRecord entra na MESMA fila de escrita serializada do repositório (decisão 0025): rodam uma por vez, na ordem de chegada — nunca uma exclusão e uma escrita concorrente intercaladas', async () => {
+  const repo = assincrono(createInMemoryCrmRepository());
+  const { record } = await crmDomain.createRecord(repo, { empresa: 'Corrida de Exclusão' }, OPERADOR);
+
+  // Exclusão submetida PRIMEIRO: a escrita seguinte (mesmo repositório) só roda depois, e encontra "não existe".
+  const [exclusao, escritaDepois] = await Promise.allSettled([
+    crmDomain.deleteRecord(repo, record.id, OPERADOR),
+    crmDomain.moveStatus(repo, record.id, CRM_STATUS.RESEARCH, OPERADOR),
+  ]);
+  assert.equal(exclusao.status, 'fulfilled');
+  assert.equal(escritaDepois.status, 'rejected');
+  assert.match(escritaDepois.reason.message, /registro não encontrado/);
+  assert.equal(await crmDomain.getRecord(repo, record.id), null);
+
+  // Ordem invertida: a escrita submetida PRIMEIRO roda antes da exclusão, que então apaga o estado já atualizado.
+  const { record: outro } = await crmDomain.createRecord(repo, { empresa: 'Corrida Invertida' }, OPERADOR);
+  const [escritaAntes, exclusaoDepois] = await Promise.allSettled([
+    crmDomain.moveStatus(repo, outro.id, CRM_STATUS.CONTACTED, OPERADOR),
+    crmDomain.deleteRecord(repo, outro.id, OPERADOR),
+  ]);
+  assert.equal(escritaAntes.status, 'fulfilled');
+  assert.equal(escritaAntes.value.status, CRM_STATUS.CONTACTED, 'a escrita, por ter sido submetida primeiro, roda ANTES da exclusão');
+  assert.equal(exclusaoDepois.status, 'fulfilled');
+  assert.equal(exclusaoDepois.value.status, CRM_STATUS.CONTACTED, 'o snapshot devolvido pela exclusão já reflete a escrita anterior');
+  assert.equal(await crmDomain.getRecord(repo, outro.id), null);
+});
+
+test('[CRM-ASYNC-8] uma exclusão que FALHA (ex.: o RPC do Supabase falhou) passa intacta, não deixa "meia-exclusão" e não envenena a fila de escritas seguintes', async () => {
+  const repo = assincrono(createInMemoryCrmRepository());
+  const { record } = await crmDomain.createRecord(repo, { empresa: 'Exclusão Falha' }, OPERADOR);
+  const erro = new Error('CRM (Supabase): falha ao excluir (simulado)');
+  repo.estado.falhar = erro;
+  await assert.rejects(() => crmDomain.deleteRecord(repo, record.id, OPERADOR), (e) => e === erro, 'o erro do repositório passa intacto');
+  const depois = await crmDomain.getRecord(repo, record.id);
+  assert.equal(depois.status, 'PROSPECT', 'o registro continua existindo — nenhuma "meia-exclusão"');
+  // a fila de escritas não ficou envenenada: a próxima operação (inclusive uma nova tentativa de exclusão) funciona
+  assert.equal((await crmDomain.moveStatus(repo, record.id, CRM_STATUS.CONTACTED, OPERADOR)).status, 'CONTACTED');
+  const excluido = await crmDomain.deleteRecord(repo, record.id, OPERADOR);
+  assert.equal(excluido.status, 'CONTACTED');
+  assert.equal(await crmDomain.getRecord(repo, record.id), null);
+});
+
+test('[CRM-ASYNC-9] o CRM Service sobre a porta assíncrona: o repositório é aceito, e criar, mudar status, DNC e histórico dão o resultado de sempre, com a identidade do CONTEXTO', async (t) => {
   const admin = createAuthorizationContext(defineUser({ userId: 'user-admin-async', authUserId: 'auth-admin-async', name: 'Admin Async', email: 'admin-async@example.test', role: ROLE.ADMIN, status: USER_STATUS.ACTIVE }));
   const closer = createAuthorizationContext(defineUser({ userId: 'user-closer-async', authUserId: 'auth-closer-async', name: 'Closer Async', email: 'closer-async@example.test', role: ROLE.COMMERCIAL_CLOSER, status: USER_STATUS.ACTIVE }));
   for (const repository of [assincrono(createInMemoryCrmRepository()), assincrono(createJsonFileCrmRepository(arquivoTemporario(t)))]) {

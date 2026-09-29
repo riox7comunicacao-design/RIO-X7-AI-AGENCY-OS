@@ -13,31 +13,31 @@ const { analyzeSource } = require('../helpers/staticImports');
 
 const PORT_FILE = path.join(__dirname, '..', '..', 'src', 'crm', 'crmRepositoryPort.js');
 
-test('[CRM-PORT-1] o contrato tem exatamente os três métodos { list, getById, save }, congelados, e crmRepository.js reexporta a MESMA definição', () => {
-  assert.deepEqual([...REQUIRED_REPOSITORY_METHODS], ['list', 'getById', 'save']);
+test('[CRM-PORT-1] o contrato tem exatamente os quatro métodos { list, getById, save, delete } (delete, obrigatório desde a decisão 0025), congelados, e crmRepository.js reexporta a MESMA definição', () => {
+  assert.deepEqual([...REQUIRED_REPOSITORY_METHODS], ['list', 'getById', 'save', 'delete']);
   assert.ok(Object.isFrozen(REQUIRED_REPOSITORY_METHODS));
   assert.equal(crmRepository.assertValidRepository, assertValidRepository, 'uma só definição, reexportada — nunca duas cópias que possam divergir');
   assert.equal(crmRepository.REQUIRED_REPOSITORY_METHODS, REQUIRED_REPOSITORY_METHODS);
 });
 
-test('[CRM-PORT-2] um repositório com os três métodos síncronos é aceito e devolvido como está (a mesma referência)', () => {
-  const repositorio = { list: () => [], getById: () => null, save: () => {} };
+test('[CRM-PORT-2] um repositório com os quatro métodos síncronos é aceito e devolvido como está (a mesma referência)', () => {
+  const repositorio = { list: () => [], getById: () => null, save: () => {}, delete: () => {} };
   assert.equal(assertValidRepository(repositorio), repositorio);
 });
 
 test('[CRM-PORT-3] a porta ACEITA métodos assíncronos (decisão 0023): um método declarado async não é recusado — o domínio faz await de cada chamada', () => {
   for (const metodo of REQUIRED_REPOSITORY_METHODS) {
-    const repositorio = { list: () => [], getById: () => null, save: () => {} };
+    const repositorio = { list: () => [], getById: () => null, save: () => {}, delete: () => {} };
     repositorio[metodo] = async () => (metodo === 'list' ? [] : null);
     assert.equal(assertValidRepository(repositorio), repositorio, metodo);
   }
-  const todoAssincrono = { list: async () => [], getById: async () => null, save: async () => {} };
+  const todoAssincrono = { list: async () => [], getById: async () => null, save: async () => {}, delete: async () => {} };
   assert.equal(assertValidRepository(todoAssincrono), todoAssincrono);
 });
 
 test('[CRM-PORT-4] métodos ausentes ou não-funções são recusados nomeando o método; entradas que nem são um objeto também', () => {
   for (const metodo of REQUIRED_REPOSITORY_METHODS) {
-    const incompleto = { list: () => [], getById: () => null, save: () => {} };
+    const incompleto = { list: () => [], getById: () => null, save: () => {}, delete: () => {} };
     incompleto[metodo] = 'não é uma função';
     assert.throws(() => assertValidRepository(incompleto), new RegExp(`falta o método ${metodo}`));
     delete incompleto[metodo];

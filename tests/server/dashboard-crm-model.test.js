@@ -69,22 +69,24 @@ test('[DASH-MODEL-3] o tipo de cada campo bate com o do domínio: só os campos 
   }
 });
 
-test('[DASH-MODEL-4] as permissões do Dashboard são as do servidor: os nomes batem com PERMISSION e permissionsOf lê só o que /api/me devolveu (ADMIN escreve; COMMERCIAL_CLOSER só lê)', async () => {
+test('[DASH-MODEL-4] as permissões do Dashboard são as do servidor: os nomes batem com PERMISSION e permissionsOf lê só o que /api/me devolveu (ADMIN escreve e exclui; COMMERCIAL_CLOSER só lê)', async () => {
   const { PERMISSIONS, permissionsOf } = await loadModel();
   assert.equal(PERMISSIONS.READ_CRM, authConstants.PERMISSION.READ_CRM);
   assert.equal(PERMISSIONS.WRITE_CRM, authConstants.PERMISSION.WRITE_CRM);
+  assert.equal(PERMISSIONS.DELETE_CRM, authConstants.PERMISSION.DELETE_CRM);
   assert.equal(PERMISSIONS.REVIEW, authConstants.PERMISSION.APPROVE_LEAD_APPROVAL);
 
   const admin = permissionsOf({ role: 'ADMIN', permissions: [...authConstants.getRolePermissions(authConstants.ROLE.ADMIN)] });
   const closer = permissionsOf({ role: 'COMMERCIAL_CLOSER', permissions: [...authConstants.getRolePermissions(authConstants.ROLE.COMMERCIAL_CLOSER)] });
-  assert.deepEqual(admin, { canReadCrm: true, canWriteCrm: true, canReview: true });
-  assert.deepEqual(closer, { canReadCrm: true, canWriteCrm: false, canReview: true });
+  assert.deepEqual(admin, { canReadCrm: true, canWriteCrm: true, canDeleteCrm: true, canReview: true });
+  assert.deepEqual(closer, { canReadCrm: true, canWriteCrm: false, canDeleteCrm: false, canReview: true });
 
-  // A role NUNCA decide: um ADMIN sem WRITE:CRM na lista não escreve, e a role forjada de um closer não muda nada.
+  // A role NUNCA decide: um ADMIN sem WRITE:CRM/DELETE:CRM na lista não escreve/exclui, e a role forjada de um closer não muda nada.
   assert.equal(permissionsOf({ role: 'ADMIN', permissions: ['READ:CRM'] }).canWriteCrm, false);
+  assert.equal(permissionsOf({ role: 'ADMIN', permissions: ['READ:CRM'] }).canDeleteCrm, false);
   assert.equal(permissionsOf({ role: 'ADMIN', permissions: [] }).canReadCrm, false);
   for (const estranho of [undefined, null, {}, { permissions: 'WRITE:CRM' }, { permissions: null }, 'ADMIN', 42]) {
-    assert.deepEqual(permissionsOf(estranho), { canReadCrm: false, canWriteCrm: false, canReview: false });
+    assert.deepEqual(permissionsOf(estranho), { canReadCrm: false, canWriteCrm: false, canDeleteCrm: false, canReview: false });
   }
 });
 

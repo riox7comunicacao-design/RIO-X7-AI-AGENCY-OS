@@ -353,7 +353,10 @@ export function describeHistory(entries, roleName = (role) => role) {
 // ---------------------------------------------------------------------------
 // Permissões (só para MOSTRAR ou esconder botões — nunca autorizam: o servidor decide, e a API responde 403)
 // ---------------------------------------------------------------------------
-export const PERMISSIONS = Object.freeze({ READ_CRM: 'READ:CRM', WRITE_CRM: 'WRITE:CRM', REVIEW: 'APPROVE:LEAD_APPROVAL' });
+// DELETE_CRM (decisão 0025): exclusão ADMINISTRATIVA e IRREVERSÍVEL do registro — deliberadamente separada de
+// WRITE_CRM, e só ADMIN a recebe (ver src/auth/constants.js). Serve só para MOSTRAR ou esconder o botão "Excluir
+// registro"; quem decide de verdade é o servidor (403 mesmo se a tela for manipulada).
+export const PERMISSIONS = Object.freeze({ READ_CRM: 'READ:CRM', WRITE_CRM: 'WRITE:CRM', DELETE_CRM: 'DELETE:CRM', REVIEW: 'APPROVE:LEAD_APPROVAL' });
 
 // `me`: o que /api/me devolveu. As permissões vêm do servidor (derivadas da role dele), nunca do navegador.
 export function permissionsOf(me) {
@@ -361,6 +364,7 @@ export function permissionsOf(me) {
   return {
     canReadCrm: list.includes(PERMISSIONS.READ_CRM),
     canWriteCrm: list.includes(PERMISSIONS.WRITE_CRM),
+    canDeleteCrm: list.includes(PERMISSIONS.DELETE_CRM),
     canReview: list.includes(PERMISSIONS.REVIEW),
   };
 }

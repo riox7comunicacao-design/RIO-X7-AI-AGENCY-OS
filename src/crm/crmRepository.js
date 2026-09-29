@@ -1,10 +1,13 @@
 // Adapters do repositório do CRM — as implementações de DESENVOLVIMENTO/TESTE da PORTA de persistência (decisão 0012,
-// seção "princípio de persistência desacoplada"). O contrato — { list, getById, save } e a checagem
+// seção "princípio de persistência desacoplada"). O contrato — { list, getById, save, delete } e a checagem
 // assertValidRepository — vive em crmRepositoryPort.js, sem `fs` e sem nenhum adapter; este arquivo o reexporta
 // para quem já importa daqui. O domínio (crmDomain.js) nunca importa `fs` nem qualquer SDK de banco: ele só chama
-// os três métodos, em QUALQUER repositório que os implemente. Uma implementação futura sobre Supabase/Postgres (NÃO
-// decidida, NÃO implementada — ver decisões 0012 e 0014) precisa satisfazer o mesmo contrato, que aceita métodos síncronos
+// os quatro métodos, em QUALQUER repositório que os implemente. O adapter real de produção (Supabase/Postgres —
+// src/crm-adapters/crmSupabaseRepository.js) precisa satisfazer o mesmo contrato, que aceita métodos síncronos
 // OU assíncronos desde a decisão 0023 (ver o cabeçalho de crmRepositoryPort.js). Estes dois adapters seguem síncronos.
+// `delete(id, meta)` (decisão 0025) é OBRIGATÓRIO na porta, mas estes dois adapters de desenvolvimento IGNORAM
+// `meta` de propósito: nenhum dos dois registra auditoria de exclusão (isso é responsabilidade só do adapter
+// Supabase, com a tabela crm_record_deletions) — aqui, excluir é só remover a chave do armazenamento local.
 //
 // As duas implementações abaixo são as ÚNICAS, ambas de desenvolvimento/teste:
 //   - createInMemoryCrmRepository(): só memória, para testes — nunca toca em disco.
@@ -56,6 +59,14 @@ function createInMemoryCrmRepository(initialRecords = []) {
       }
       assertSafeRecordId(record.id);
       records.set(record.id, clone(record));
+    },
+    // meta ({ reviewedBy, motivo }) é ignorado de propósito — este adapter não audita exclusões.
+    delete(id) {
+      if (typeof id !== 'string' || !id) {
+        throw new Error('CRM: delete() exige um id (texto não vazio)');
+      }
+      assertSafeRecordId(id);
+      records.delete(id);
     },
   };
 }
@@ -135,6 +146,20 @@ function createJsonFileCrmRepository(filePath) {
       const data = readJsonFile(filePath);
       data[record.id] = clone(record);
       writeJsonFileAtomic(filePath, data);
+    },
+    // meta ({ reviewedBy, motivo }) é ignorado de propósito — este adapter não audita exclusões. Um id ausente do
+    // arquivo não é erro (a mesma tolerância de getById): quem garante que o registro existe é o domínio
+    // (requireRecord), antes de chamar delete().
+    delete(id) {
+      if (typeof id !== 'string' || !id) {
+        throw new Error('CRM: delete() exige um id (texto não vazio)');
+      }
+      assertSafeRecordId(id);
+      const data = readJsonFile(filePath);
+      if (Object.prototype.hasOwnProperty.call(data, id)) {
+        delete data[id];
+        writeJsonFileAtomic(filePath, data);
+      }
     },
   };
 }

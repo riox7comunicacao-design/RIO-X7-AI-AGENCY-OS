@@ -234,7 +234,7 @@ test('[FACTORY-5] sharedSupabaseCrmRepository (etapa 3H): a MESMA configuração
   assert.ok(Object.isFrozen(repo1), 'o adapter continua Object.freeze()d — o cache não abre mão disso');
 });
 
-test('[FACTORY-6] o segredo nunca aparece em nenhum erro produzido pela fábrica (configuração ausente/inválida), e o cache nunca devolve nada além do repositório (list/getById/save) — nunca a configuração', () => {
+test('[FACTORY-6] o segredo nunca aparece em nenhum erro produzido pela fábrica (configuração ausente/inválida), e o cache nunca devolve nada além do repositório (list/getById/save/delete) — nunca a configuração', () => {
   const CHAVE_SECRETA = 'nao-e-um-segredo-real-mas-nunca-deveria-vazar-8f3a9c2d';
   // Só a URL falta: a chave já foi passada, e mesmo assim não deveria aparecer na mensagem (URL é checada primeiro).
   assert.throws(
@@ -247,9 +247,9 @@ test('[FACTORY-6] o segredo nunca aparece em nenhum erro produzido pela fábrica
   );
   // O cache em si não expõe nenhuma API para listar chaves ou inspecionar a config guardada — a única forma de
   // "olhar" é chamar sharedSupabaseCrmRepository de novo, e o retorno é sempre só o repositório (list/getById/
-  // save), nunca a configuração usada para criá-lo.
+  // save/delete), nunca a configuração usada para criá-lo.
   const repo = sharedSupabaseCrmRepository({ url: 'https://projeto-c.supabase.co', serviceRoleKey: CHAVE_SECRETA });
-  assert.deepEqual(Object.keys(repo).sort(), ['getById', 'list', 'save']);
+  assert.deepEqual(Object.keys(repo).sort(), ['delete', 'getById', 'list', 'save']);
 });
 
 test('[COMPOSE-4] as três composições diferentes (rota direta do CRM, promoção, prospecção) sobre o servidor de produção REAL continuam corretas com uma corrida entre duas delas — nenhuma duplicata, nenhuma escrita perdida', async (t) => {

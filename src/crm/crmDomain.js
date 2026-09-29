@@ -60,8 +60,14 @@ function assertRecordShape(record, context) {
 }
 
 function requireRepository(repository) {
-  if (!repository || typeof repository.list !== 'function' || typeof repository.getById !== 'function' || typeof repository.save !== 'function') {
-    throw new Error('CRM: repositório inválido — esperava { list, getById, save }');
+  if (
+    !repository ||
+    typeof repository.list !== 'function' ||
+    typeof repository.getById !== 'function' ||
+    typeof repository.save !== 'function' ||
+    typeof repository.delete !== 'function'
+  ) {
+    throw new Error('CRM: repositório inválido — esperava { list, getById, save, delete }');
   }
   return repository;
 }
@@ -308,6 +314,27 @@ function markDoNotContact(repository, id, meta = {}) {
   return moveStatus(repository, id, CRM_STATUS.DO_NOT_CONTACT, meta);
 }
 
+// Exclusão ADMINISTRATIVA e IRREVERSÍVEL de um registro (decisão 0025) — reverte, por pedido explícito do
+// proprietário, a decisão anterior deste projeto de nunca ter exclusão (ver o cabeçalho de
+// src/services/crmService.js). NÃO é uma operação de negócio como as demais (criar/editar/mudar status): não tem
+// máquina de estados, não verifica DO_NOT_CONTACT (um registro DNC pode ser excluído — é exatamente o cenário que
+// motivou a decisão), e devolve o registro como estava ANTES da exclusão (para quem chamou poder confirmar/
+// auditar o que foi apagado — o Service usa isso para a resposta mínima da API, nunca para reconstruir o registro).
+//
+// A AUTORIZAÇÃO (DELETE:CRM, só ADMIN) é do Service — nunca do domínio (mesmo princípio de create/update/moveStatus:
+// o domínio nunca conhece PERMISSION nem AuthorizationContext).
+//
+// AUDITORIA: o histórico do registro (`record.historico`) e o próprio registro deixam de existir depois desta
+// chamada — por isso `meta.reviewedBy`/`meta.motivo` são repassados ao repositório (delete(id, meta)): só o
+// adapter Supabase os usa de fato (grava em crm_record_deletions, atomicamente com a exclusão, via a função SQL
+// delete_crm_record_with_audit); o adapter de arquivo/memória os ignora — excluir ali não deixa rastro, a mesma
+// limitação de auditoria que este projeto já tem para qualquer coisa fora do Supabase.
+async function deleteRecordUnlocked(repository, id, meta = {}) {
+  const record = await requireRecord(repository, id);
+  await repository.delete(requireRecordId(id), { reviewedBy: ownOption(meta, 'reviewedBy') || null, motivo: ownOption(meta, 'motivo') || null });
+  return structuredClone(record);
+}
+
 // ---------------------------------------------------------------------------------------------------------------------------------
 // SERIALIZAÇÃO das operações de ESCRITA (decisão 0023). Cada escrita é LER -> DECIDIR -> GRAVAR. Com a porta síncrona isso era
 // indivisível porque nada cedia a vez ao meio; com uma porta assíncrona (um repositório remoto) cada `await` cede a vez, e duas
@@ -338,6 +365,11 @@ async function moveStatus(repository, id, to, meta = {}) {
   return serialized(repository, () => moveStatusUnlocked(repository, id, to, meta));
 }
 
+async function deleteRecord(repository, id, meta = {}) {
+  requireRepository(repository);
+  return serialized(repository, () => deleteRecordUnlocked(repository, id, meta));
+}
+
 module.exports = {
   createRecord,
   getRecord,
@@ -345,4 +377,5 @@ module.exports = {
   updateRecord,
   moveStatus,
   markDoNotContact,
+  deleteRecord,
 };

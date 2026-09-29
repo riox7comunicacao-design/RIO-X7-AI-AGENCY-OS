@@ -1,23 +1,27 @@
-// Adapter Postgres/Supabase do CRM — PREPARAÇÃO (decisão 0024, etapa 2; realocado para src/crm-adapters/ na
-// etapa 2.1 — igual ao par research-prospector/research-adapters já existente no projeto, decisão 0022: o
-// domínio do CRM, src/crm/, é independente da rede; regras R15/R16 em tests/auth/architecture-boundaries.test.js
-// garantem isso na direção certa). NÃO é usado por nenhum caminho de produção/dev hoje: nada em src/server/ o
-// importa, nada o inicializa sozinho, nenhum script o chama. O CRM local (data/crm.json, via
-// src/crm/crmRepository.js) continua sendo a única persistência realmente usada. Este arquivo existe para que,
-// quando a migration 20260927120000_crm_initial_schema.sql for aplicada e a evolução de concorrência
-// (docs/decisions/0024, seção "Proposta de evolução...") for decidida, o adapter já exista — testado inteiramente
-// com um `fetch` FALSO (tests/crm-adapters/crmSupabaseRepository.test.js nunca chama a rede real).
+// Adapter Postgres/Supabase do CRM (decisão 0024, etapa 2; realocado para src/crm-adapters/ na etapa 2.1 — igual
+// ao par research-prospector/research-adapters já existente no projeto, decisão 0022: o domínio do CRM, src/crm/,
+// é independente da rede; regras R15/R16 em tests/auth/architecture-boundaries.test.js garantem isso na direção
+// certa). ATUALIZADO NA ETAPA 3M (correção 3O.5, que só revisa este comentário — nada de funcional mudou aqui):
+// `REPOSITORY_MODE=supabase` é a configuração OFICIAL atual (`.env`), e este é o caminho de PRODUÇÃO — o Supabase
+// é a fonte oficial do CRM. Quem decide QUAL adapter usar é a fábrica src/services/crmRepositoryFactory.js, que lê
+// `REPOSITORY_MODE` e, no modo "supabase", importa e chama `createSupabaseCrmRepository` (este arquivo); em
+// "file", usa o adapter de arquivo local (src/crm/crmRepository.js) — ambos continuam existindo como alternativas
+// válidas, mas NÃO EXISTE sincronização nem fallback automático entre os dois: escolher um modo significa que só
+// aquele armazenamento é lido/escrito; trocar de modo não migra dados. Testado inteiramente com um `fetch` FALSO
+// (tests/crm-adapters/crmSupabaseRepository.test.js nunca chama a rede real).
 //
 // Fala PostgREST DIRETO por `fetch` nativo do Node — NÃO importa @supabase/supabase-js: só
 // src/auth/authAdapter.js pode importar o SDK (regra R7, tests/auth/architecture-boundaries.test.js), e não há
 // necessidade real de SDK aqui — PostgREST é uma API REST simples, sem dependência nova.
 //
-// CONTRATO: implementa exatamente { list, getById, save } de src/crm/crmRepositoryPort.js (a porta continua no
-// domínio — só a IMPLEMENTAÇÃO que fala com a rede mora aqui). As 3 operações são `async` (a porta aceita isso
+// CONTRATO: implementa exatamente { list, getById, save, delete } de src/crm/crmRepositoryPort.js (a porta continua
+// no domínio — só a IMPLEMENTAÇÃO que fala com a rede mora aqui). As 4 operações são `async` (a porta aceita isso
 // desde a decisão 0023 — ver assertValidRepository). `save()` recebe sempre o registro INTEIRO (o domínio nunca
 // manda um patch parcial) e faz um upsert por `id` (Prefer: resolution=merge-duplicates) — o mesmo "insere ou
 // substitui" do adapter de arquivo, e não devolve nada (return=minimal), como a porta já documenta. NENHUM
-// parâmetro de versão esperada existe ainda — ver a pendência D-CONCURRENCY-PORT em docs/decisions/0024.
+// parâmetro de versão esperada existe ainda — ver a pendência D-CONCURRENCY-PORT em docs/decisions/0024. `delete()`
+// (decisão 0025) NUNCA apaga direto: chama a função SQL transacional delete_crm_record_with_audit via RPC, que
+// audita (crm_record_deletions) e apaga numa única transação de banco — ver o comentário da função abaixo.
 //
 // SEGREDO: a service_role key fica só em memória, só neste processo, só para montar o cabeçalho Authorization
 // de cada requisição. Nunca é logada (este arquivo não chama console.*) e nunca aparece em nenhuma mensagem de
@@ -28,6 +32,11 @@ const { recordToRow, rowToRecord } = require('./crmSupabaseMapping');
 
 const DEFAULT_TABLE = 'crm_records';
 const REQUEST_TIMEOUT_MS = 15000;
+// A função SQL transacional da migration de auditoria de exclusão (decisão 0025) — localiza, audita
+// (crm_record_deletions) e apaga, numa ÚNICA transação implícita (uma função PL/pgSQL nunca deixa um apagamento
+// sem auditoria, nem uma auditoria de um apagamento que não aconteceu). Nome FIXO: esta é a única chamada no
+// projeto inteiro a este RPC — trocar o nome aqui sem trocar na migration quebra a exclusão em produção.
+const DELETE_WITH_AUDIT_RPC = 'delete_crm_record_with_audit';
 
 // A MESMA proteção que já existe em src/crm/crmRepository.js (save() do adapter de arquivo): um id herdado do
 // protótipo do Object nunca é tratado como identificador de registro. Duplicada aqui (em vez de importada) de
@@ -62,7 +71,7 @@ const CRM_REPOSITORY_ERROR = Object.freeze({
   INVALID_REQUEST: 'CRM_REPOSITORY_INVALID_REQUEST',
   CONFLICT: 'CRM_REPOSITORY_CONFLICT',
 });
-const POSTGRES_VALIDATION_CODES = new Set(['22P02', '23502', '23514']); // invalid_text_representation, not_null_violation, check_violation
+const POSTGRES_VALIDATION_CODES = new Set(['22P02', '23502', '23514', '22023']); // invalid_text_representation, not_null_violation, check_violation, invalid_parameter_value
 const POSTGRES_CONFLICT_CODES = new Set(['23505']); // unique_violation
 
 function classifyPostgrestFailure(status, json) {
@@ -166,7 +175,37 @@ function createSupabaseCrmRepository(options = {}) {
     );
   }
 
-  return Object.freeze({ list, getById, save });
+  // Exclusão ADMINISTRATIVA e IRREVERSÍVEL (decisão 0025). NUNCA um DELETE simples do PostgREST: chama a função
+  // SQL transacional (RPC), que localiza o registro, grava a auditoria (crm_record_deletions) e só então apaga —
+  // tudo numa única transação de banco. `meta.reviewedBy` ({ userId, name, role }) e `meta.motivo` são OBRIGATÓRIOS
+  // aqui (o Service já os valida antes de chegar neste adapter — esta checagem é defesa em profundidade, nunca a
+  // única camada). Nada disto envia a service_role no CORPO da requisição — ela vai só no cabeçalho, como em toda
+  // chamada deste adapter.
+  async function deleteRecord(id, meta) {
+    if (typeof id !== 'string' || !id) {
+      throw new Error('CRM: delete() exige um id (texto não vazio)');
+    }
+    assertSafeRecordId(id);
+    const reviewedBy = isPlainObject(meta) ? meta.reviewedBy : null;
+    const motivo = isPlainObject(meta) ? meta.motivo : null;
+    if (!isPlainObject(reviewedBy) || typeof reviewedBy.userId !== 'string' || !reviewedBy.userId || typeof reviewedBy.name !== 'string' || !reviewedBy.name || typeof reviewedBy.role !== 'string' || !reviewedBy.role) {
+      throw new Error('CRM: delete() exige meta.reviewedBy = { userId, name, role } para a auditoria');
+    }
+    if (typeof motivo !== 'string' || motivo.trim().length === 0) {
+      throw new Error('CRM: delete() exige meta.motivo (texto não vazio) para a auditoria');
+    }
+    await postgrest(
+      config,
+      {
+        method: 'POST',
+        path: `/rest/v1/rpc/${DELETE_WITH_AUDIT_RPC}`,
+        body: { p_id: id, p_deleted_by_user_id: reviewedBy.userId, p_deleted_by_name: reviewedBy.name, p_deleted_by_role: reviewedBy.role, p_reason: motivo },
+      },
+      fetchImpl
+    );
+  }
+
+  return Object.freeze({ list, getById, save, delete: deleteRecord });
 }
 
 module.exports = { createSupabaseCrmRepository, DEFAULT_TABLE, CRM_REPOSITORY_ERROR };

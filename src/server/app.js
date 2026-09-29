@@ -21,7 +21,9 @@
 //   GET   /api/crm/:id/history          o histórico do registro                         -> 200 { historico }
 //   POST  /api/crm/:id/status           muda o status; corpo { to, reason? }            -> 200 { item }
 //   POST  /api/crm/:id/dnc              marca DO_NOT_CONTACT; corpo { reason? }         -> 200 { item }
-// Não há exclusão, filtro nem busca: o Service não os tem, e a API não inventa operação.
+//   DELETE /api/crm/:id                 exclusão ADMINISTRATIVA e IRREVERSÍVEL (decisão 0025); corpo { reason }
+//                                        (motivo OBRIGATÓRIO; só DELETE:CRM, hoje só ADMIN)  -> 200 { deleted: true, id }
+// Não há filtro nem busca: o Service não os tem, e a API não inventa operação.
 // Tudo fora de /api é arquivo estático (ver static.js).
 //
 // PIPELINE de toda rota de /api, sempre nesta ordem:
@@ -81,7 +83,7 @@ const DEFAULT_AUTH_TIMEOUT_MS = 10000;
 const DEFAULT_ESTADO = 'AGUARDANDO_REVISAO';
 
 // As operações do CRM Service que a API usa (o contrato de src/services/crmService.js). Verificadas na criação do app.
-const CRM_OPERATIONS = Object.freeze(['listRecords', 'getRecord', 'getHistory', 'createRecord', 'updateRecord', 'moveStatus', 'markDoNotContact']);
+const CRM_OPERATIONS = Object.freeze(['listRecords', 'getRecord', 'getHistory', 'createRecord', 'updateRecord', 'moveStatus', 'markDoNotContact', 'deleteRecord']);
 
 // A operação da promoção Approval Queue → CRM (src/services/crmIntegrationService.js) que a API usa. Verificada na criação.
 const PROMOTION_OPERATION = 'promoteProspect';
@@ -182,6 +184,9 @@ const KNOWN_MESSAGES = Object.freeze([
   [/^CRM: status deve ser um texto/, 'INVALID_REQUEST', 'Status inválido.'],
   [/^CRM: o status de destino deve ser um texto/, 'INVALID_REQUEST', 'Status inválido.'],
   [/^CRM: reason deve ser um texto/, 'INVALID_REQUEST', 'O motivo deve ser um texto.'],
+  // Exclusão administrativa (decisão 0025) — a ÚNICA operação do CRM onde reason é OBRIGATÓRIO (deleteRecord ->
+  // Service.readReason com { required: true }); todas as demais acima aceitam reason ausente.
+  [/^CRM: reason é obrigatório para excluir um registro/, 'INVALID_REQUEST', 'Informe o motivo da exclusão.'],
 ]);
 
 // Os `code` do serviço de promoção que a API reconhece. PROMOTION_INVALID_INPUT e PROMOTION_PROSPECT_NOT_FOUND viram os
@@ -449,7 +454,7 @@ function matchRoute(pathname, { crm, promotion, prospecting }) {
     const item = /^\/api\/crm\/([^/]+)(?:\/(history|status|dnc))?$/.exec(pathname);
     if (item) {
       const [, rawId, action] = item;
-      if (action === undefined) return { family: 'crm', name: 'crm-item', label: '/api/crm/:id', methods: ['GET', 'PATCH'], rawId };
+      if (action === undefined) return { family: 'crm', name: 'crm-item', label: '/api/crm/:id', methods: ['GET', 'PATCH', 'DELETE'], rawId };
       if (action === 'history') return { family: 'crm', name: 'crm-history', label: '/api/crm/:id/history', methods: ['GET'], rawId };
       return { family: 'crm', name: `crm-${action}`, label: `/api/crm/:id/${action}`, methods: ['POST'], rawId };
     }
@@ -514,7 +519,7 @@ function requireFunction(value, name) {
 // verifyAccessToken: async (token) -> VerifiedIdentity (o adapter de src/auth).
 // userStore: o store de USERs (findByAuthUserId).
 // approvalQueueService: o Approval Queue Service (listQueue, approveProspect, rejectProspect).
-// crmService: o CRM Service (as 7 operações de CRM_OPERATIONS) — OPCIONAL: sem ele as rotas /api/crm não existem (404).
+// crmService: o CRM Service (as 8 operações de CRM_OPERATIONS) — OPCIONAL: sem ele as rotas /api/crm não existem (404).
 //   Presente, é validado por inteiro na criação (falha fechada); `null` não é "ausente", é erro.
 // crmIntegrationService: a promoção Approval Queue → CRM (promoteProspect) — OPCIONAL: sem ele a rota de promoção não existe (404).
 // prospectingService: o Prospecting Service (submitProspecting) — OPCIONAL: sem ele a rota de submissão não existe (404).
@@ -595,6 +600,18 @@ function createApp(dependencies) {
         const item = await crmService.getRecord(context, id);
         if (item === null) throw new HttpError('NOT_FOUND');
         return respond(200, { item });
+      }
+      if (req.method === 'DELETE') {
+        // Exclusão ADMINISTRATIVA e IRREVERSÍVEL (decisão 0025). O corpo aceita só `reason` (mesmo formato/limite de
+        // crm-status/crm-dnc, via readActionBody) — nenhum outro campo (role, permissions, userId, actor, reviewedBy...)
+        // chega ao Service: quem decide se DELETE:CRM está presente é sempre o AuthorizationContext desta requisição,
+        // nunca o corpo. O motivo ser OBRIGATÓRIO é responsabilidade do Service (deleteRecord -> readReason com
+        // { required: true }); aqui não repetimos essa checagem para não ter duas mensagens divergentes para o mesmo
+        // caso — um motivo ausente/vazio cai em CRM: reason é obrigatório..., traduzido por KNOWN_MESSAGES abaixo.
+        const picked = readActionBody(await readJsonBody(req), ['reason']);
+        const options = hasOwn(picked, 'reason') ? { reason: picked.reason } : {};
+        const deleted = await crmService.deleteRecord(context, id, options);
+        return respond(200, { deleted: true, id: deleted.id });
       }
       return respond(200, { item: await crmService.updateRecord(context, id, await readJsonBody(req)) });
     }

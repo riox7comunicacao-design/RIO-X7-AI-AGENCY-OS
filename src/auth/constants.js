@@ -51,6 +51,11 @@ const PERMISSION = Object.freeze({
   APPROVE_LEAD_APPROVAL: 'APPROVE:LEAD_APPROVAL',
   APPROVE_OUTBOUND_APPROVAL: 'APPROVE:OUTBOUND_APPROVAL',
   MANAGE_USERS: 'MANAGE:USERS',
+  // Exclusão ADMINISTRATIVA e IRREVERSÍVEL de um registro do CRM (decisão 0025) — deliberadamente separada de
+  // WRITE:CRM: excluir é uma ação destrutiva diferente de criar/editar/mudar status. Reverte, por pedido explícito
+  // do proprietário, a decisão anterior (registrada em src/services/crmService.js) de nunca ter exclusão. Só ADMIN
+  // a recebe.
+  DELETE_CRM: 'DELETE:CRM',
 });
 
 const PERMISSION_FORMAT = /^[A-Z][A-Z0-9_]*:[A-Z][A-Z0-9_]*$/;
@@ -84,7 +89,7 @@ function isValidPermissionString(permission) {
 // autorização (hasPermission/requirePermission) leem apenas o array
 // `permissions` do contexto — nunca comparam o nome da role.
 //
-// ADMIN: exatamente as 8 permissões abaixo — nunca um coringa "*:*" (proibido
+// ADMIN: exatamente as 9 permissões abaixo — nunca um coringa "*:*" (proibido
 // pela decisão 0010, seção 10).
 const ADMIN_PERMISSIONS = Object.freeze([
   PERMISSION.READ_CRM,
@@ -95,9 +100,11 @@ const ADMIN_PERMISSIONS = Object.freeze([
   PERMISSION.APPROVE_LEAD_APPROVAL,
   PERMISSION.APPROVE_OUTBOUND_APPROVAL,
   PERMISSION.MANAGE_USERS,
+  // Exclusão administrativa do CRM (decisão 0025) — só ADMIN; nunca COMMERCIAL_CLOSER.
+  PERMISSION.DELETE_CRM,
 ]);
 
-// COMMERCIAL_CLOSER: exatamente as 5 permissões abaixo — WRITE:CRM,
+// COMMERCIAL_CLOSER: exatamente as 5 permissões abaixo — WRITE:CRM, DELETE:CRM,
 // MANAGE:USERS e PROPOSE:LEAD_APPROVAL (propor candidatos do Prospector) ficam
 // de fora, propositalmente.
 const COMMERCIAL_CLOSER_PERMISSIONS = Object.freeze([

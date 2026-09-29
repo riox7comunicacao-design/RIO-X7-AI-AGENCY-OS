@@ -16,15 +16,16 @@
 // AUTORIZAÇÃO — por operação, decidida pelo autorizador INJETADO (a porta authorizeOperation; sua implementação é
 // src/auth/crmBridge.js: contexto emitido, usuário ATIVO e a permissão pedida). O Service não reimplementa nada
 // disso, e a permissão de cada operação está na tabela PERMISSION_FOR abaixo — o único lugar onde ela é decidida:
-//   READ:CRM   listRecords, getRecord, getHistory
-//   WRITE:CRM  createRecord, updateRecord, moveStatus, markDoNotContact
-// ADMIN tem as duas; COMMERCIAL_CLOSER só READ:CRM — e assim continua: nenhuma permissão foi criada e a matriz de
-// permissões não foi ampliada. ANALYZE:CRM e PROPOSE:CRM (que o closer tem) NÃO são usadas por nenhuma operação
-// desta versão: o domínio não tem análise nem proposta, e inventar uma operação só para usá-las seria inventar
-// escopo. Consequência registrada, não resolvida (decisão 0014): o closer NÃO pode marcar DO_NOT_CONTACT — é uma
-// escrita, e ele não tem WRITE:CRM. Se o negócio quiser que quem conversa com o lead possa registrar um pedido de
-// "não me contate" na hora, isso exige uma decisão de PRODUTO (uma permissão própria, ou WRITE:CRM para o closer),
-// nunca uma exceção aqui.
+//   READ:CRM    listRecords, getRecord, getHistory
+//   WRITE:CRM   createRecord, updateRecord, moveStatus, markDoNotContact
+//   DELETE:CRM  deleteRecord (decisão 0025 — deliberadamente separada de WRITE:CRM: excluir é destrutivo e
+//               irreversível, diferente de criar/editar/mudar status)
+// ADMIN tem as três; COMMERCIAL_CLOSER só READ:CRM (nunca WRITE:CRM nem DELETE:CRM). ANALYZE:CRM e PROPOSE:CRM
+// (que o closer tem) NÃO são usadas por nenhuma operação desta versão: o domínio não tem análise nem proposta, e
+// inventar uma operação só para usá-las seria inventar escopo. Consequência registrada, não resolvida (decisão
+// 0014): o closer NÃO pode marcar DO_NOT_CONTACT — é uma escrita, e ele não tem WRITE:CRM. Se o negócio quiser que
+// quem conversa com o lead possa registrar um pedido de "não me contate" na hora, isso exige uma decisão de
+// PRODUTO (uma permissão própria, ou WRITE:CRM para o closer), nunca uma exceção aqui.
 //
 // UMA CAMADA DE AUTORIZAÇÃO (diferente do Approval Queue Service, que autoriza no Service E de novo no domínio): o
 // domínio do CRM não tem autorizador injetado (decisão 0013) — o Service é a ÚNICA camada. Por isso a fronteira é
@@ -37,9 +38,10 @@
 // sistema se autentica é uma decisão futura.
 //
 // OPERAÇÕES desta versão — as que o domínio já tem: listRecords, getRecord, getHistory, createRecord, updateRecord,
-// moveStatus, markDoNotContact. Ficam FORA, de propósito: excluir (o domínio não tem exclusão, e a história de um
-// registro — inclusive um bloqueio DNC — não deve poder ser apagada sem uma decisão de produto); filtros e busca
-// (etapas CRM-API/CRM-DASHBOARD); a promoção de um prospect aprovado (etapa CRM-INTEGRATION); qualquer coisa de IA.
+// moveStatus, markDoNotContact, deleteRecord (decisão 0025 — exclusão administrativa, só ADMIN, motivo obrigatório,
+// auditada no Supabase via crm_record_deletions; ver docs/decisions/0025-crm-admin-delete.md). Ficam FORA, de
+// propósito: filtros e busca (etapas CRM-API/CRM-DASHBOARD); a promoção de um prospect aprovado (etapa
+// CRM-INTEGRATION, em crmIntegrationService.js); qualquer coisa de IA.
 //
 // PERSISTÊNCIA: o Service recebe o repositório (a porta de src/crm/crmRepositoryPort.js) e NUNCA conhece um adapter
 // nem um arquivo — trocar o adapter não muda o Service: as operações são assíncronas (`async`) e fazem `await` do domínio, então a porta pode ser síncrona ou assíncrona (decisão 0023).
@@ -67,11 +69,12 @@ const PERMISSION_FOR = Object.freeze({
   updateRecord: PERMISSION.WRITE_CRM,
   moveStatus: PERMISSION.WRITE_CRM,
   markDoNotContact: PERMISSION.WRITE_CRM,
+  deleteRecord: PERMISSION.DELETE_CRM,
 });
 
 // O que o Service usa do domínio (o contrato real de src/crm/crmDomain.js). É verificado na CRIAÇÃO: uma dependência
 // incompleta falha fechada logo, em vez de falhar no meio de uma operação.
-const REQUIRED_DOMAIN_FUNCTIONS = Object.freeze(['createRecord', 'getRecord', 'listRecords', 'updateRecord', 'moveStatus', 'markDoNotContact']);
+const REQUIRED_DOMAIN_FUNCTIONS = Object.freeze(['createRecord', 'getRecord', 'listRecords', 'updateRecord', 'moveStatus', 'markDoNotContact', 'deleteRecord']);
 
 // A única identidade que o autorizador pode devolver — e a única que entra no histórico.
 const OPERATOR_FIELDS = Object.freeze(['userId', 'name', 'role']);
@@ -114,14 +117,20 @@ function readOptions(options, allowedKeys) {
   return options;
 }
 
-// O motivo (opcional) de uma operação de escrita: texto, sem espaços nas pontas; vazio equivale a ausente.
-function readReason(options) {
+// O motivo de uma operação de escrita: texto, sem espaços nas pontas; vazio equivale a ausente. Por padrão é
+// OPCIONAL (createRecord, moveStatus, markDoNotContact); `{ required: true }` (só deleteRecord, decisão 0025) faz
+// um motivo ausente/vazio/só espaços lançar — a exclusão é a ÚNICA operação do CRM onde o motivo não é opcional.
+function readReason(options, { required = false } = {}) {
   const reason = hasOwn(options, 'reason') ? options.reason : undefined;
   if (reason !== undefined && reason !== null && !isText(reason)) {
     throw new Error('CRM: reason deve ser um texto');
   }
   const trimmed = isText(reason) ? reason.trim() : '';
-  return trimmed.length > 0 ? trimmed : undefined;
+  if (trimmed.length === 0) {
+    if (required) throw new Error('CRM: reason é obrigatório para excluir um registro (texto não vazio)');
+    return undefined;
+  }
+  return trimmed;
 }
 
 // Valida o que o AUTORIZADOR devolveu (a porta authorizeOperation). Tudo o que não for exatamente a identidade
@@ -237,6 +246,7 @@ function createCrmService(dependencies) {
   const domainUpdateRecord = crm.updateRecord;
   const domainMoveStatus = crm.moveStatus;
   const domainMarkDoNotContact = crm.markDoNotContact;
+  const domainDeleteRecord = crm.deleteRecord;
 
   // Autoriza uma operação e devolve a identidade do operador. Lança quando o autorizador recusa (contexto inválido,
   // usuário inativo, permissão ausente) ou quando ele mesmo é defeituoso (ver readOperator): nunca há uma
@@ -311,7 +321,19 @@ function createCrmService(dependencies) {
     return toPublicRecord(await domainMarkDoNotContact(repository, id, { actor: ACTOR.HUMAN, reviewedBy: operator, motivo: reason }));
   }
 
-  return Object.freeze({ listRecords, getRecord, getHistory, createRecord, updateRecord, moveStatus, markDoNotContact });
+  // Exclusão ADMINISTRATIVA e IRREVERSÍVEL (decisão 0025): exige DELETE:CRM (só ADMIN — ver
+  // src/auth/constants.js/crmBridge.js) e um motivo OBRIGATÓRIO (readReason com { required: true }; um motivo
+  // ausente, vazio ou só espaços é recusado ANTES de qualquer chamada ao domínio ou ao repositório — nada é
+  // apagado). A resposta é uma confirmação MÍNIMA (mesmo padrão de promoteProspect em crmIntegrationService.js):
+  // nunca o registro inteiro de volta, porque ele acabou de deixar de existir.
+  async function deleteRecord(context, id, options) {
+    const operator = authorize(context, 'deleteRecord');
+    const reason = readReason(readOptions(options, ['reason']), { required: true });
+    const deleted = await domainDeleteRecord(repository, id, { actor: ACTOR.HUMAN, reviewedBy: operator, motivo: reason });
+    return { id: deleted.id };
+  }
+
+  return Object.freeze({ listRecords, getRecord, getHistory, createRecord, updateRecord, moveStatus, markDoNotContact, deleteRecord });
 }
 
 module.exports = { createCrmService };

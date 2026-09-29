@@ -25,7 +25,7 @@ test('[PROPOSE-1] a decisão está explícita na matriz: ADMIN recebe PROPOSE:LE
   assert.equal(hasPermission(contexto(ROLE.ADMIN), PERMISSION.PROPOSE_LEAD_APPROVAL), true);
   assert.equal(hasPermission(contexto(ROLE.COMMERCIAL_CLOSER), PERMISSION.PROPOSE_LEAD_APPROVAL), false);
   assert.deepEqual([...constants.COMMERCIAL_CLOSER_PERMISSIONS].sort(), ['ANALYZE:CRM', 'APPROVE:LEAD_APPROVAL', 'APPROVE:OUTBOUND_APPROVAL', 'PROPOSE:CRM', 'READ:CRM']);
-  assert.equal(constants.ADMIN_PERMISSIONS.length, 8);
+  assert.equal(constants.ADMIN_PERMISSIONS.length, 9);
 });
 
 test('[PROPOSE-2] PROPOR não é APROVAR, PROMOVER nem ESCREVER: são permissões diferentes, com pontes diferentes — nenhuma implica a outra', () => {

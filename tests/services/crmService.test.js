@@ -72,6 +72,10 @@ function repositorioObservado(interno = createInMemoryCrmRepository()) {
       chamadas.push('save');
       return interno.save(registro);
     },
+    delete(id, meta) {
+      chamadas.push('delete');
+      return interno.delete(id, meta);
+    },
   };
 }
 const gravacoes = (repo) => repo.chamadas.filter((chamada) => chamada === 'save').length;
@@ -89,10 +93,14 @@ function dominioObservado(chamadas) {
     updateRecord: registrar('updateRecord'),
     moveStatus: registrar('moveStatus'),
     markDoNotContact: registrar('markDoNotContact'),
+    deleteRecord: registrar('deleteRecord'),
   };
 }
 
-// As 7 operações do Service, com argumentos típicos — para exercitar todas de uma vez. `permissao`: a que cada uma exige.
+// As 7 operações do Service que NÃO exigem motivo obrigatório, com argumentos típicos — para exercitar todas de
+// uma vez nos testes genéricos de autorização/comportamento transversal abaixo. `permissao`: a que cada uma exige.
+// deleteRecord (decisão 0025) tem seus PRÓPRIOS testes (a partir de [CRM-SVC-51]): é a única operação com motivo
+// obrigatório, e misturá-la aqui exigiria um `options` diferente em cada chamador desta lista.
 const operacoes = (servico, id) => [
   ['listRecords', READ, async (ctx) => await servico.listRecords(ctx)],
   ['getRecord', READ, async (ctx) => await servico.getRecord(ctx, id)],
@@ -148,11 +156,11 @@ function arquivoTemporario(t) {
 // ===========================================================================
 // 1) Composição — o que o Service exige para existir, e o que ele expõe
 // ===========================================================================
-test('[CRM-SVC-1] o Service expõe exatamente as 7 operações, congelado — e nada do repositório, do domínio ou do autorizador', () => {
+test('[CRM-SVC-1] o Service expõe exatamente as 8 operações (deleteRecord incluído desde a decisão 0025), congelado — e nada do repositório, do domínio ou do autorizador', () => {
   const servico = criarServico(createInMemoryCrmRepository());
-  assert.deepEqual(Object.keys(servico).sort(), ['createRecord', 'getHistory', 'getRecord', 'listRecords', 'markDoNotContact', 'moveStatus', 'updateRecord']);
+  assert.deepEqual(Object.keys(servico).sort(), ['createRecord', 'deleteRecord', 'getHistory', 'getRecord', 'listRecords', 'markDoNotContact', 'moveStatus', 'updateRecord']);
   assert.ok(Object.isFrozen(servico), 'o Service não pode ser alterado depois de criado');
-  for (const interno of ['repository', 'crm', 'authorizeOperation', 'authorize', 'domain', 'save', 'list', 'getById', 'deleteRecord', 'removeRecord']) {
+  for (const interno of ['repository', 'crm', 'authorizeOperation', 'authorize', 'domain', 'save', 'list', 'getById', 'delete', 'removeRecord']) {
     assert.equal(servico[interno], undefined, `${interno} não pode ser exposto`);
   }
 });
@@ -175,11 +183,11 @@ test('[CRM-SVC-3] sem repositório válido o Service não existe: o Service NUNC
   for (const invalido of ['arquivo.json', 42, [], {}, { list: () => [] }, { list() {}, getById() {} }]) {
     assert.ok(await erroDe(() => criarServico(invalido)), `${JSON.stringify(invalido)} deveria ser recusado`);
   }
-  assert.ok(criarServico({ list: async () => [], getById: async () => null, save: async () => {} }), 'um repositório assíncrono é aceito: o Service faz await de cada chamada');
+  assert.ok(criarServico({ list: async () => [], getById: async () => null, save: async () => {}, delete: async () => {} }), 'um repositório assíncrono é aceito: o Service faz await de cada chamada');
 });
 
 test('[CRM-SVC-4] um domínio incompleto injetado falha na criação, nomeando a função que falta — nunca no meio de uma operação', async () => {
-  for (const funcao of ['createRecord', 'getRecord', 'listRecords', 'updateRecord', 'moveStatus', 'markDoNotContact']) {
+  for (const funcao of ['createRecord', 'getRecord', 'listRecords', 'updateRecord', 'moveStatus', 'markDoNotContact', 'deleteRecord']) {
     const incompleto = { ...crmDomain };
     delete incompleto[funcao];
     assert.match((await erroDe(() => criarServico(createInMemoryCrmRepository(), { crm: incompleto }))).message, new RegExp(`não tem a função ${funcao}\\(\\)`));
@@ -198,12 +206,13 @@ test('[CRM-SVC-5] as funções do domínio ficam CAPTURADAS na criação: substi
   assert.equal(chamadas.filter(([nome]) => nome === 'createRecord').length, 1);
 });
 
-test('[CRM-SVC-6] o Service depende só do contrato: um repositório PRÓPRIO (nem memória, nem arquivo) que satisfaça { list, getById, save } funciona igual', async () => {
+test('[CRM-SVC-6] o Service depende só do contrato: um repositório PRÓPRIO (nem memória, nem arquivo) que satisfaça { list, getById, save, delete } funciona igual', async () => {
   const guardados = new Map();
   const repositorioProprio = {
     list: () => [...guardados.values()].map((registro) => structuredClone(registro)),
     getById: (id) => (guardados.has(id) ? structuredClone(guardados.get(id)) : null),
     save: (registro) => void guardados.set(registro.id, structuredClone(registro)),
+    delete: (id) => void guardados.delete(id),
   };
   const servico = criarServico(repositorioProprio);
   const id = await semear(servico);
@@ -903,13 +912,13 @@ test('[CRM-SVC-43] corrupção do armazenamento aparece, nunca é escondida: um 
   assert.match((await erroDe(async () => await corrompido.moveStatus(admin(), 'crm:sem-historico', CRM_STATUS.RESEARCH))).message, /histórico ausente ou inválido/);
   assert.match((await erroDe(async () => await corrompido.updateRecord(admin(), 'crm:sem-historico', { observacoes: 'x' }))).message, /histórico ausente ou inválido/);
 
-  const listaSuja = { list: () => [{ id: 'crm:a', empresa: 'A', historico: [] }, null], getById: () => null, save: () => {} };
+  const listaSuja = { list: () => [{ id: 'crm:a', empresa: 'A', historico: [] }, null], getById: () => null, save: () => {}, delete: () => {} };
   assert.match((await erroDe(() => criarServico(listaSuja).listRecords(closer()))).message, /registro inválido no armazenamento/);
 });
 
 test('[CRM-SVC-44] um repositório DEFEITUOSO que devolve o registro de OUTRO id nunca sai como o registro pedido: getRecord devolve null e getHistory recusa', async () => {
   const outro = { id: 'crm:outro', empresa: 'Outro', status: 'PROSPECT', historico: [] };
-  const defeituoso = { list: () => [outro], getById: () => structuredClone(outro), save: () => {} };
+  const defeituoso = { list: () => [outro], getById: () => structuredClone(outro), save: () => {}, delete: () => {} };
   const servico = criarServico(defeituoso);
   assert.equal(await servico.getRecord(closer(), 'crm:pedido'), null);
   assert.match((await erroDe(async () => await servico.getHistory(closer(), 'crm:pedido'))).message, /registro não encontrado/);
@@ -943,6 +952,7 @@ test('[CRM-SVC-46] falhas de armazenamento passam intactas e não deixam meia-es
     save: () => {
       throw new Error('disco cheio (simulado)');
     },
+    delete: (registroId) => inicial.delete(registroId),
   };
   const servico = criarServico(gravacaoQuebrada);
   assert.match((await erroDe(async () => await servico.moveStatus(admin(), id, CRM_STATUS.RESEARCH))).message, /disco cheio \(simulado\)/);
@@ -1005,6 +1015,7 @@ test('[CRM-SVC-50] o Service NÃO depende de o repositório copiar o que recebe:
     list: () => [...guardados.values()],
     getById: (id) => guardados.get(id) || null,
     save: (registro) => void guardados.set(registro.id, registro),
+    delete: (id) => void guardados.delete(id),
   };
   const compartilhada = { userId: 'user-ref', name: 'Referência', role: 'ADMIN' };
   const servico = criarServico(porReferencia, { authorizeOperation: () => compartilhada });
@@ -1015,4 +1026,125 @@ test('[CRM-SVC-50] o Service NÃO depende de o repositório copiar o que recebe:
   for (const entrada of guardados.get(record.id).historico) {
     assert.deepEqual(entrada.reviewedBy, { userId: 'user-ref', name: 'Referência', role: 'ADMIN' });
   }
+});
+
+// ===========================================================================
+// 10) deleteRecord — exclusão ADMINISTRATIVA e IRREVERSÍVEL (decisão 0025)
+// ===========================================================================
+// Diferente das demais operações de escrita, deleteRecord: (a) exige DELETE:CRM, uma permissão PRÓPRIA (só ADMIN);
+// (b) exige um `reason` OBRIGATÓRIO (as demais o aceitam opcional); (c) devolve uma confirmação MÍNIMA ({ id }),
+// nunca o registro inteiro (que acabou de deixar de existir). Por isso tem sua própria seção, em vez de entrar na
+// lista genérica `operacoes()` usada pelas seções 1-9 acima.
+
+test('[CRM-SVC-51] ADMIN com DELETE:CRM exclui: o registro some do repositório, e a resposta é a confirmação MÍNIMA { id } — nunca o registro inteiro', async () => {
+  const inicial = createInMemoryCrmRepository();
+  const servico = criarServico(inicial);
+  const id = await semear(servico, { empresa: 'Para Excluir', site: 'excluir.example.test' });
+  const resultado = await servico.deleteRecord(admin(), id, { reason: 'registro de teste, duplicado' });
+  assert.deepEqual(resultado, { id });
+  assert.equal(inicial.getById(id), null, 'o registro foi realmente removido do repositório');
+  assert.equal(inicial.list().length, 0);
+});
+
+test('[CRM-SVC-52] COMMERCIAL_CLOSER (só READ:CRM) é recusado com "acesso negado" citando DELETE:CRM — mesmo com um motivo válido, e o registro continua intacto', async () => {
+  const inicial = createInMemoryCrmRepository();
+  const servico = criarServico(inicial);
+  const id = await semear(servico);
+  const erro = await erroDe(async () => await servico.deleteRecord(closer(), id, { reason: 'o closer tentou excluir' }));
+  assert.match(erro.message, /acesso negado/);
+  assert.match(erro.message, /DELETE:CRM/);
+  assert.notEqual(inicial.getById(id), null, 'nada foi apagado');
+});
+
+test('[CRM-SVC-53] um usuário INACTIVE (mesmo ADMIN) é recusado, sem tocar o repositório', async () => {
+  const inicial = createInMemoryCrmRepository();
+  const servico = criarServico(inicial);
+  const id = await semear(servico);
+  const erro = await erroDe(async () => await servico.deleteRecord(inativo(ADMIN_USER), id, { reason: 'tentativa inativa' }));
+  assert.match(erro.message, /inativo/);
+  assert.notEqual(inicial.getById(id), null);
+});
+
+test('[CRM-SVC-54] motivo é OBRIGATÓRIO: ausente, vazio ou só espaços lançam ANTES de tocar o domínio ou o repositório — a ÚNICA operação do CRM em que isso vale', async () => {
+  const inicial = createInMemoryCrmRepository();
+  const repo = repositorioObservado(inicial);
+  const servico = criarServico(repo);
+  const id = await semear(criarServico(inicial));
+  for (const options of [undefined, {}, { reason: '' }, { reason: '   ' }, { reason: '\t\n' }]) {
+    const erro = await erroDe(async () => await servico.deleteRecord(admin(), id, options));
+    assert.match(erro.message, /reason é obrigatório para excluir um registro/, JSON.stringify(options));
+  }
+  assert.equal(repo.chamadas.includes('delete'), false, 'sem motivo, delete() do repositório nunca é chamado');
+  assert.notEqual(inicial.getById(id), null);
+
+  // motivo de tipo errado -> a mesma recusa genérica de reason já usada pelas demais operações.
+  assert.match((await erroDe(async () => await servico.deleteRecord(admin(), id, { reason: 42 }))).message, /reason deve ser um texto/);
+});
+
+test('[CRM-SVC-55] opções desconhecidas (além de reason) são recusadas antes de qualquer efeito, e identidade nunca vem do payload: role/permissions/userId/actor/reviewedBy no options são ignorados ou recusados, nunca usados para autorizar nem para o histórico', async () => {
+  const inicial = createInMemoryCrmRepository();
+  const servico = criarServico(inicial);
+  const id = await semear(servico);
+  for (const campo of ['status', 'userId', 'role', 'permissions', 'actor', 'reviewedBy', 'authUserId']) {
+    const erro = await erroDe(async () => await servico.deleteRecord(admin(), id, { reason: 'motivo válido', [campo]: 'valor-forjado' }));
+    assert.match(erro.message, /opções não reconhecidas/, campo);
+  }
+  assert.notEqual(inicial.getById(id), null, 'nenhuma tentativa com opção forjada apagou o registro');
+
+  // Mesmo um CLOSER que também tentasse forjar role/permissions: a autorização roda ANTES da leitura de options, então
+  // o resultado é "acesso negado" (a identidade do CONTEXTO, não do payload) — nunca uma exclusão.
+  const erroCloser = await erroDe(async () => await servico.deleteRecord(closer(), id, { reason: 'motivo válido', role: 'ADMIN', permissions: ['DELETE:CRM'] }));
+  assert.match(erroCloser.message, /acesso negado/);
+  assert.notEqual(inicial.getById(id), null);
+});
+
+test('[CRM-SVC-56] registro inexistente -> "registro não encontrado", mesmo para ADMIN com motivo válido; um id inválido (vazio/não-texto) é recusado antes disso', async () => {
+  const servico = criarServico(createInMemoryCrmRepository());
+  assert.match((await erroDe(async () => await servico.deleteRecord(admin(), 'crm:nao-existe', { reason: 'não existe' }))).message, /registro não encontrado/);
+  for (const ruim of ['', '   ', null, undefined, 42, {}]) {
+    assert.match((await erroDe(async () => await servico.deleteRecord(admin(), ruim, { reason: 'motivo válido' }))).message, /id deve ser um texto não vazio/, String(ruim));
+  }
+});
+
+test('[CRM-SVC-57] um registro DO_NOT_CONTACT (bloqueado, terminal) PODE ser excluído — excluir não é uma transição de status, e é exatamente o cenário que motivou a decisão 0025', async () => {
+  const inicial = createInMemoryCrmRepository();
+  const servico = criarServico(inicial);
+  const id = await semear(servico);
+  await servico.markDoNotContact(admin(), id, { reason: 'pediu para sair' });
+  assert.equal((await servico.getRecord(admin(), id)).status, CRM_STATUS.DO_NOT_CONTACT);
+  const resultado = await servico.deleteRecord(admin(), id, { reason: 'excluir o bloqueado' });
+  assert.deepEqual(resultado, { id });
+  assert.equal(inicial.getById(id), null);
+});
+
+test('[CRM-SVC-58] o domínio recebe exatamente { actor: HUMAN, reviewedBy: <do CONTEXTO>, motivo: <o reason informado> } — nunca algo do payload; e deleteRecord é chamado exatamente uma vez', async () => {
+  const chamadas = [];
+  const dominio = dominioObservado(chamadas);
+  const inicial = createInMemoryCrmRepository();
+  const servico = criarServico(inicial, { crm: dominio });
+  const id = await semear(criarServico(inicial));
+  await servico.deleteRecord(admin(), id, { reason: '  motivo com espaços  ' });
+
+  const chamadaDelete = chamadas.filter(([nome]) => nome === 'deleteRecord');
+  assert.equal(chamadaDelete.length, 1, 'deleteRecord do domínio é chamado exatamente uma vez');
+  const [, args] = chamadaDelete[0];
+  const [, idPassado, meta] = args;
+  assert.equal(idPassado, id);
+  assert.deepEqual(meta, { actor: ACTOR.HUMAN, reviewedBy: OPERADOR_ADMIN, motivo: 'motivo com espaços' });
+});
+
+test('[CRM-SVC-59] falha do repositório ao excluir (ex.: o RPC do Supabase falhou) passa intacta, e o registro continua como estava — nenhuma "meia-exclusão" do lado do Service', async () => {
+  const inicial = createInMemoryCrmRepository();
+  const id = await semear(criarServico(inicial));
+  const exclusaoQuebrada = {
+    list: () => inicial.list(),
+    getById: (registroId) => inicial.getById(registroId),
+    save: (registro) => inicial.save(registro),
+    delete: () => {
+      throw new Error('CRM (Supabase): falha ao excluir (simulado)');
+    },
+  };
+  const servico = criarServico(exclusaoQuebrada);
+  await assert.rejects(async () => await servico.deleteRecord(admin(), id, { reason: 'tentativa que falha' }), /falha ao excluir \(simulado\)/);
+  assert.notEqual(inicial.getById(id), null, 'o registro continua existindo: a falha do repositório não é mascarada como sucesso');
 });
