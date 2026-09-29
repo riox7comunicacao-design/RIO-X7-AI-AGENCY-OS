@@ -20,6 +20,7 @@
 //   RIO_X7_USERS_FILE                 o arquivo de usuários (padrão: data/users.json)
 //   RIO_X7_QUEUE_PATH                 o arquivo da fila (padrão: o do domínio, data/approval-queue.json)
 //   RIO_X7_CRM_PATH                   o arquivo do CRM (padrão: data/crm.json; criado no primeiro registro)
+//   RIO_X7_FUNNELS_PATH               o arquivo de Funis/Etapas (padrão: data/funnels.json; Etapa "Funis 1")
 //   REPOSITORY_MODE (etapas 2.3/3H)   "file" (padrão, não exige nenhuma credencial nova) ou "supabase" (exige a
 //                                     variável própria da service_role — ver crmRepositoryFactory.js/
 //                                     crmSupabaseConfig.js; falha claro se faltar, nunca cai para "file" em
@@ -47,8 +48,12 @@ const {
   authorizeReviewerForApprovalQueue,
   authorizeCrmOperation,
   authorizeProposerForLeadApproval,
+  authorizeFunnelOperation,
 } = require('../auth');
 const { createApprovalQueueService } = require('../services/approvalQueueService');
+// Funnel Service (reestruturação Prospecção/CRM/Funis, Etapa "Funis 1") — só o adapter de arquivo local existe
+// ainda (ver o cabeçalho de src/crm/funnelRepository.js); um adapter Supabase é uma etapa futura.
+const { createFileBackedFunnelService } = require('../services/funnelFileService');
 // createConfiguredCrmService (etapas 2.3/3H, decisão 0024): decide REPOSITORY_MODE (file ou supabase — ver o
 // cabeçalho de crmRepositoryFactory.js) antes de montar o CRM Service. Substitui o import direto de
 // createFileBackedCrmService: agora só a fábrica sabe qual adapter usar, e nunca um caminho escondido. Este
@@ -68,6 +73,7 @@ const SUPABASE_BUNDLE = path.join(ROOT, 'node_modules', '@supabase', 'supabase-j
 const DEFAULT_USERS_FILE = path.join(ROOT, 'data', 'users.json');
 // Dados do CRM: um arquivo local em data/ (o .gitignore exclui data/*.json — são dados pessoais de prospects).
 const DEFAULT_CRM_FILE = path.join(ROOT, 'data', 'crm.json');
+const DEFAULT_FUNNELS_FILE = path.join(ROOT, 'data', 'funnels.json');
 
 const DEFAULT_HOST = '127.0.0.1';
 const DEFAULT_PORT = 3000;
@@ -187,6 +193,12 @@ function createServer(env = process.env, options = {}) {
     crmService,
   });
 
+  // Funnel Service (Etapa "Funis 1") — independente do CRM Service (arquivo próprio, RIO_X7_FUNNELS_PATH).
+  const funnelService = createFileBackedFunnelService({
+    authorizeOperation: authorizeFunnelOperation,
+    filePath: resolveFile(env.RIO_X7_FUNNELS_PATH, DEFAULT_FUNNELS_FILE),
+  });
+
   const app = createApp({
     verifyAccessToken: authAdapter.verifyAccessToken,
     userStore,
@@ -194,6 +206,7 @@ function createServer(env = process.env, options = {}) {
     crmService,
     crmIntegrationService,
     prospectingService,
+    funnelService,
     publicConfig: { supabaseUrl, supabaseAnonKey },
     staticRoot: DASHBOARD_ROOT,
     staticFiles: { '/lib/supabase.js': SUPABASE_BUNDLE },

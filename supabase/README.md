@@ -5,7 +5,8 @@ Este diretório guarda o SQL da persistência do CRM em Postgres/Supabase, como 
 ## Estado atual
 
 - `migrations/20260927120000_crm_initial_schema.sql`: esquema do CRM (decisão [0024](../docs/decisions/0024-crm-postgres-schema.md)), já aplicado ao projeto Supabase real (`rio-x7-ai-agency-os`, `sa-east-1`) — `REPOSITORY_MODE=supabase` é a persistência oficial desde a etapa 3M.
-- `migrations/20260928090000_crm_delete_audit.sql`: tabela `crm_record_deletions` e a função transacional `delete_crm_record_with_audit`, para a exclusão administrativa e irreversível do CRM (decisão [0025](../docs/decisions/0025-crm-admin-delete.md)). **Não aplicada** — aguarda revisão do proprietário antes de ser executada no Supabase real.
+- `migrations/20260928090000_crm_delete_audit.sql`: tabela `crm_record_deletions` e a função transacional `delete_crm_record_with_audit`, para a exclusão administrativa e irreversível do CRM (decisão [0025](../docs/decisions/0025-crm-admin-delete.md)). **Já aplicada e validada** (etapa 3O.8-3O.10, com teste E2E real).
+- `migrations/20260928220000_crm_funnels.sql`: schema completo de Funis configuráveis (`crm_funnels`, `crm_funnel_stages`, `crm_funnel_cards`, `crm_funnel_card_moves`) para a reestruturação Prospecção/CRM/Funis, Etapa "Funis 1". **Não aplicada** — o backend desta etapa usa só o adapter de arquivo local (`data/funnels.json`); um adapter Supabase para estas tabelas é uma etapa futura ("Funis 2", junto com os cards e o Kanban).
 
 ## Código de preparação (etapa 2)
 

@@ -16,7 +16,8 @@ const { createApprovalQueueService } = require('../../src/services/approvalQueue
 const { createFileBackedCrmService } = require('../../src/services/crmFileService');
 const { createFileBackedCrmIntegrationService } = require('../../src/services/crmIntegrationFileService');
 const { createFileBackedProspectingService } = require('../../src/services/prospectingFileService');
-const { defineUser, createUserStore, ROLE, USER_STATUS, authorizeReviewerForApprovalQueue, authorizeCrmOperation, authorizeProposerForLeadApproval, createSupabaseAuthAdapter } = require('../../src/auth');
+const { createFileBackedFunnelService } = require('../../src/services/funnelFileService');
+const { defineUser, createUserStore, ROLE, USER_STATUS, authorizeReviewerForApprovalQueue, authorizeCrmOperation, authorizeProposerForLeadApproval, authorizeFunnelOperation, createSupabaseAuthAdapter } = require('../../src/auth');
 const { createApp } = require('../../src/server/app');
 const { FAKE_ENV, fakeAccessToken, installFakeSupabaseAuth, supabaseUserBody } = require('../helpers/authFixtures');
 
@@ -79,13 +80,20 @@ function novoArquivoCrm(t) {
   return path.join(dir, 'crm.json');
 }
 
+// Idem, para Funis (Etapa "Funis 1").
+function novoArquivoFunnels(t) {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'server-funnels-'));
+  t.after(() => fs.rmSync(dir, { recursive: true, force: true }));
+  return path.join(dir, 'funnels.json');
+}
+
 // Monta { app, ids, filePath, tokenFor, logs }. `usuarios`: specs de defineUser() (padrão: Breno e Rafael ativos).
 // `queue`: reaproveita uma fila já criada (senão cria uma nova). `staticFiles`: por padrão, inclui o bundle real do
 // supabase-js em /lib/supabase.js, como faz src/server/index.js.
 // CRM (opcional — por padrão o app NÃO tem rotas /api/crm, como antes): `crm: true` liga o CRM Service REAL (a mesma
 // fábrica que a composição usa, com a ponte de autorização real) sobre um arquivo temporário, devolvido em
 // `crmFilePath`; `crmService` injeta um Service já pronto (um double), no lugar.
-function montarAmbiente(t, { usuarios = [BRENO, RAFAEL], queue, authTimeoutMs, staticFiles, log, crm = false, crmFilePath, crmService: crmServiceInjetado, integracao = false, crmIntegrationService: integracaoInjetada, prospeccao = false, prospectingService: prospeccaoInjetada } = {}) {
+function montarAmbiente(t, { usuarios = [BRENO, RAFAEL], queue, authTimeoutMs, staticFiles, log, crm = false, crmFilePath, crmService: crmServiceInjetado, integracao = false, crmIntegrationService: integracaoInjetada, prospeccao = false, prospectingService: prospeccaoInjetada, funnels = false, funnelFilePath, funnelService: funnelServiceInjetado } = {}) {
   const { filePath, ids } = queue || novaFila(t);
   const tokensPorUsuario = {};
   const corposSupabase = {};
@@ -118,6 +126,10 @@ function montarAmbiente(t, { usuarios = [BRENO, RAFAEL], queue, authTimeoutMs, s
     (prospeccao
       ? createFileBackedProspectingService({ authorizeProposer: authorizeProposerForLeadApproval, authorizeOperation: authorizeCrmOperation, queuePath: filePath, crmService, batchPath, dossierPath })
       : undefined);
+  // Funnel Service (opcional, Etapa "Funis 1"): `funnels: true` liga a fábrica REAL de produção sobre um arquivo
+  // temporário próprio (independente do CRM); `funnelService` injeta um double no lugar.
+  const arquivoFunnels = funnels ? funnelFilePath || novoArquivoFunnels(t) : undefined;
+  const funnelService = funnelServiceInjetado || (funnels ? createFileBackedFunnelService({ authorizeOperation: authorizeFunnelOperation, filePath: arquivoFunnels }) : undefined);
   const logs = [];
   const publicConfig = { supabaseUrl: FAKE_ENV.SUPABASE_URL, supabaseAnonKey: FAKE_ENV.SUPABASE_ANON_KEY };
   const resolvedStaticFiles = staticFiles === undefined ? (fs.existsSync(SUPABASE_BUNDLE) ? { '/lib/supabase.js': SUPABASE_BUNDLE } : {}) : staticFiles;
@@ -128,6 +140,7 @@ function montarAmbiente(t, { usuarios = [BRENO, RAFAEL], queue, authTimeoutMs, s
     crmService,
     crmIntegrationService,
     prospectingService,
+    funnelService,
     publicConfig,
     staticRoot: DASHBOARD_ROOT,
     staticFiles: resolvedStaticFiles,
@@ -147,6 +160,8 @@ function montarAmbiente(t, { usuarios = [BRENO, RAFAEL], queue, authTimeoutMs, s
     prospectingService,
     batchPath,
     crmFilePath: arquivoCrm,
+    funnelService,
+    funnelFilePath: arquivoFunnels,
     fakeAuth,
     // Expostos para testes que montam uma VARIANTE do app (ex.: trocando só o Service por um double, para
     // provar o mapeamento de erro) reaproveitando a MESMA autenticação real já configurada aqui.
@@ -157,4 +172,4 @@ function montarAmbiente(t, { usuarios = [BRENO, RAFAEL], queue, authTimeoutMs, s
   };
 }
 
-module.exports = { montarAmbiente, novaFila, novoArquivoCrm, achado, descoberta, BRENO, RAFAEL, EX_COLABORADOR, DASHBOARD_ROOT, SUPABASE_BUNDLE };
+module.exports = { montarAmbiente, novaFila, novoArquivoCrm, novoArquivoFunnels, achado, descoberta, BRENO, RAFAEL, EX_COLABORADOR, DASHBOARD_ROOT, SUPABASE_BUNDLE };
