@@ -117,8 +117,14 @@ const FUNNEL_OPERATIONS = Object.freeze([
 // A operação da promoção Approval Queue → CRM (src/services/crmIntegrationService.js) que a API usa. Verificada na criação.
 const PROMOTION_OPERATION = 'promoteProspect';
 
-// A operação do Prospecting Service (src/services/prospectingService.js) que a API usa. Verificada na criação.
+// A operação OBRIGATÓRIA do Prospecting Service (src/services/prospectingService.js). Verificada na criação.
 const PROSPECTING_OPERATION = 'submitProspecting';
+// listBatches/getBatch (já existiam no Service, sem rota HTTP até agora): OPCIONAIS — um double de teste com só
+// submitProspecting continua válido (nenhuma rota nova quebra os testes existentes de prospecting-api.test.js);
+// a composição REAL (createFileBackedProspectingService) sempre tem as três.
+const PROSPECTING_BATCH_OPERATIONS = Object.freeze(['listBatches', 'getBatch']);
+// As operações do Prospecting Brief Service (Workbench, Etapa "Prospecção 1") que a API usa.
+const PROSPECTING_BRIEF_OPERATIONS = Object.freeze(['createBrief', 'listBriefs', 'getBrief', 'markReadyForResearch', 'generateResearchPackage', 'ingestFindings', 'cancelBrief', 'markConcluded']);
 
 const NO_ACCESS_MESSAGE = 'Esta conta não possui acesso a esta área.';
 
@@ -162,6 +168,12 @@ const CATALOG = Object.freeze({
   PROSPECTING_NOT_FOUND: [404, 'Lote não encontrado.'],
   PROSPECTING_CRM_INVALID: [503, 'Não foi possível ler o CRM agora; nada foi processado.'],
   PROSPECTING_PERSISTENCE: [503, 'Não foi possível ler ou gravar os dados locais agora. Tente novamente em instantes.'],
+  // Workbench de Prospecção (Etapa "Prospecção 1"), por `code` estável do Prospecting Brief Service
+  // (prospectingBriefService.js) — nunca por mensagem.
+  BRIEF_INVALID_INPUT: [400, 'O brief é inválido.'],
+  BRIEF_NOT_FOUND: [404, 'Brief não encontrado.'],
+  BRIEF_INVALID_STATE: [409, 'Esta ação não é permitida no estado atual do brief.'],
+  BRIEF_PERSISTENCE: [503, 'Não foi possível ler ou gravar os briefs agora. Tente novamente em instantes.'],
   // Funis configuráveis (Etapa "Funis 1"), por `code` estável do domínio (funnelDomain.js) — nunca por mensagem:
   // quais funis/etapas foram vinculados a um card não é dito (o card ainda nem existe nesta etapa).
   FUNNEL_HAS_CARDS: [409, 'Este funil possui cards vinculados e não pode ser excluído.'],
@@ -276,6 +288,15 @@ const CRM_CODES = Object.freeze({
   CRM_HAS_ACTIVE_FUNNEL_CARDS: 'CRM_HAS_ACTIVE_FUNNEL_CARDS',
 });
 
+// O `code` do Prospecting Brief Service (prospectingBriefService.js) que a API reconhece — mesmo mapeamento
+// identidade de CRM_CODES/FUNNEL_CODES acima (Etapa "Prospecção 1").
+const BRIEF_CODES = Object.freeze({
+  BRIEF_INVALID_INPUT: 'BRIEF_INVALID_INPUT',
+  BRIEF_NOT_FOUND: 'BRIEF_NOT_FOUND',
+  BRIEF_INVALID_STATE: 'BRIEF_INVALID_STATE',
+  BRIEF_PERSISTENCE: 'BRIEF_PERSISTENCE',
+});
+
 // Os `code` que um adapter de REPOSITÓRIO do CRM pode anexar a um erro (contrato comum entre adapters, etapa 3F —
 // corrige o BLOCKER 2 da etapa 3E). app.js NUNCA importa src/crm-adapters/ nem src/crm/ (R12/R16, e a lista de
 // imports fechada de [CRM-API-ARCH-1]: só `../auth`/`./static`) — por isso o reconhecimento é por STRING, igual a
@@ -351,6 +372,9 @@ function mapErrorToHttp(error) {
     code = FUNNEL_CODES[error.code];
   } else if (error && typeof error === 'object' && Object.prototype.hasOwnProperty.call(CRM_CODES, error.code)) {
     code = CRM_CODES[error.code];
+  } else if (error && typeof error === 'object' && Object.prototype.hasOwnProperty.call(BRIEF_CODES, error.code)) {
+    code = BRIEF_CODES[error.code];
+    if (CATALOG[code][0] === 400) details = safeDetails(error.details);
   } else {
     const message = error && typeof error.message === 'string' ? error.message : '';
     const known = KNOWN_MESSAGES.find(([pattern]) => pattern.test(message));
@@ -516,10 +540,26 @@ function parseTarget(req) {
 }
 
 // `crm`: as rotas do CRM só existem quando o CRM Service foi injetado; sem ele, /api/crm... é uma rota desconhecida (404).
-function matchRoute(pathname, { crm, promotion, prospecting, funnels }) {
+function matchRoute(pathname, { crm, promotion, prospecting, prospectingBatchReads, prospectingBrief, funnels }) {
   if (pathname === '/api/me') return { name: 'me', label: '/api/me', methods: ['GET'] };
   if (pathname === '/api/approvals') return { name: 'list', label: '/api/approvals', methods: ['GET'] };
   if (prospecting && pathname === '/api/prospecting/submit') return { name: 'prospecting-submit', label: '/api/prospecting/submit', methods: ['POST'] };
+  // Leitura de LOTES (já existente no Service — listBatches/getBatch — só nunca tinha rota HTTP): usada pelo
+  // Workbench para mostrar a tabela de achados de um brief já ingerido (brief.loteRealId). OPCIONAL: só existe
+  // quando o prospectingService injetado tem os dois métodos (a composição real sempre tem).
+  if (prospectingBatchReads && pathname === '/api/prospecting/batches') return { name: 'prospecting-batches', label: '/api/prospecting/batches', methods: ['GET'] };
+  const batchItem = prospectingBatchReads ? /^\/api\/prospecting\/batches\/([^/]+)$/.exec(pathname) : null;
+  if (batchItem) return { name: 'prospecting-batch-item', label: '/api/prospecting/batches/:id', methods: ['GET'], rawId: batchItem[1] };
+  // Workbench de Prospecção (Etapa "Prospecção 1") — só existe quando o Prospecting Brief Service foi injetado.
+  // Ordem: os caminhos com ação (/ready, /package, /findings, /cancel, /conclude) são checados ANTES do :id
+  // genérico, mesmo cuidado já usado nas rotas de Funil.
+  if (prospectingBrief) {
+    if (pathname === '/api/prospecting/briefs') return { family: 'prospecting-brief', name: 'brief-collection', label: '/api/prospecting/briefs', methods: ['GET', 'POST'] };
+    const action = /^\/api\/prospecting\/briefs\/([^/]+)\/(ready|package|findings|cancel|conclude)$/.exec(pathname);
+    if (action) return { family: 'prospecting-brief', name: `brief-${action[2]}`, label: `/api/prospecting/briefs/:id/${action[2]}`, methods: ['POST'], rawId: action[1] };
+    const item = /^\/api\/prospecting\/briefs\/([^/]+)$/.exec(pathname);
+    if (item) return { family: 'prospecting-brief', name: 'brief-item', label: '/api/prospecting/briefs/:id', methods: ['GET'], rawId: item[1] };
+  }
   if (promotion) {
     const promote = /^\/api\/approvals\/([^/]+)\/promote$/.exec(pathname);
     if (promote) return { name: 'promote', label: '/api/approvals/:id/promote', methods: ['POST'], rawId: promote[1] };
@@ -628,8 +668,21 @@ function requireFunction(value, name) {
 // staticRoot / staticFiles: os arquivos do Dashboard (ver static.js).
 // log: (texto) => void. authTimeoutMs: quanto esperar pela verificação do token.
 function createApp(dependencies) {
-  const { verifyAccessToken, userStore, approvalQueueService, crmService, crmIntegrationService, prospectingService, funnelService, publicConfig, staticRoot, staticFiles, log = () => {}, authTimeoutMs = DEFAULT_AUTH_TIMEOUT_MS } =
-    dependencies || {};
+  const {
+    verifyAccessToken,
+    userStore,
+    approvalQueueService,
+    crmService,
+    crmIntegrationService,
+    prospectingService,
+    prospectingBriefService,
+    funnelService,
+    publicConfig,
+    staticRoot,
+    staticFiles,
+    log = () => {},
+    authTimeoutMs = DEFAULT_AUTH_TIMEOUT_MS,
+  } = dependencies || {};
   requireFunction(verifyAccessToken, 'verifyAccessToken');
   requireFunction(log, 'log');
   if (!userStore || typeof userStore.findByAuthUserId !== 'function') throw new Error('createApp exige { userStore } (com findByAuthUserId)');
@@ -648,6 +701,14 @@ function createApp(dependencies) {
   }
   if (prospectingService !== undefined && (!prospectingService || typeof prospectingService[PROSPECTING_OPERATION] !== 'function')) {
     throw new Error(`createApp exige { prospectingService } com ${PROSPECTING_OPERATION}()`);
+  }
+  const prospectingHasBatchReads = prospectingService !== undefined && PROSPECTING_BATCH_OPERATIONS.every((operation) => typeof prospectingService[operation] === 'function');
+  if (prospectingBriefService !== undefined) {
+    for (const operation of PROSPECTING_BRIEF_OPERATIONS) {
+      if (!prospectingBriefService || typeof prospectingBriefService[operation] !== 'function') {
+        throw new Error(`createApp exige { prospectingBriefService } com ${operation}()`);
+      }
+    }
   }
   if (funnelService !== undefined) {
     for (const operation of FUNNEL_OPERATIONS) {
@@ -809,12 +870,52 @@ function createApp(dependencies) {
     throw new HttpError('ROUTE_NOT_FOUND');
   }
 
+  // Workbench de Prospecção (Etapa "Prospecção 1"): cada rota só traduz HTTP <-> uma chamada ao Prospecting Brief
+  // Service — a autorização (PROPOSE:LEAD_APPROVAL), a validação do brief e as regras de estado são do Service.
+  async function dispatchProspectingBrief(req, url, route, context) {
+    readQuery(url, []);
+    if (route.name === 'brief-collection') {
+      if (req.method === 'GET') return respond(200, { items: await prospectingBriefService.listBriefs(context) });
+      return respond(201, { item: await prospectingBriefService.createBrief(context, await readJsonBody(req)) });
+    }
+    const id = decodeId(route.rawId);
+    if (route.name === 'brief-item') return respond(200, { item: await prospectingBriefService.getBrief(context, id) });
+    if (route.name === 'brief-ready') {
+      if (Object.keys(await readJsonBody(req)).length > 0) throw new HttpError('INVALID_REQUEST', 'Campos não permitidos na requisição.');
+      return respond(200, { item: await prospectingBriefService.markReadyForResearch(context, id) });
+    }
+    if (route.name === 'brief-package') {
+      if (Object.keys(await readJsonBody(req)).length > 0) throw new HttpError('INVALID_REQUEST', 'Campos não permitidos na requisição.');
+      return respond(200, { item: await prospectingBriefService.generateResearchPackage(context, id) });
+    }
+    if (route.name === 'brief-findings') {
+      // Corpo { rawFindings }: exatamente o contrato já existente de achados brutos (rawFindingV2.js) — o Service
+      // repassa ao Prospecting Service real, que valida tudo (nada é reimplementado aqui).
+      const body = await readJsonBody(req, MAX_PROSPECTING_BODY_BYTES);
+      if (!body || typeof body !== 'object' || Array.isArray(body) || Object.keys(body).some((key) => key !== 'rawFindings')) {
+        throw new HttpError('INVALID_REQUEST', 'Envie exatamente { rawFindings }.');
+      }
+      return respond(200, await prospectingBriefService.ingestFindings(context, id, body.rawFindings));
+    }
+    if (route.name === 'brief-cancel') {
+      if (Object.keys(await readJsonBody(req)).length > 0) throw new HttpError('INVALID_REQUEST', 'Campos não permitidos na requisição.');
+      return respond(200, { item: await prospectingBriefService.cancelBrief(context, id) });
+    }
+    if (route.name === 'brief-conclude') {
+      if (Object.keys(await readJsonBody(req)).length > 0) throw new HttpError('INVALID_REQUEST', 'Campos não permitidos na requisição.');
+      return respond(200, { item: await prospectingBriefService.markConcluded(context, id) });
+    }
+    throw new HttpError('ROUTE_NOT_FOUND');
+  }
+
   async function dispatch(req, trace) {
     const url = parseTarget(req);
     const route = matchRoute(url.pathname, {
       crm: crmService !== undefined,
       promotion: crmIntegrationService !== undefined,
       prospecting: prospectingService !== undefined,
+      prospectingBatchReads: prospectingHasBatchReads,
+      prospectingBrief: prospectingBriefService !== undefined,
       funnels: funnelService !== undefined,
     });
     if (route === null) {
@@ -829,6 +930,7 @@ function createApp(dependencies) {
 
     if (route.family === 'crm') return dispatchCrm(req, url, route, context);
     if (route.family === 'funnel') return dispatchFunnel(req, url, route, context);
+    if (route.family === 'prospecting-brief') return dispatchProspectingBrief(req, url, route, context);
 
     if (route.name === 'prospecting-submit') {
       // Só transporte: sem query, corpo JSON (objeto) de até 4 MiB, e o objeto INTEIRO vai ao serviço — que decide (autoriza
@@ -837,6 +939,14 @@ function createApp(dependencies) {
       readQuery(url, []);
       const submission = await readJsonBody(req, MAX_PROSPECTING_BODY_BYTES);
       return respond(201, await prospectingService.submitProspecting(context, submission));
+    }
+    if (route.name === 'prospecting-batches') {
+      readQuery(url, []);
+      return respond(200, { items: await prospectingService.listBatches(context) });
+    }
+    if (route.name === 'prospecting-batch-item') {
+      readQuery(url, []);
+      return respond(200, { item: await prospectingService.getBatch(context, decodeId(route.rawId)) });
     }
 
     if (route.name === 'me') {

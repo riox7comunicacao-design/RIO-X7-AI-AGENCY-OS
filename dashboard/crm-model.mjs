@@ -358,7 +358,16 @@ export function describeHistory(entries, roleName = (role) => role) {
 // registro"; quem decide de verdade é o servidor (403 mesmo se a tela for manipulada).
 // PROPOSE_CRM (reestruturação Prospecção/CRM/Funis, Etapa "Funis 2"): a ação COMERCIAL de criar/mover um card —
 // ADMIN e COMMERCIAL_CLOSER têm as duas (ver src/auth/constants.js/crmBridge.js).
-export const PERMISSIONS = Object.freeze({ READ_CRM: 'READ:CRM', WRITE_CRM: 'WRITE:CRM', DELETE_CRM: 'DELETE:CRM', PROPOSE_CRM: 'PROPOSE:CRM', REVIEW: 'APPROVE:LEAD_APPROVAL' });
+// PROPOSE_LEAD_APPROVAL (Etapa "Prospecção 1"): submeter um brief/achados ao Workbench de Prospecção — a MESMA
+// permissão que já autoriza o Prospecting Service existente (ADMIN tem; COMMERCIAL_CLOSER não — decisão já vigente).
+export const PERMISSIONS = Object.freeze({
+  READ_CRM: 'READ:CRM',
+  WRITE_CRM: 'WRITE:CRM',
+  DELETE_CRM: 'DELETE:CRM',
+  PROPOSE_CRM: 'PROPOSE:CRM',
+  REVIEW: 'APPROVE:LEAD_APPROVAL',
+  PROPOSE_LEAD_APPROVAL: 'PROPOSE:LEAD_APPROVAL',
+});
 
 // `me`: o que /api/me devolveu. As permissões vêm do servidor (derivadas da role dele), nunca do navegador.
 export function permissionsOf(me) {
@@ -369,6 +378,7 @@ export function permissionsOf(me) {
     canDeleteCrm: list.includes(PERMISSIONS.DELETE_CRM),
     canProposeCrm: list.includes(PERMISSIONS.PROPOSE_CRM),
     canReview: list.includes(PERMISSIONS.REVIEW),
+    canProposeLead: list.includes(PERMISSIONS.PROPOSE_LEAD_APPROVAL),
   };
 }
 

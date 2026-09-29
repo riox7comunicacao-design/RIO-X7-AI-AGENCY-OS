@@ -153,5 +153,19 @@ export function createApiClient({ getAccessToken, refreshAccessToken, onSessionL
     getFunnelCardHistory: (cardId) => request('GET', `/api/funnel-cards/${encodeURIComponent(cardId)}/history`),
     // ARQUIVA o card (nunca exclui o registro do CRM) — sem corpo: nada decide isso além do id e da sessão.
     deleteFunnelCard: (cardId) => request('DELETE', `/api/funnel-cards/${encodeURIComponent(cardId)}`, {}),
+
+    // Workbench de Prospecção (Etapa "Prospecção 1"): exige PROPOSE:LEAD_APPROVAL — o servidor decide; esta tela só
+    // mostra/esconde os controles. `fields`: o objeto do formulário (nicho, subnicho, nivelGeografico, cidades,
+    // estados, pais, quantidade, observacoes) — nunca id, status, autor ou datas: isso é o Service que deriva.
+    listProspectingBatches: () => request('GET', '/api/prospecting/batches'),
+    getProspectingBatch: (loteId) => request('GET', `/api/prospecting/batches/${encodeURIComponent(loteId)}`),
+    listProspectingBriefs: () => request('GET', '/api/prospecting/briefs'),
+    getProspectingBrief: (id) => request('GET', `/api/prospecting/briefs/${encodeURIComponent(id)}`),
+    createProspectingBrief: (fields) => request('POST', '/api/prospecting/briefs', fields),
+    markProspectingBriefReady: (id) => request('POST', `/api/prospecting/briefs/${encodeURIComponent(id)}/ready`, {}),
+    generateProspectingPackage: (id) => request('POST', `/api/prospecting/briefs/${encodeURIComponent(id)}/package`, {}),
+    ingestProspectingFindings: (id, rawFindings) => request('POST', `/api/prospecting/briefs/${encodeURIComponent(id)}/findings`, { rawFindings }),
+    cancelProspectingBrief: (id) => request('POST', `/api/prospecting/briefs/${encodeURIComponent(id)}/cancel`, {}),
+    concludeProspectingBrief: (id) => request('POST', `/api/prospecting/briefs/${encodeURIComponent(id)}/conclude`, {}),
   };
 }

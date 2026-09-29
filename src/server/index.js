@@ -21,6 +21,8 @@
 //   RIO_X7_QUEUE_PATH                 o arquivo da fila (padrão: o do domínio, data/approval-queue.json)
 //   RIO_X7_CRM_PATH                   o arquivo do CRM (padrão: data/crm.json; criado no primeiro registro)
 //   RIO_X7_FUNNELS_PATH               o arquivo de Funis/Etapas (padrão: data/funnels.json; Etapa "Funis 1")
+//   RIO_X7_PROSPECTING_BRIEFS_PATH     o arquivo de Briefs do Workbench (padrão: data/prospecting-briefs.json;
+//                                     Etapa "Prospecção 1")
 //   REPOSITORY_MODE (etapas 2.3/3H)   "file" (padrão, não exige nenhuma credencial nova) ou "supabase" (exige a
 //                                     variável própria da service_role — ver crmRepositoryFactory.js/
 //                                     crmSupabaseConfig.js; falha claro se faltar, nunca cai para "file" em
@@ -62,6 +64,9 @@ const { createFileBackedFunnelService, createFileBackedActiveFunnelCardsChecker 
 const { createConfiguredCrmService, createConfiguredCrmRepository } = require('../services/crmRepositoryFactory');
 const { createFileBackedCrmIntegrationService } = require('../services/crmIntegrationFileService');
 const { createFileBackedProspectingService } = require('../services/prospectingFileService');
+// Prospecting Brief Service (Etapa "Prospecção 1" — Workbench): a camada ANTES da submissão — nunca reconstrói o
+// Prospecting Service, só o recebe pronto (ver o cabeçalho de prospectingBriefFileService.js).
+const { createFileBackedProspectingBriefService } = require('../services/prospectingBriefFileService');
 const { createApp } = require('./app');
 
 const ROOT = path.join(__dirname, '..', '..');
@@ -200,6 +205,16 @@ function createServer(env = process.env, options = {}) {
     crmService,
   });
 
+  // Prospecting Brief Service (Workbench, Etapa "Prospecção 1"): o MESMO `prospectingService` acima, injetado —
+  // nunca reconstruído. Arquivo próprio (data/prospecting-briefs.json, fora do Git). `checkPermanentExclusion`
+  // fica de fora, de propósito: nenhum mecanismo real de exclusão permanente existe hoje (ver o cabeçalho de
+  // prospectingBriefService.js) — sem ele, o padrão é "nunca excluir por este motivo", nunca inventado aqui.
+  const prospectingBriefService = createFileBackedProspectingBriefService({
+    authorizeProposer: authorizeProposerForLeadApproval,
+    prospectingService,
+    filePath: resolveFile(env.RIO_X7_PROSPECTING_BRIEFS_PATH, undefined),
+  });
+
   // Funnel Service (Etapa "Funis 1": funil/etapa, arquivo próprio, RIO_X7_FUNNELS_PATH; Etapa "Funis 2": card,
   // sobre o MESMO crmRepository/crmService que REPOSITORY_MODE decidiu para o CRM acima — nunca uma segunda
   // instância, mesmo princípio já aplicado à promoção e à prospecção).
@@ -218,6 +233,7 @@ function createServer(env = process.env, options = {}) {
     crmService,
     crmIntegrationService,
     prospectingService,
+    prospectingBriefService,
     funnelService,
     publicConfig: { supabaseUrl, supabaseAnonKey },
     staticRoot: DASHBOARD_ROOT,

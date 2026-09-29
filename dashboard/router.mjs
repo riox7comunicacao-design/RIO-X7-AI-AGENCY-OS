@@ -11,6 +11,7 @@
 //   #/aprovacoes              a fila de aprovação
 //   #/agentes                 a Central de Agentes IA (só a estrutura visual)
 //   #/funis                   o Kanban de Funis (reestruturação Prospecção/CRM/Funis, Etapa "Funis 2")
+//   #/prospeccao              o Workbench de Prospecção (Etapa "Prospecção 1")
 //
 // Um fragmento que não é nenhum destes é "not-found" (uma tela amigável), nunca um erro.
 
@@ -36,6 +37,7 @@ export function parseRoute(hash) {
   if (segments.length === 1 && segments[0] === 'aprovacoes') return { name: 'approvals' };
   if (segments.length === 1 && segments[0] === 'agentes') return { name: 'agents' };
   if (segments.length === 1 && segments[0] === 'funis') return { name: 'funnels' };
+  if (segments.length === 1 && segments[0] === 'prospeccao') return { name: 'prospecting' };
   return { name: 'not-found' };
 }
 
@@ -55,6 +57,8 @@ export function buildHash(route) {
       return '#/agentes';
     case 'funnels':
       return '#/funis';
+    case 'prospecting':
+      return '#/prospeccao';
     default:
       return '#/';
   }
@@ -67,6 +71,7 @@ export function sectionOf(route) {
   if (name === 'approvals') return 'approvals';
   if (name === 'agents') return 'agents';
   if (name === 'funnels') return 'funnels';
+  if (name === 'prospecting') return 'prospecting';
   if (name === 'overview') return 'overview';
   return null;
 }

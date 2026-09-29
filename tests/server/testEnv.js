@@ -16,6 +16,7 @@ const { createApprovalQueueService } = require('../../src/services/approvalQueue
 const { createFileBackedCrmService, sharedFileCrmRepository } = require('../../src/services/crmFileService');
 const { createFileBackedCrmIntegrationService } = require('../../src/services/crmIntegrationFileService');
 const { createFileBackedProspectingService } = require('../../src/services/prospectingFileService');
+const { createFileBackedProspectingBriefService } = require('../../src/services/prospectingBriefFileService');
 const { createFileBackedFunnelService, createFileBackedActiveFunnelCardsChecker } = require('../../src/services/funnelFileService');
 const { defineUser, createUserStore, ROLE, USER_STATUS, authorizeReviewerForApprovalQueue, authorizeCrmOperation, authorizeProposerForLeadApproval, authorizeFunnelOperation, createSupabaseAuthAdapter } = require('../../src/auth');
 const { createApp } = require('../../src/server/app');
@@ -87,13 +88,42 @@ function novoArquivoFunnels(t) {
   return path.join(dir, 'funnels.json');
 }
 
+// Idem, para o Workbench de Prospecção (Etapa "Prospecção 1").
+function novoArquivoBriefs(t) {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'server-briefs-'));
+  t.after(() => fs.rmSync(dir, { recursive: true, force: true }));
+  return path.join(dir, 'prospecting-briefs.json');
+}
+
 // Monta { app, ids, filePath, tokenFor, logs }. `usuarios`: specs de defineUser() (padrão: Breno e Rafael ativos).
 // `queue`: reaproveita uma fila já criada (senão cria uma nova). `staticFiles`: por padrão, inclui o bundle real do
 // supabase-js em /lib/supabase.js, como faz src/server/index.js.
 // CRM (opcional — por padrão o app NÃO tem rotas /api/crm, como antes): `crm: true` liga o CRM Service REAL (a mesma
 // fábrica que a composição usa, com a ponte de autorização real) sobre um arquivo temporário, devolvido em
 // `crmFilePath`; `crmService` injeta um Service já pronto (um double), no lugar.
-function montarAmbiente(t, { usuarios = [BRENO, RAFAEL], queue, authTimeoutMs, staticFiles, log, crm = false, crmFilePath, crmService: crmServiceInjetado, integracao = false, crmIntegrationService: integracaoInjetada, prospeccao = false, prospectingService: prospeccaoInjetada, funnels = false, funnelFilePath, funnelService: funnelServiceInjetado } = {}) {
+function montarAmbiente(
+  t,
+  {
+    usuarios = [BRENO, RAFAEL],
+    queue,
+    authTimeoutMs,
+    staticFiles,
+    log,
+    crm = false,
+    crmFilePath,
+    crmService: crmServiceInjetado,
+    integracao = false,
+    crmIntegrationService: integracaoInjetada,
+    prospeccao = false,
+    prospectingService: prospeccaoInjetada,
+    prospectingBrief = false,
+    prospectingBriefFilePath,
+    prospectingBriefService: prospectingBriefInjetado,
+    funnels = false,
+    funnelFilePath,
+    funnelService: funnelServiceInjetado,
+  } = {}
+) {
   const { filePath, ids } = queue || novaFila(t);
   const tokensPorUsuario = {};
   const corposSupabase = {};
@@ -137,6 +167,15 @@ function montarAmbiente(t, { usuarios = [BRENO, RAFAEL], queue, authTimeoutMs, s
     (prospeccao
       ? createFileBackedProspectingService({ authorizeProposer: authorizeProposerForLeadApproval, authorizeOperation: authorizeCrmOperation, queuePath: filePath, crmService, batchPath, dossierPath })
       : undefined);
+  // Prospecting Brief Service (Workbench, Etapa "Prospecção 1"): `prospectingBrief: true` liga a fábrica REAL sobre
+  // o MESMO `prospectingService` acima (exige `prospeccao: true` — nunca reconstrói o Prospecting Service).
+  if (prospectingBrief && !prospeccao) throw new Error('montarAmbiente: prospectingBrief exige prospeccao: true');
+  const arquivoBriefs = prospectingBrief ? prospectingBriefFilePath || novoArquivoBriefs(t) : undefined;
+  const prospectingBriefService =
+    prospectingBriefInjetado ||
+    (prospectingBrief
+      ? createFileBackedProspectingBriefService({ authorizeProposer: authorizeProposerForLeadApproval, prospectingService, filePath: arquivoBriefs })
+      : undefined);
   const funnelService =
     funnelServiceInjetado ||
     (funnels
@@ -158,6 +197,7 @@ function montarAmbiente(t, { usuarios = [BRENO, RAFAEL], queue, authTimeoutMs, s
     crmService,
     crmIntegrationService,
     prospectingService,
+    prospectingBriefService,
     funnelService,
     publicConfig,
     staticRoot: DASHBOARD_ROOT,
@@ -176,8 +216,10 @@ function montarAmbiente(t, { usuarios = [BRENO, RAFAEL], queue, authTimeoutMs, s
     crmService,
     crmIntegrationService,
     prospectingService,
+    prospectingBriefService,
     batchPath,
     crmFilePath: arquivoCrm,
+    prospectingBriefFilePath: arquivoBriefs,
     funnelService,
     funnelFilePath: arquivoFunnels,
     fakeAuth,
@@ -190,4 +232,4 @@ function montarAmbiente(t, { usuarios = [BRENO, RAFAEL], queue, authTimeoutMs, s
   };
 }
 
-module.exports = { montarAmbiente, novaFila, novoArquivoCrm, novoArquivoFunnels, achado, descoberta, BRENO, RAFAEL, EX_COLABORADOR, DASHBOARD_ROOT, SUPABASE_BUNDLE };
+module.exports = { montarAmbiente, novaFila, novoArquivoCrm, novoArquivoFunnels, novoArquivoBriefs, achado, descoberta, BRENO, RAFAEL, EX_COLABORADOR, DASHBOARD_ROOT, SUPABASE_BUNDLE };

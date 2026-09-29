@@ -73,7 +73,19 @@ test('[CRM-API-ARCH-3] a raiz de composição só chama a fábrica de src/servic
   assert.deepEqual(analise.issues, []);
   assert.deepEqual(
     analise.refs.map((ref) => ref.specifier).sort(),
-    ['../auth', '../services/approvalQueueService', '../services/crmIntegrationFileService', '../services/crmRepositoryFactory', '../services/funnelFileService', '../services/prospectingFileService', './app', 'node:fs', 'node:http', 'node:path']
+    [
+      '../auth',
+      '../services/approvalQueueService',
+      '../services/crmIntegrationFileService',
+      '../services/crmRepositoryFactory',
+      '../services/funnelFileService',
+      '../services/prospectingBriefFileService',
+      '../services/prospectingFileService',
+      './app',
+      'node:fs',
+      'node:http',
+      'node:path',
+    ]
   );
   const identificadores = identificadoresDe(analise);
   // (etapa 2.3) createConfiguredCrmService (crmRepositoryFactory.js) substitui o import direto de
