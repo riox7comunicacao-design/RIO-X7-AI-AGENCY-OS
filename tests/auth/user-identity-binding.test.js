@@ -42,7 +42,7 @@ const A_AUTH_ID = 'auth-d1-a';
 const B_AUTH_ID = 'auth-d1-b';
 
 // Listas LITERAIS, independentes de src/ (as mesmas de role-permissions.test.js).
-const ADMIN_LITERAL = ['READ:CRM', 'ANALYZE:CRM', 'PROPOSE:CRM', 'WRITE:CRM', 'DELETE:CRM', 'PROPOSE:LEAD_APPROVAL', 'APPROVE:LEAD_APPROVAL', 'APPROVE:OUTBOUND_APPROVAL', 'MANAGE:USERS', 'MANAGE:FUNNELS'];
+const ADMIN_LITERAL = ['READ:CRM', 'ANALYZE:CRM', 'PROPOSE:CRM', 'WRITE:CRM', 'DELETE:CRM', 'PROPOSE:LEAD_APPROVAL', 'APPROVE:LEAD_APPROVAL', 'APPROVE:OUTBOUND_APPROVAL', 'MANAGE:USERS', 'MANAGE:FUNNELS', 'MANAGE:PROSPECTING_EXCLUSIONS'];
 const CLOSER_LITERAL = ['READ:CRM', 'ANALYZE:CRM', 'PROPOSE:CRM', 'APPROVE:LEAD_APPROVAL', 'APPROVE:OUTBOUND_APPROVAL'];
 
 // USER A: um COMMERCIAL_CLOSER. USER B: um ADMIN. Fictícios.
@@ -213,7 +213,7 @@ test('[D1-5] identidade A + USER B com role ADMIN -> NÃO emite um contexto ADMI
   // Contra-prova: o emissor, sozinho, aceitaria esse USER e emitiria um contexto ADMIN — quem barra é o vínculo do resolver.
   const seriaEmitido = createAuthorizationContext(admin);
   assert.equal(seriaEmitido.role, ROLE.ADMIN);
-  assert.equal(seriaEmitido.permissions.length, 10);
+  assert.equal(seriaEmitido.permissions.length, 11);
 
   // O caminho honesto de A continua sendo o do CLOSER, nunca o do ADMIN.
   const honesto = resolveAuthorizationContext(createUserStore([usuarioA(), usuarioB()]), idA);

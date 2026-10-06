@@ -18,14 +18,15 @@
 //   authorizeProposer(context, PROPOSE:LEAD_APPROVAL) -> { userId, name, role }
 // ADMIN tem essa permissão; COMMERCIAL_CLOSER não (mesma decisão já vigente para prospectingService.js).
 //
-// EXCLUSÕES PERMANENTES (seção 8 do comando "Prospecção 1") — NÃO IMPLEMENTADAS no projeto ainda (nenhuma tabela
-// ou serviço de exclusão existe hoje: nem em src/, nem em Supabase). Para não inventar uma lista paralela, este
-// Service aceita uma dependência OPCIONAL `checkPermanentExclusion(finding) -> boolean` (síncrona ou assíncrona),
-// mesmo padrão de injeção de hasActiveFunnelCards em crmService.js — SEM ela (o padrão), NENHUM finding é
-// excluído por esse motivo (nunca bloqueia por omissão). Quando o mecanismo real existir, quem compuser o servidor
-// passa a função real aqui; nada nesta camada precisa mudar. Um finding para o qual o checker devolve `true` é
+// EXCLUSÕES PERMANENTES (implementadas na Etapa 2 — Workbench, ver src/services/prospectingExclusionService.js):
+// este Service aceita uma dependência OPCIONAL `checkPermanentExclusion(finding) -> false | exclusão` (síncrona
+// ou assíncrona) — mesmo padrão de injeção de hasActiveFunnelCards em crmService.js. Em produção (Supabase
+// configurado), quem compõe passa `exclusionService.isExcluded`; SEM ela (REPOSITORY_MODE=file, ou qualquer
+// composição que não a injete), NENHUM finding é excluído por esse motivo — nunca bloqueia por omissão, exatamente
+// o comportamento de antes da Etapa 2. Um finding para o qual o checker devolve a exclusão correspondente é
 // removido ANTES de chegar ao Prospecting Service — nunca pesquisado para contato, nunca promovido, nunca enviado
-// à fila — e aparece no relatório da ingestão como `excluidosPermanentemente`.
+// à fila — e é preservado (empresa + motivo, nunca apagado em silêncio) em `bloqueiosPermanentes`, com a contagem
+// em `excluidosPermanentemente`.
 //
 // FUNIL DE PROSPECÇÃO OUTBOUND (seção 11) — NÃO IMPLEMENTADO: não existe, no estado atual do sistema, o conceito
 // de "o funil padrão de prospecção outbound" (Funis 1/2 são estruturas livres, criadas por um ADMIN, sem nenhum
@@ -224,12 +225,21 @@ function createProspectingBriefService(dependencies) {
     requireStatus(brief, [BRIEF_STATUS.PESQUISANDO]);
 
     const lista = Array.isArray(rawFindings) ? rawFindings : [];
-    const excluidos = [];
+    // Bloqueios permanentes (Etapa 2): nunca "apagados em silêncio" — cada um vira um registro { empresa, motivo }
+    // preservado no brief (seção 8 do comando). `isPermanentlyExcluded` devolve `false` (nenhuma correspondência) ou
+    // a EXCLUSÃO que bateu (nunca só um booleano) — ver o cabeçalho de prospectingExclusionService.js#isExcluded.
+    const bloqueios = [];
     const incluidos = [];
     for (const finding of lista) {
-      const excluido = await isPermanentlyExcluded(finding);
-      if (excluido) excluidos.push(finding);
-      else incluidos.push(finding);
+      const correspondencia = await isPermanentlyExcluded(finding);
+      if (correspondencia) {
+        bloqueios.push({
+          empresa: isPlainObject(finding) && typeof finding.empresa === 'string' ? finding.empresa : null,
+          motivo: isPlainObject(correspondencia) && typeof correspondencia.motivo === 'string' ? correspondencia.motivo : null,
+        });
+      } else {
+        incluidos.push(finding);
+      }
     }
 
     const resultado = await prospectingService.submitProspecting(context, { briefing: toLegacyBriefing(brief), rawFindings: incluidos });
@@ -238,10 +248,11 @@ function createProspectingBriefService(dependencies) {
     brief.status = BRIEF_STATUS.AGUARDANDO_REVISAO;
     brief.loteRealId = resultado.loteId;
     brief.contagens = resultado.contagens;
-    brief.excluidosPermanentemente = excluidos.length;
+    brief.excluidosPermanentemente = bloqueios.length;
+    brief.bloqueiosPermanentes = bloqueios;
     brief.atualizadoEm = instant.toISOString();
     saveBrief(brief);
-    return { brief: copy(brief), lote: resultado, excluidosPermanentemente: excluidos.length };
+    return { brief: copy(brief), lote: resultado, excluidosPermanentemente: bloqueios.length, bloqueiosPermanentes: bloqueios };
   }
 
   function cancelBrief(context, id) {

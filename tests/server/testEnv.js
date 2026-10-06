@@ -17,8 +17,21 @@ const { createFileBackedCrmService, sharedFileCrmRepository } = require('../../s
 const { createFileBackedCrmIntegrationService } = require('../../src/services/crmIntegrationFileService');
 const { createFileBackedProspectingService } = require('../../src/services/prospectingFileService');
 const { createFileBackedProspectingBriefService } = require('../../src/services/prospectingBriefFileService');
+const { createProspectingExclusionService } = require('../../src/services/prospectingExclusionService');
+const { createInMemoryPermanentExclusionRepository } = require('../../src/research-prospector/permanentExclusionRepository');
 const { createFileBackedFunnelService, createFileBackedActiveFunnelCardsChecker } = require('../../src/services/funnelFileService');
-const { defineUser, createUserStore, ROLE, USER_STATUS, authorizeReviewerForApprovalQueue, authorizeCrmOperation, authorizeProposerForLeadApproval, authorizeFunnelOperation, createSupabaseAuthAdapter } = require('../../src/auth');
+const {
+  defineUser,
+  createUserStore,
+  ROLE,
+  USER_STATUS,
+  authorizeReviewerForApprovalQueue,
+  authorizeCrmOperation,
+  authorizeProposerForLeadApproval,
+  authorizeFunnelOperation,
+  authorizeProspectingExclusionOperation,
+  createSupabaseAuthAdapter,
+} = require('../../src/auth');
 const { createApp } = require('../../src/server/app');
 const { FAKE_ENV, fakeAccessToken, installFakeSupabaseAuth, supabaseUserBody } = require('../helpers/authFixtures');
 
@@ -119,6 +132,8 @@ function montarAmbiente(
     prospectingBrief = false,
     prospectingBriefFilePath,
     prospectingBriefService: prospectingBriefInjetado,
+    prospectingExclusion = false,
+    prospectingExclusionService: prospectingExclusionInjetado,
     funnels = false,
     funnelFilePath,
     funnelService: funnelServiceInjetado,
@@ -167,14 +182,25 @@ function montarAmbiente(
     (prospeccao
       ? createFileBackedProspectingService({ authorizeProposer: authorizeProposerForLeadApproval, authorizeOperation: authorizeCrmOperation, queuePath: filePath, crmService, batchPath, dossierPath })
       : undefined);
+  // Prospecting Permanent Exclusion Service (Workbench, Etapa 2): `prospectingExclusion: true` liga o Service REAL
+  // sobre um repositório de MEMÓRIA (esta funcionalidade não tem adapter de arquivo — só Supabase/produção e
+  // memória/teste, ver o cabeçalho de permanentExclusionRepository.js).
+  const prospectingExclusionService = prospectingExclusionInjetado || (prospectingExclusion ? createProspectingExclusionService({ authorizeOperation: authorizeProspectingExclusionOperation, repository: createInMemoryPermanentExclusionRepository() }) : undefined);
+
   // Prospecting Brief Service (Workbench, Etapa "Prospecção 1"): `prospectingBrief: true` liga a fábrica REAL sobre
   // o MESMO `prospectingService` acima (exige `prospeccao: true` — nunca reconstrói o Prospecting Service).
+  // `checkPermanentExclusion` é o MESMO `isExcluded` do Service acima quando `prospectingExclusion: true` também.
   if (prospectingBrief && !prospeccao) throw new Error('montarAmbiente: prospectingBrief exige prospeccao: true');
   const arquivoBriefs = prospectingBrief ? prospectingBriefFilePath || novoArquivoBriefs(t) : undefined;
   const prospectingBriefService =
     prospectingBriefInjetado ||
     (prospectingBrief
-      ? createFileBackedProspectingBriefService({ authorizeProposer: authorizeProposerForLeadApproval, prospectingService, filePath: arquivoBriefs })
+      ? createFileBackedProspectingBriefService({
+          authorizeProposer: authorizeProposerForLeadApproval,
+          prospectingService,
+          filePath: arquivoBriefs,
+          checkPermanentExclusion: prospectingExclusionService ? (finding) => prospectingExclusionService.isExcluded(finding) : undefined,
+        })
       : undefined);
   const funnelService =
     funnelServiceInjetado ||
@@ -198,6 +224,7 @@ function montarAmbiente(
     crmIntegrationService,
     prospectingService,
     prospectingBriefService,
+    prospectingExclusionService,
     funnelService,
     publicConfig,
     staticRoot: DASHBOARD_ROOT,
@@ -217,6 +244,7 @@ function montarAmbiente(
     crmIntegrationService,
     prospectingService,
     prospectingBriefService,
+    prospectingExclusionService,
     batchPath,
     crmFilePath: arquivoCrm,
     prospectingBriefFilePath: arquivoBriefs,

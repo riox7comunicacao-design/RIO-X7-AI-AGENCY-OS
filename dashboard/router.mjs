@@ -38,6 +38,7 @@ export function parseRoute(hash) {
   if (segments.length === 1 && segments[0] === 'agentes') return { name: 'agents' };
   if (segments.length === 1 && segments[0] === 'funis') return { name: 'funnels' };
   if (segments.length === 1 && segments[0] === 'prospeccao') return { name: 'prospecting' };
+  if (segments.length === 1 && segments[0] === 'exclusoes-permanentes') return { name: 'prospecting-exclusions' };
   return { name: 'not-found' };
 }
 
@@ -59,6 +60,8 @@ export function buildHash(route) {
       return '#/funis';
     case 'prospecting':
       return '#/prospeccao';
+    case 'prospecting-exclusions':
+      return '#/exclusoes-permanentes';
     default:
       return '#/';
   }
@@ -72,6 +75,7 @@ export function sectionOf(route) {
   if (name === 'agents') return 'agents';
   if (name === 'funnels') return 'funnels';
   if (name === 'prospecting') return 'prospecting';
+  if (name === 'prospecting-exclusions') return 'prospecting-exclusions';
   if (name === 'overview') return 'overview';
   return null;
 }

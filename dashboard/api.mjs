@@ -167,5 +167,13 @@ export function createApiClient({ getAccessToken, refreshAccessToken, onSessionL
     ingestProspectingFindings: (id, rawFindings) => request('POST', `/api/prospecting/briefs/${encodeURIComponent(id)}/findings`, { rawFindings }),
     cancelProspectingBrief: (id) => request('POST', `/api/prospecting/briefs/${encodeURIComponent(id)}/cancel`, {}),
     concludeProspectingBrief: (id) => request('POST', `/api/prospecting/briefs/${encodeURIComponent(id)}/conclude`, {}),
+
+    // Exclusões Permanentes de Prospecção (Workbench, Etapa 2) — exige MANAGE:PROSPECTING_EXCLUSIONS (só ADMIN); o
+    // servidor decide de verdade. "Excluir" pela interface é sempre desativar (nunca DELETE físico).
+    listProspectingExclusions: () => request('GET', '/api/prospecting/exclusions'),
+    createProspectingExclusion: (fields) => request('POST', '/api/prospecting/exclusions', fields),
+    updateProspectingExclusion: (id, patch) => request('PATCH', `/api/prospecting/exclusions/${encodeURIComponent(id)}`, patch),
+    deactivateProspectingExclusion: (id) => request('POST', `/api/prospecting/exclusions/${encodeURIComponent(id)}/deactivate`, {}),
+    activateProspectingExclusion: (id) => request('POST', `/api/prospecting/exclusions/${encodeURIComponent(id)}/activate`, {}),
   };
 }

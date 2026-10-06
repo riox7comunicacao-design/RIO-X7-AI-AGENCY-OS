@@ -51,6 +51,7 @@ const {
   authorizeCrmOperation,
   authorizeProposerForLeadApproval,
   authorizeFunnelOperation,
+  authorizeProspectingExclusionOperation,
 } = require('../auth');
 const { createApprovalQueueService } = require('../services/approvalQueueService');
 // Funnel Service (reestruturação Prospecção/CRM/Funis, Etapa "Funis 1") — só o adapter de arquivo local existe
@@ -64,6 +65,9 @@ const { createFileBackedFunnelService, createFileBackedActiveFunnelCardsChecker 
 const { createConfiguredCrmService, createConfiguredCrmRepository } = require('../services/crmRepositoryFactory');
 const { createFileBackedCrmIntegrationService } = require('../services/crmIntegrationFileService');
 const { createFileBackedProspectingService } = require('../services/prospectingFileService');
+// Prospecting Permanent Exclusion Service (Workbench, Etapa 2) — mesma REPOSITORY_MODE do CRM; só existe em
+// "supabase" (nunca um terceiro adapter local — ver o cabeçalho de prospectingExclusionRepositoryFactory.js).
+const { createConfiguredProspectingExclusionService } = require('../services/prospectingExclusionRepositoryFactory');
 // Prospecting Brief Service (Etapa "Prospecção 1" — Workbench): a camada ANTES da submissão — nunca reconstrói o
 // Prospecting Service, só o recebe pronto (ver o cabeçalho de prospectingBriefFileService.js).
 const { createFileBackedProspectingBriefService } = require('../services/prospectingBriefFileService');
@@ -205,14 +209,21 @@ function createServer(env = process.env, options = {}) {
     crmService,
   });
 
-  // Prospecting Brief Service (Workbench, Etapa "Prospecção 1"): o MESMO `prospectingService` acima, injetado —
-  // nunca reconstruído. Arquivo próprio (data/prospecting-briefs.json, fora do Git). `checkPermanentExclusion`
-  // fica de fora, de propósito: nenhum mecanismo real de exclusão permanente existe hoje (ver o cabeçalho de
-  // prospectingBriefService.js) — sem ele, o padrão é "nunca excluir por este motivo", nunca inventado aqui.
+  // Prospecting Permanent Exclusion Service (Workbench, Etapa 2): OPCIONAL — só existe quando REPOSITORY_MODE=
+  // supabase (a fábrica devolve `undefined` em "file", nunca um terceiro adapter local — ver o cabeçalho de
+  // prospectingExclusionRepositoryFactory.js). Sem ele, o Prospecting Brief Service abaixo simplesmente não
+  // recebe `checkPermanentExclusion` — o padrão de sempre ("nunca excluir por este motivo") continua valendo.
+  const prospectingExclusionService = createConfiguredProspectingExclusionService({ env, authorizeOperation: authorizeProspectingExclusionOperation });
+
+  // Prospecting Brief Service (Workbench, Etapa "Prospecção 1"; exclusões permanentes desde a Etapa 2): o MESMO
+  // `prospectingService` acima, injetado — nunca reconstruído. Arquivo próprio (data/prospecting-briefs.json,
+  // fora do Git). `checkPermanentExclusion` é o MESMO `isExcluded` do Service acima quando ele existe (Supabase
+  // configurado) — nunca uma segunda instância nem uma cópia da lista.
   const prospectingBriefService = createFileBackedProspectingBriefService({
     authorizeProposer: authorizeProposerForLeadApproval,
     prospectingService,
     filePath: resolveFile(env.RIO_X7_PROSPECTING_BRIEFS_PATH, undefined),
+    checkPermanentExclusion: prospectingExclusionService ? (finding) => prospectingExclusionService.isExcluded(finding) : undefined,
   });
 
   // Funnel Service (Etapa "Funis 1": funil/etapa, arquivo próprio, RIO_X7_FUNNELS_PATH; Etapa "Funis 2": card,
@@ -234,6 +245,7 @@ function createServer(env = process.env, options = {}) {
     crmIntegrationService,
     prospectingService,
     prospectingBriefService,
+    prospectingExclusionService,
     funnelService,
     publicConfig: { supabaseUrl, supabaseAnonKey },
     staticRoot: DASHBOARD_ROOT,

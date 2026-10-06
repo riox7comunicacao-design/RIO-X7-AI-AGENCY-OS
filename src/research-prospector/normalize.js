@@ -96,4 +96,8 @@ module.exports = {
   normalizeInstagram,
   normalizeNameCity,
   identityKeys,
+  // Exportada a partir da Etapa 2 do Workbench de Prospecção (Exclusões Permanentes): a mesma função, agora
+  // reutilizada por src/research-prospector/permanentExclusion.js para normalizar nome de empresa/cidade/estado
+  // (maiúsculas/minúsculas, acentuação) — nunca uma segunda implementação de normalização de texto.
+  stripAccents,
 };

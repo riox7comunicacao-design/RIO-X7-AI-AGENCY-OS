@@ -289,3 +289,81 @@ test('[BRIEF-SVC-17] PONTA A PONTA (Prospecting Service REAL): ingestFindings cr
   assert.equal(erro.code, 'BRIEF_INVALID_STATE');
   assert.equal(prospectingService.listBatches(admin()).length, 1, 'nenhum lote extra foi criado');
 });
+
+// ---------------------------------------------------------------------------------------------------------------------------------
+// EXCLUSÕES PERMANENTES (Etapa 2) — ponta a ponta com o Prospecting Exclusion Service e o Prospecting Service REAIS:
+// "Força Digital" nunca entra na fila, nunca vira lead prospectável, nunca chega perto de CRM/Card.
+// ---------------------------------------------------------------------------------------------------------------------------------
+test('[BRIEF-SVC-18] EXCLUSÃO PERMANENTE PONTA A PONTA (Prospecting Exclusion Service + Prospecting Service REAIS): "Força Digital" nunca entra na Approval Queue — logo, nunca pode ser promovida ao CRM nem virar Card; a empresa normal ao lado entra normalmente', async (t) => {
+  const fs = require('node:fs');
+  const os = require('node:os');
+  const path = require('node:path');
+  const { createProspectingExclusionService } = require('../../src/services/prospectingExclusionService');
+  const { createInMemoryPermanentExclusionRepository } = require('../../src/research-prospector/permanentExclusionRepository');
+  const { authorizeProspectingExclusionOperation } = require('../../src/auth');
+
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'brief-svc-exclusion-'));
+  t.after(() => fs.rmSync(dir, { recursive: true, force: true }));
+  const crmPath = path.join(dir, 'crm.json');
+  const crmService = createFileBackedCrmService({ authorizeOperation: authorizeCrmOperation, filePath: crmPath });
+  const queuePath = path.join(dir, 'approval-queue.json');
+  const prospectingService = createFileBackedProspectingService({
+    authorizeProposer: authorizeProposerForLeadApproval,
+    authorizeOperation: authorizeCrmOperation,
+    queuePath,
+    crmService,
+    batchPath: path.join(dir, 'prospecting-batches.json'),
+    dossierPath: path.join(dir, 'prospecting-dossiers.json'),
+  });
+
+  const exclusionService = createProspectingExclusionService({ authorizeOperation: authorizeProspectingExclusionOperation, repository: createInMemoryPermanentExclusionRepository(), now: () => AGORA });
+  await exclusionService.create(admin(), { empresa: 'Força Digital', motivo: 'Exclusão permanente de prospecção', cidade: 'Petrópolis', estado: 'RJ' });
+
+  const servico = createProspectingBriefService({
+    authorizeProposer: authorizeProposerForLeadApproval,
+    prospectingService,
+    repository: createInMemoryBriefRepository(),
+    now: () => AGORA,
+    checkPermanentExclusion: (finding) => exclusionService.isExcluded(finding),
+  });
+
+  const brief = await servico.createBrief(admin(), briefInput());
+  await servico.markReadyForResearch(admin(), brief.id);
+  await servico.generateResearchPackage(admin(), brief.id);
+
+  const achadoExcluido = {
+    empresa: 'Força Digital',
+    tipo: 'agência',
+    cidade: 'Petrópolis',
+    estado: 'RJ',
+    nicho: 'Marketing',
+    campos: { site: [{ valor: 'forca-digital-exemplo.example.test', fonte: 'Fonte de teste', tipoFonte: 'OFICIAL' }] },
+    fontes: ['https://forca-digital-exemplo.example.test'],
+  };
+  const achadoNormal = {
+    empresa: 'Clínica Normal Teste',
+    tipo: 'clínica',
+    cidade: 'Petrópolis',
+    estado: 'RJ',
+    nicho: 'Psicologia',
+    campos: { site: [{ valor: 'clinica-normal-teste.example.test', fonte: 'Fonte de teste', tipoFonte: 'OFICIAL' }] },
+    fontes: ['https://clinica-normal-teste.example.test'],
+  };
+
+  const resultado = await servico.ingestFindings(admin(), brief.id, [achadoExcluido, achadoNormal]);
+
+  // Preservado (nunca apagado em silêncio): a informação de que "Força Digital" foi bloqueada continua no brief.
+  assert.equal(resultado.excluidosPermanentemente, 1);
+  assert.deepEqual(resultado.bloqueiosPermanentes, [{ empresa: 'Força Digital', motivo: 'Exclusão permanente de prospecção' }]);
+
+  // O LOTE real (Prospecting Service) só recebeu o achado normal — "Força Digital" nunca chegou ao discovery, à
+  // fila nem ao lote: nunca foi "pesquisada para contato", nunca é um lead prospectável.
+  const lote = prospectingService.getBatch(admin(), resultado.brief.loteRealId);
+  assert.equal(lote.resultados.length, 1);
+  assert.equal(lote.resultados[0].empresa, 'Clínica Normal Teste');
+  assert.ok(!JSON.stringify(lote).includes('Força Digital'), 'nenhum traço de "Força Digital" chega ao lote real');
+
+  // Consequência estrutural: sem entrada na fila, não há prospect para promover ao CRM nem Card para criar — as
+  // duas ações downstream (crmIntegrationService/funnelService) nunca têm um id para agir, então nunca acontecem.
+  assert.equal((await crmService.listRecords(admin(), {})).length, 0, 'nada foi promovido ao CRM ainda (a aprovação humana continua sendo o próximo passo, só para o achado normal)');
+});

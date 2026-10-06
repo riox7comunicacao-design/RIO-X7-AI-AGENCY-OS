@@ -367,6 +367,8 @@ export const PERMISSIONS = Object.freeze({
   PROPOSE_CRM: 'PROPOSE:CRM',
   REVIEW: 'APPROVE:LEAD_APPROVAL',
   PROPOSE_LEAD_APPROVAL: 'PROPOSE:LEAD_APPROVAL',
+  // Administrar Exclusões Permanentes de Prospecção (Workbench, Etapa 2) — só ADMIN.
+  MANAGE_PROSPECTING_EXCLUSIONS: 'MANAGE:PROSPECTING_EXCLUSIONS',
 });
 
 // `me`: o que /api/me devolveu. As permissões vêm do servidor (derivadas da role dele), nunca do navegador.
@@ -379,6 +381,7 @@ export function permissionsOf(me) {
     canProposeCrm: list.includes(PERMISSIONS.PROPOSE_CRM),
     canReview: list.includes(PERMISSIONS.REVIEW),
     canProposeLead: list.includes(PERMISSIONS.PROPOSE_LEAD_APPROVAL),
+    canManageProspectingExclusions: list.includes(PERMISSIONS.MANAGE_PROSPECTING_EXCLUSIONS),
   };
 }
 

@@ -1,8 +1,10 @@
 // Fase A — permissões efetivas determinadas pela ROLE (fechamento da fronteira
 // de identidade e autorização; riscos R4 e R5).
 //
-// Decisão do proprietário: ADMIN possui EXATAMENTE 10 permissões (a nona, DELETE:CRM, da decisão 0025; a décima, MANAGE:FUNNELS, da reestruturação Prospecção/CRM/Funis) — exclusão
-// administrativa do CRM) e COMMERCIAL_CLOSER EXATAMENTE 5; não há customização de permissions por usuário. As
+// Decisão do proprietário: ADMIN possui EXATAMENTE 11 permissões (a nona, DELETE:CRM, da decisão 0025 — exclusão
+// administrativa do CRM; a décima, MANAGE:FUNNELS, da reestruturação Prospecção/CRM/Funis; a décima primeira,
+// MANAGE:PROSPECTING_EXCLUSIONS, da Etapa 2 do Workbench de Prospecção) e COMMERCIAL_CLOSER EXATAMENTE 5; não há
+// customização de permissions por usuário. As
 // listas abaixo são LITERAIS e independentes de src/ de propósito: se o código mudar (ou voltar a derivar as
 // permissões do enum PERMISSION), estes testes falham em vez de acompanhar a mudança.
 //
@@ -37,6 +39,7 @@ const ADMIN_LITERAL = [
   'APPROVE:OUTBOUND_APPROVAL',
   'MANAGE:USERS',
   'MANAGE:FUNNELS',
+  'MANAGE:PROSPECTING_EXCLUSIONS',
 ];
 
 const CLOSER_LITERAL = ['READ:CRM', 'ANALYZE:CRM', 'PROPOSE:CRM', 'APPROVE:LEAD_APPROVAL', 'APPROVE:OUTBOUND_APPROVAL'];
@@ -46,7 +49,7 @@ const CLOSER_LITERAL = ['READ:CRM', 'ANALYZE:CRM', 'PROPOSE:CRM', 'APPROVE:LEAD_
 // numa das duas listas de CADA role (concedida ou retida) — é isso que o
 // [ROLE-3] cobra.
 const ADMIN_EXPLICITLY_WITHHELD = [];
-const CLOSER_EXPLICITLY_WITHHELD = ['WRITE:CRM', 'DELETE:CRM', 'PROPOSE:LEAD_APPROVAL', 'MANAGE:USERS', 'MANAGE:FUNNELS'];
+const CLOSER_EXPLICITLY_WITHHELD = ['WRITE:CRM', 'DELETE:CRM', 'PROPOSE:LEAD_APPROVAL', 'MANAGE:USERS', 'MANAGE:FUNNELS', 'MANAGE:PROSPECTING_EXCLUSIONS'];
 
 const sorted = (list) => [...list].sort();
 
@@ -65,10 +68,10 @@ function userInput(overrides = {}) {
 // ===========================================================================
 // Tabela role -> permissions
 // ===========================================================================
-test('[ROLE-1] ADMIN possui EXATAMENTE 10 permissões, literais e iguais em todas as formas de acesso', () => {
-  assert.equal(ADMIN_LITERAL.length, 10);
-  assert.equal(ADMIN_PERMISSIONS.length, 10);
-  assert.equal(new Set(ADMIN_PERMISSIONS).size, 10, 'sem duplicatas');
+test('[ROLE-1] ADMIN possui EXATAMENTE 11 permissões, literais e iguais em todas as formas de acesso', () => {
+  assert.equal(ADMIN_LITERAL.length, 11);
+  assert.equal(ADMIN_PERMISSIONS.length, 11);
+  assert.equal(new Set(ADMIN_PERMISSIONS).size, 11, 'sem duplicatas');
   assert.deepEqual(sorted(ADMIN_PERMISSIONS), sorted(ADMIN_LITERAL));
   assert.deepEqual(sorted(getRolePermissions(ROLE.ADMIN)), sorted(ADMIN_LITERAL));
   assert.deepEqual(sorted(ROLE_PERMISSIONS[ROLE.ADMIN]), sorted(ADMIN_LITERAL));
@@ -138,7 +141,7 @@ test('[USER-1] defineUser sem permissions deriva as permissions da role, como c�
 
   assert.deepEqual(sorted(admin.permissions), sorted(ADMIN_LITERAL));
   assert.deepEqual(sorted(closer.permissions), sorted(CLOSER_LITERAL));
-  assert.equal(admin.permissions.length, 10);
+  assert.equal(admin.permissions.length, 11);
   assert.equal(closer.permissions.length, 5);
   assert.equal(Object.isFrozen(admin.permissions), true);
   assert.equal(Object.isFrozen(closer.permissions), true);

@@ -60,6 +60,11 @@ const PERMISSION = Object.freeze({
   // copiar, excluir, reordenar. Separada de WRITE:CRM (que é sobre um REGISTRO do CRM, não sobre a estrutura do
   // processo) pelo mesmo motivo de DELETE:CRM: é uma capacidade administrativa distinta. Só ADMIN a recebe.
   MANAGE_FUNNELS: 'MANAGE:FUNNELS',
+  // Administrar a lista de Exclusões Permanentes de Prospecção (Etapa 2 do Workbench: criar, editar, ativar,
+  // desativar uma exclusão). Nenhuma permissão existente cobre isto com precisão (não é sobre um registro do CRM,
+  // não é sobre Funil, não é propor um lead) — decisão explícita do proprietário de criar a MENOR permissão nova
+  // possível em vez de reaproveitar uma que não é semanticamente correta. Só ADMIN a recebe.
+  MANAGE_PROSPECTING_EXCLUSIONS: 'MANAGE:PROSPECTING_EXCLUSIONS',
 });
 
 const PERMISSION_FORMAT = /^[A-Z][A-Z0-9_]*:[A-Z][A-Z0-9_]*$/;
@@ -108,6 +113,8 @@ const ADMIN_PERMISSIONS = Object.freeze([
   PERMISSION.DELETE_CRM,
   // Gerenciar Funis/Etapas (reestruturação Prospecção/CRM/Funis) — só ADMIN; nunca COMMERCIAL_CLOSER.
   PERMISSION.MANAGE_FUNNELS,
+  // Administrar Exclusões Permanentes de Prospecção (Etapa 2 do Workbench) — só ADMIN; nunca COMMERCIAL_CLOSER.
+  PERMISSION.MANAGE_PROSPECTING_EXCLUSIONS,
 ]);
 
 // COMMERCIAL_CLOSER: exatamente as 5 permissões abaixo — WRITE:CRM, DELETE:CRM,

@@ -125,6 +125,8 @@ const PROSPECTING_OPERATION = 'submitProspecting';
 const PROSPECTING_BATCH_OPERATIONS = Object.freeze(['listBatches', 'getBatch']);
 // As operações do Prospecting Brief Service (Workbench, Etapa "Prospecção 1") que a API usa.
 const PROSPECTING_BRIEF_OPERATIONS = Object.freeze(['createBrief', 'listBriefs', 'getBrief', 'markReadyForResearch', 'generateResearchPackage', 'ingestFindings', 'cancelBrief', 'markConcluded']);
+// As operações do Prospecting Permanent Exclusion Service (Workbench, Etapa 2) que a API usa.
+const PROSPECTING_EXCLUSION_OPERATIONS = Object.freeze(['list', 'getById', 'create', 'update', 'deactivate', 'activate']);
 
 const NO_ACCESS_MESSAGE = 'Esta conta não possui acesso a esta área.';
 
@@ -174,6 +176,11 @@ const CATALOG = Object.freeze({
   BRIEF_NOT_FOUND: [404, 'Brief não encontrado.'],
   BRIEF_INVALID_STATE: [409, 'Esta ação não é permitida no estado atual do brief.'],
   BRIEF_PERSISTENCE: [503, 'Não foi possível ler ou gravar os briefs agora. Tente novamente em instantes.'],
+  // Exclusões Permanentes de Prospecção (Etapa 2), por `code` estável do Prospecting Permanent Exclusion Service
+  // (prospectingExclusionService.js) — nunca por mensagem.
+  EXCLUSION_INVALID_INPUT: [400, 'A exclusão é inválida.'],
+  EXCLUSION_NOT_FOUND: [404, 'Exclusão não encontrada.'],
+  EXCLUSION_PERSISTENCE: [503, 'Não foi possível ler ou gravar as exclusões agora. Tente novamente em instantes.'],
   // Funis configuráveis (Etapa "Funis 1"), por `code` estável do domínio (funnelDomain.js) — nunca por mensagem:
   // quais funis/etapas foram vinculados a um card não é dito (o card ainda nem existe nesta etapa).
   FUNNEL_HAS_CARDS: [409, 'Este funil possui cards vinculados e não pode ser excluído.'],
@@ -288,6 +295,14 @@ const CRM_CODES = Object.freeze({
   CRM_HAS_ACTIVE_FUNNEL_CARDS: 'CRM_HAS_ACTIVE_FUNNEL_CARDS',
 });
 
+// O `code` do Prospecting Permanent Exclusion Service (prospectingExclusionService.js) que a API reconhece —
+// mesmo mapeamento identidade das listas acima (Etapa 2 do Workbench de Prospecção).
+const EXCLUSION_CODES = Object.freeze({
+  EXCLUSION_INVALID_INPUT: 'EXCLUSION_INVALID_INPUT',
+  EXCLUSION_NOT_FOUND: 'EXCLUSION_NOT_FOUND',
+  EXCLUSION_PERSISTENCE: 'EXCLUSION_PERSISTENCE',
+});
+
 // O `code` do Prospecting Brief Service (prospectingBriefService.js) que a API reconhece — mesmo mapeamento
 // identidade de CRM_CODES/FUNNEL_CODES acima (Etapa "Prospecção 1").
 const BRIEF_CODES = Object.freeze({
@@ -374,6 +389,9 @@ function mapErrorToHttp(error) {
     code = CRM_CODES[error.code];
   } else if (error && typeof error === 'object' && Object.prototype.hasOwnProperty.call(BRIEF_CODES, error.code)) {
     code = BRIEF_CODES[error.code];
+    if (CATALOG[code][0] === 400) details = safeDetails(error.details);
+  } else if (error && typeof error === 'object' && Object.prototype.hasOwnProperty.call(EXCLUSION_CODES, error.code)) {
+    code = EXCLUSION_CODES[error.code];
     if (CATALOG[code][0] === 400) details = safeDetails(error.details);
   } else {
     const message = error && typeof error.message === 'string' ? error.message : '';
@@ -540,7 +558,7 @@ function parseTarget(req) {
 }
 
 // `crm`: as rotas do CRM só existem quando o CRM Service foi injetado; sem ele, /api/crm... é uma rota desconhecida (404).
-function matchRoute(pathname, { crm, promotion, prospecting, prospectingBatchReads, prospectingBrief, funnels }) {
+function matchRoute(pathname, { crm, promotion, prospecting, prospectingBatchReads, prospectingBrief, prospectingExclusions, funnels }) {
   if (pathname === '/api/me') return { name: 'me', label: '/api/me', methods: ['GET'] };
   if (pathname === '/api/approvals') return { name: 'list', label: '/api/approvals', methods: ['GET'] };
   if (prospecting && pathname === '/api/prospecting/submit') return { name: 'prospecting-submit', label: '/api/prospecting/submit', methods: ['POST'] };
@@ -559,6 +577,15 @@ function matchRoute(pathname, { crm, promotion, prospecting, prospectingBatchRea
     if (action) return { family: 'prospecting-brief', name: `brief-${action[2]}`, label: `/api/prospecting/briefs/:id/${action[2]}`, methods: ['POST'], rawId: action[1] };
     const item = /^\/api\/prospecting\/briefs\/([^/]+)$/.exec(pathname);
     if (item) return { family: 'prospecting-brief', name: 'brief-item', label: '/api/prospecting/briefs/:id', methods: ['GET'], rawId: item[1] };
+  }
+  // Exclusões Permanentes de Prospecção (Workbench, Etapa 2) — administração, só existe quando o Service foi
+  // injetado (REPOSITORY_MODE=supabase). Mesmo cuidado de ordem: ações (/activate, /deactivate) antes do :id genérico.
+  if (prospectingExclusions) {
+    if (pathname === '/api/prospecting/exclusions') return { family: 'prospecting-exclusion', name: 'exclusion-collection', label: '/api/prospecting/exclusions', methods: ['GET', 'POST'] };
+    const action = /^\/api\/prospecting\/exclusions\/([^/]+)\/(activate|deactivate)$/.exec(pathname);
+    if (action) return { family: 'prospecting-exclusion', name: `exclusion-${action[2]}`, label: `/api/prospecting/exclusions/:id/${action[2]}`, methods: ['POST'], rawId: action[1] };
+    const item2 = /^\/api\/prospecting\/exclusions\/([^/]+)$/.exec(pathname);
+    if (item2) return { family: 'prospecting-exclusion', name: 'exclusion-item', label: '/api/prospecting/exclusions/:id', methods: ['GET', 'PATCH'], rawId: item2[1] };
   }
   if (promotion) {
     const promote = /^\/api\/approvals\/([^/]+)\/promote$/.exec(pathname);
@@ -676,6 +703,7 @@ function createApp(dependencies) {
     crmIntegrationService,
     prospectingService,
     prospectingBriefService,
+    prospectingExclusionService,
     funnelService,
     publicConfig,
     staticRoot,
@@ -707,6 +735,13 @@ function createApp(dependencies) {
     for (const operation of PROSPECTING_BRIEF_OPERATIONS) {
       if (!prospectingBriefService || typeof prospectingBriefService[operation] !== 'function') {
         throw new Error(`createApp exige { prospectingBriefService } com ${operation}()`);
+      }
+    }
+  }
+  if (prospectingExclusionService !== undefined) {
+    for (const operation of PROSPECTING_EXCLUSION_OPERATIONS) {
+      if (!prospectingExclusionService || typeof prospectingExclusionService[operation] !== 'function') {
+        throw new Error(`createApp exige { prospectingExclusionService } com ${operation}()`);
       }
     }
   }
@@ -908,6 +943,26 @@ function createApp(dependencies) {
     throw new HttpError('ROUTE_NOT_FOUND');
   }
 
+  // Exclusões Permanentes de Prospecção (Workbench, Etapa 2) — administração (só ADMIN, MANAGE:PROSPECTING_
+  // EXCLUSIONS, decidido pelo Service). "excluir" pela interface é sempre /deactivate — nunca um DELETE físico
+  // (não existe nenhuma rota DELETE aqui, de propósito).
+  async function dispatchProspectingExclusion(req, url, route, context) {
+    readQuery(url, []);
+    if (route.name === 'exclusion-collection') {
+      if (req.method === 'GET') return respond(200, { items: await prospectingExclusionService.list(context) });
+      return respond(201, { item: await prospectingExclusionService.create(context, await readJsonBody(req)) });
+    }
+    const id = decodeId(route.rawId);
+    if (route.name === 'exclusion-item') {
+      if (req.method === 'GET') return respond(200, { item: await prospectingExclusionService.getById(context, id) });
+      return respond(200, { item: await prospectingExclusionService.update(context, id, await readJsonBody(req)) });
+    }
+    if (Object.keys(await readJsonBody(req)).length > 0) throw new HttpError('INVALID_REQUEST', 'Campos não permitidos na requisição.');
+    if (route.name === 'exclusion-deactivate') return respond(200, { item: await prospectingExclusionService.deactivate(context, id) });
+    if (route.name === 'exclusion-activate') return respond(200, { item: await prospectingExclusionService.activate(context, id) });
+    throw new HttpError('ROUTE_NOT_FOUND');
+  }
+
   async function dispatch(req, trace) {
     const url = parseTarget(req);
     const route = matchRoute(url.pathname, {
@@ -916,6 +971,7 @@ function createApp(dependencies) {
       prospecting: prospectingService !== undefined,
       prospectingBatchReads: prospectingHasBatchReads,
       prospectingBrief: prospectingBriefService !== undefined,
+      prospectingExclusions: prospectingExclusionService !== undefined,
       funnels: funnelService !== undefined,
     });
     if (route === null) {
@@ -931,6 +987,7 @@ function createApp(dependencies) {
     if (route.family === 'crm') return dispatchCrm(req, url, route, context);
     if (route.family === 'funnel') return dispatchFunnel(req, url, route, context);
     if (route.family === 'prospecting-brief') return dispatchProspectingBrief(req, url, route, context);
+    if (route.family === 'prospecting-exclusion') return dispatchProspectingExclusion(req, url, route, context);
 
     if (route.name === 'prospecting-submit') {
       // Só transporte: sem query, corpo JSON (objeto) de até 4 MiB, e o objeto INTEIRO vai ao serviço — que decide (autoriza

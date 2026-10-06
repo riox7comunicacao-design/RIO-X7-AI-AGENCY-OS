@@ -95,8 +95,8 @@ test('[DASH-SHELL-3] login: o e-mail e a senha digitados vão SÓ para o SDK; de
   await entrarPeloFormulario(t);
   assert.deepEqual(t.sdk.calls.signIn, [{ email: 'usuario-teste@example.test', password: 'senha-de-teste-nao-real' }]);
 
-  assert.deepEqual(linksDoMenu(t.browser).map((link) => link.textContent), ['Visão Geral', 'CRM', 'Aprovações', 'Prospecção', 'Funis', 'Central de Agentes']);
-  assert.deepEqual(linksDoMenu(t.browser).map((link) => link.href), ['#/', '#/crm', '#/aprovacoes', '#/prospeccao', '#/funis', '#/agentes']);
+  assert.deepEqual(linksDoMenu(t.browser).map((link) => link.textContent), ['Visão Geral', 'CRM', 'Aprovações', 'Prospecção', 'Funis', 'Central de Agentes', 'Exclusões Permanentes']);
+  assert.deepEqual(linksDoMenu(t.browser).map((link) => link.href), ['#/', '#/crm', '#/aprovacoes', '#/prospeccao', '#/funis', '#/agentes', '#/exclusoes-permanentes']);
   assert.ok(t.browser.by.button(t.browser.root, 'Sair'));
   const texto = textoDaTela(t.browser);
   assert.match(texto, /Breno/);
@@ -137,7 +137,7 @@ test('[DASH-SHELL-5] e-mail ou senha vazios: pede os dois e nem chama o SDK', as
 test('[DASH-SHELL-6] com sessão já existente o painel abre direto, sem passar pelo login', async () => {
   const t = await iniciar({ session: true, routes: await rotasLogado() });
   assert.equal(t.browser.by.tag(t.browser.root, 'form').length, 0);
-  assert.deepEqual(linksDoMenu(t.browser).map((link) => link.textContent), ['Visão Geral', 'CRM', 'Aprovações', 'Prospecção', 'Funis', 'Central de Agentes']);
+  assert.deepEqual(linksDoMenu(t.browser).map((link) => link.textContent), ['Visão Geral', 'CRM', 'Aprovações', 'Prospecção', 'Funis', 'Central de Agentes', 'Exclusões Permanentes']);
   assert.deepEqual(t.sdk.calls.signIn, []);
 });
 
@@ -165,7 +165,7 @@ test('[DASH-SHELL-7] logout: "Sair" encerra a sessão no SDK, volta ao login, n�
   assert.equal(chamadasDeApi(t.fetchImpl).length, antes, 'nenhuma chamada nova de API');
 
   await entrarPeloFormulario(t);
-  assert.deepEqual(linksDoMenu(t.browser).map((link) => link.textContent), ['Visão Geral', 'CRM', 'Aprovações', 'Prospecção', 'Funis', 'Central de Agentes']);
+  assert.deepEqual(linksDoMenu(t.browser).map((link) => link.textContent), ['Visão Geral', 'CRM', 'Aprovações', 'Prospecção', 'Funis', 'Central de Agentes', 'Exclusões Permanentes']);
   assert.equal(t.browser.window._listeners.size, 1, 'um único ouvinte de rotas de novo (nada vazou)');
 });
 
