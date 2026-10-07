@@ -44,6 +44,11 @@ function web(rotas, opcoes = {}) {
   const w = createPublicWeb({ transport: t, userAgent: UA, now: () => new Date(relogio), sleep: async (ms) => { dormiu.push(ms); relogio += ms; }, ...opcoes });
   return { w, t, dormiu, avancar: (ms) => { relogio += ms; } };
 }
+// `causa` (a causa técnica específica da falha) é ADITIVA: estes testes fixam o contrato EXTERNO { ok, falha }; a causa tem testes próprios ([ADP-CAUSA-*]).
+const semCausa = (resultado) => {
+  const { causa, ...resto } = resultado;
+  return resto;
+};
 const paginas = (t) => t.chamadas.filter((c) => !c.url.endsWith('/robots.txt')).map((c) => c.url);
 const eventos = (w) => w.estatisticas().eventos.map((e) => e.codigo);
 
@@ -51,7 +56,8 @@ const eventos = (w) => w.estatisticas().eventos.map((e) => e.codigo);
 test('[ADP-1] SUCESSO: robots.txt lido primeiro, depois a página; devolve exatamente o contrato do Researcher { ok, urlFinal, links, temFormularioContato }', async () => {
   const { w, t } = web({ [SITE]: html(PAGINA_COM_LINKS) });
   const r = await w.fetchPage(SITE);
-  assert.deepEqual(Object.keys(r).sort(), ['links', 'ok', 'temFormularioContato', 'urlFinal']);
+  assert.deepEqual(Object.keys(r).sort(), ['links', 'ok', 'temFormularioContato', 'texto', 'urlFinal'], 'os 4 campos do contrato + `texto` (aditivo)');
+  assert.equal(typeof r.texto, 'string');
   assert.deepEqual([r.ok, r.urlFinal, r.temFormularioContato], [true, SITE, true]);
   assert.ok(r.links.some((l) => l.href === 'https://www.instagram.com/alfa_teste' && l.texto === 'Instagram'));
   assert.ok(r.links.some((l) => l.href === 'https://alfa-teste.example.test/agendar' && l.texto === 'Agende sua consulta'), 'links relativos resolvidos contra a página');
@@ -61,7 +67,7 @@ test('[ADP-1] SUCESSO: robots.txt lido primeiro, depois a página; devolve exata
 
 test('[ADP-2] TIMEOUT: o transporte estoura o tempo -> TEMPO_ESGOTADO (sem nova tentativa); o tempo é explícito, configurável e nunca infinito', async () => {
   const { w, t } = web({ [SITE]: new TransportError('TIMEOUT') }, { timeoutMs: 1234 });
-  assert.deepEqual(await w.fetchPage(SITE), { ok: false, falha: FAILURE.TEMPO_ESGOTADO });
+  assert.deepEqual(semCausa(await w.fetchPage(SITE)), { ok: false, falha: FAILURE.TEMPO_ESGOTADO });
   assert.equal(paginas(t).length, 1, 'uma única tentativa');
   assert.deepEqual(t.chamadas.map((c) => c.timeoutMs), [1234, 1234], 'o robots.txt e a página usam o tempo configurado');
   assert.ok(eventos(w).includes('TIMEOUT'));
@@ -73,10 +79,10 @@ test('[ADP-2] TIMEOUT: o transporte estoura o tempo -> TEMPO_ESGOTADO (sem nova 
 test('[ADP-3] HTTPS INVÁLIDO: http, javascript:, data:, file:, ftp:, //host, host local, IP, porta e usuário/senha são recusados ANTES de qualquer requisição; um redirecionamento para http também', async () => {
   const { w, t } = web({ [SITE]: resp(302, '', { location: 'http://alfa-teste.example.test/x' }) });
   for (const url of ['http://a.example.test/', 'javascript:alert(1)', 'data:text/html,x', 'file:///C:/x', 'ftp://a.example.test/', '//a.example.test/', 'https://localhost/', 'https://127.0.0.1/', 'https://10.0.0.5/', 'https://[::1]/', 'https://a.example.test:8443/', 'https://u:p@a.example.test/', 'texto', '', null, undefined, 5, {}]) {
-    assert.deepEqual(await w.fetchPage(url), { ok: false, falha: FAILURE.ERRO }, String(url));
+    assert.deepEqual(semCausa(await w.fetchPage(url)), { ok: false, falha: FAILURE.ERRO }, String(url));
   }
   assert.equal(t.chamadas.length, 0, 'nenhuma requisição saiu');
-  assert.deepEqual(await w.fetchPage(SITE), { ok: false, falha: FAILURE.ERRO });
+  assert.deepEqual(semCausa(await w.fetchPage(SITE)), { ok: false, falha: FAILURE.ERRO });
   assert.ok(eventos(w).includes('REDIRECT_INVALIDO'));
   assert.equal(paginas(t).length, 1, 'o destino http nunca foi buscado');
 });
@@ -92,20 +98,20 @@ test('[ADP-4] REDIRECT: seguido à mão dentro do limite (3), só no mesmo host 
   const laco = {};
   for (let i = 0; i < 6; i += 1) laco[`https://alfa-teste.example.test/${i === 0 ? '' : i}`] = salto(i, `/${i + 1}`);
   const b = web(laco);
-  assert.deepEqual(await b.w.fetchPage(SITE), { ok: false, falha: FAILURE.ERRO });
+  assert.deepEqual(semCausa(await b.w.fetchPage(SITE)), { ok: false, falha: FAILURE.ERRO });
   assert.ok(eventos(b.w).includes('REDIRECTS_EXCESSIVOS'));
   assert.equal(paginas(b.t).length, 4, '1 pedido + 3 redirecionamentos, nunca mais');
   assert.equal(web({}, { maxRedirects: 0 }).w.estatisticas().limites.maxRedirects, 0);
 
   const externo = web({ [SITE]: resp(302, '', { location: 'https://outro-dominio.example.test/' }) });
-  assert.deepEqual(await externo.w.fetchPage(SITE), { ok: false, falha: FAILURE.ERRO });
+  assert.deepEqual(semCausa(await externo.w.fetchPage(SITE)), { ok: false, falha: FAILURE.ERRO });
   assert.ok(eventos(externo.w).includes('REDIRECT_EXTERNO'));
   assert.equal(paginas(externo.t).length, 1);
   const liberado = web({ [SITE]: resp(302, '', { location: 'https://outro-dominio.example.test/' }), 'https://outro-dominio.example.test/': html('<a href="/x">x</a>') }, { allowCrossHostRedirects: true });
   assert.equal((await liberado.w.fetchPage(SITE)).ok, true);
 
   const semDestino = web({ [SITE]: resp(302) });
-  assert.deepEqual(await semDestino.w.fetchPage(SITE), { ok: false, falha: FAILURE.ERRO });
+  assert.deepEqual(semCausa(await semDestino.w.fetchPage(SITE)), { ok: false, falha: FAILURE.ERRO });
   assert.ok(eventos(semDestino.w).includes('REDIRECT_SEM_DESTINO'));
   for (const [destino, codigo] of [['http://alfa-teste.example.test/', 'REDIRECT_INVALIDO'], ['javascript:alert(1)', 'REDIRECT_INVALIDO'], ['https://127.0.0.1/', 'REDIRECT_INVALIDO'], ['https://localhost/', 'REDIRECT_INVALIDO']]) {
     const x = web({ [SITE]: resp(302, '', { location: destino }) });
@@ -117,26 +123,26 @@ test('[ADP-4] REDIRECT: seguido à mão dentro do limite (3), só no mesmo host 
 test('[ADP-5] REDIRECT PARA LOGIN: LOGIN com o evento REDIRECT_TO_LOGIN; a tela de login NUNCA é buscada e não há nova tentativa', async () => {
   for (const destino of ['/login', '/accounts/login/?next=/', 'https://alfa-teste.example.test/checkpoint/1', '/signin', '/authwall']) {
     const { w, t } = web({ [SITE]: resp(302, '', { location: destino }) });
-    assert.deepEqual(await w.fetchPage(SITE), { ok: false, falha: FAILURE.LOGIN }, destino);
+    assert.deepEqual(semCausa(await w.fetchPage(SITE)), { ok: false, falha: FAILURE.LOGIN }, destino);
     assert.ok(eventos(w).includes('REDIRECT_TO_LOGIN'), destino);
     assert.equal(paginas(t).length, 1, `${destino}: só a página original foi pedida`);
     assert.deepEqual(w.estatisticas().falhas, { LOGIN: 1 });
   }
   const direta = web({});
-  assert.deepEqual(await direta.w.fetchPage('https://alfa-teste.example.test/login'), { ok: false, falha: FAILURE.LOGIN });
+  assert.deepEqual(semCausa(await direta.w.fetchPage('https://alfa-teste.example.test/login')), { ok: false, falha: FAILURE.LOGIN });
   assert.equal(direta.t.chamadas.length, 0);
   assert.ok(eventos(direta.w).includes('URL_DE_LOGIN'));
 });
 
 test('[ADP-6] CAPTCHA: desafio anunciado por cabeçalho, desafio forte no HTML e captcha numa página quase sem links = CAPTCHA (nunca resolvido); um site normal com reCAPTCHA num formulário NÃO é bloqueio', async () => {
   const cf = web({ [SITE]: resp(403, 'x', { 'cf-mitigated': 'challenge' }) });
-  assert.deepEqual(await cf.w.fetchPage(SITE), { ok: false, falha: FAILURE.CAPTCHA });
+  assert.deepEqual(semCausa(await cf.w.fetchPage(SITE)), { ok: false, falha: FAILURE.CAPTCHA });
   const cf503 = web({ [SITE]: resp(503, 'x', { 'cf-mitigated': 'challenge' }) });
   assert.equal((await cf503.w.fetchPage(SITE)).falha, FAILURE.CAPTCHA);
   const forte = web({ [SITE]: html('<title>Just a moment...</title><div id="cf-chl-widget"></div>' + linksHtml(20)) });
   assert.equal((await forte.w.fetchPage(SITE)).falha, FAILURE.CAPTCHA);
   const fraco = web({ [SITE]: html('<div class="g-recaptcha"></div><a href="/a">a</a>') });
-  assert.deepEqual(await fraco.w.fetchPage(SITE), { ok: false, falha: FAILURE.CAPTCHA });
+  assert.deepEqual(semCausa(await fraco.w.fetchPage(SITE)), { ok: false, falha: FAILURE.CAPTCHA });
   assert.ok(eventos(fraco.w).includes('DESAFIO_NA_PAGINA'));
   const normal = web({ [SITE]: html(`${linksHtml(8)}<form><textarea></textarea><div class="g-recaptcha"></div></form>`) });
   const r = await normal.w.fetchPage(SITE);
@@ -148,14 +154,14 @@ test('[ADP-7] BLOQUEIO: 401 = LOGIN; 403 e 429 = BLOQUEADO; endereço não públ
   const casos = [[401, FAILURE.LOGIN], [403, FAILURE.BLOQUEADO], [429, FAILURE.BLOQUEADO], [404, FAILURE.REMOVIDA], [410, FAILURE.REMOVIDA], [500, FAILURE.FORA_DO_AR], [502, FAILURE.FORA_DO_AR], [503, FAILURE.FORA_DO_AR], [418, FAILURE.ERRO], [100, FAILURE.ERRO]];
   for (const [status, falha] of casos) {
     const { w, t } = web({ [SITE]: resp(status, 'x') });
-    assert.deepEqual(await w.fetchPage(SITE), { ok: false, falha }, String(status));
+    assert.deepEqual(semCausa(await w.fetchPage(SITE)), { ok: false, falha }, String(status));
     assert.equal(paginas(t).length, 1, `${status}: sem nova tentativa`);
   }
   const ssrf = web({ [SITE]: new TransportError('SSRF') });
-  assert.deepEqual(await ssrf.w.fetchPage(SITE), { ok: false, falha: FAILURE.BLOQUEADO });
+  assert.deepEqual(semCausa(await ssrf.w.fetchPage(SITE)), { ok: false, falha: FAILURE.BLOQUEADO });
   assert.ok(eventos(ssrf.w).includes('ENDERECO_NAO_PUBLICO'));
   const muro = web({ [SITE]: html('<form><input type="password" name="s"><input name="u"></form><a href="/esqueci">Esqueci</a>') });
-  assert.deepEqual(await muro.w.fetchPage(SITE), { ok: false, falha: FAILURE.LOGIN });
+  assert.deepEqual(semCausa(await muro.w.fetchPage(SITE)), { ok: false, falha: FAILURE.LOGIN });
   assert.ok(eventos(muro.w).includes('MURO_DE_LOGIN'));
   const portal = web({ [SITE]: html(`${linksHtml(10)}<form><input type="password"></form>`) });
   assert.equal((await portal.w.fetchPage(SITE)).ok, true, 'site com portal de login e conteúdo público: o conteúdo público vale');
@@ -163,7 +169,7 @@ test('[ADP-7] BLOQUEIO: 401 = LOGIN; 403 e 429 = BLOQUEADO; endereço não públ
 
 test('[ADP-8] ROBOTS: bloqueado pelo robots.txt = ROBOTS sem pedir a página; robots inexistente (404/410) = permitido; qualquer outra coisa que impeça verificar = NÃO acessa; uma consulta por origem', async () => {
   const bloqueia = web({ 'https://alfa-teste.example.test/robots.txt': resp(200, 'User-agent: *\nDisallow: /', { 'content-type': 'text/plain' }), [SITE]: html(PAGINA_COM_LINKS) });
-  assert.deepEqual(await bloqueia.w.fetchPage(SITE), { ok: false, falha: FAILURE.ROBOTS });
+  assert.deepEqual(semCausa(await bloqueia.w.fetchPage(SITE)), { ok: false, falha: FAILURE.ROBOTS });
   assert.equal(paginas(bloqueia.t).length, 0, 'a página proibida nunca foi pedida');
   assert.ok(eventos(bloqueia.w).includes('ROBOTS_BLOQUEIA'));
 
@@ -172,7 +178,7 @@ test('[ADP-8] ROBOTS: bloqueado pelo robots.txt = ROBOTS sem pedir a página; ro
   const naoVerifica = [['401', resp(401)], ['403', resp(403)], ['500', resp(500)], ['503', resp(503)], ['400', resp(400)], ['timeout', new TransportError('TIMEOUT')], ['rede', new TransportError('NETWORK')], ['grande', new TransportError('TOO_LARGE')], ['ssrf', new TransportError('SSRF')], ['redirect externo', resp(301, '', { location: 'https://outro.example.test/robots.txt' })], ['redirect sem destino', resp(301)], ['gzip', resp(200, 'User-agent: *\nAllow: /', { 'content-encoding': 'gzip' })], ['resposta inválida', { status: 'x', headers: {}, body: 'y' }]];
   for (const [nome, robots] of naoVerifica) {
     const { w, t } = web({ 'https://alfa-teste.example.test/robots.txt': robots, [SITE]: html('<a href="/x">x</a>') });
-    assert.deepEqual(await w.fetchPage(SITE), { ok: false, falha: FAILURE.ROBOTS }, nome);
+    assert.deepEqual(semCausa(await w.fetchPage(SITE)), { ok: false, falha: FAILURE.ROBOTS }, nome);
     assert.equal(paginas(t).length, 0, `${nome}: sem verificação adequada NÃO se acessa`);
     assert.ok(eventos(w).includes('ROBOTS_NAO_VERIFICADO'), nome);
   }
@@ -185,12 +191,12 @@ test('[ADP-8] ROBOTS: bloqueado pelo robots.txt = ROBOTS sem pedir a página; ro
   assert.equal((await nosso.w.fetchPage(SITE)).falha, FAILURE.ROBOTS, 'o grupo do NOSSO user-agent prevalece sobre o *');
   // a API também respeita o robots: getJson passa pelo mesmo caminho
   const api = web({ 'https://api.example.test/robots.txt': resp(200, 'User-agent: *\nDisallow: /search', { 'content-type': 'text/plain' }) });
-  assert.deepEqual(await api.w.getJson('https://api.example.test/search?q=x'), { ok: false, falha: FAILURE.ROBOTS });
+  assert.deepEqual(semCausa(await api.w.getJson('https://api.example.test/search?q=x')), { ok: false, falha: FAILURE.ROBOTS });
 });
 
 test('[ADP-9] RESPOSTA MUITO GRANDE: o limite é passado ao transporte (1 MiB páginas, 512 KiB robots.txt) e o estouro é falha ERRO sem ler o resto; limites validados e finitos', async () => {
   const { w, t } = web({ [SITE]: new TransportError('TOO_LARGE') });
-  assert.deepEqual(await w.fetchPage(SITE), { ok: false, falha: FAILURE.ERRO });
+  assert.deepEqual(semCausa(await w.fetchPage(SITE)), { ok: false, falha: FAILURE.ERRO });
   assert.ok(eventos(w).includes('RESPOSTA_GRANDE'));
   assert.deepEqual(t.chamadas.map((c) => [c.url.endsWith('/robots.txt') ? 'robots' : 'pagina', c.maxBytes]), [['robots', 512 * 1024], ['pagina', 1024 * 1024]]);
   const menor = web({ [SITE]: html('<a href="/x">x</a>') }, { maxBytes: 4096, robotsMaxBytes: 2048 });
@@ -201,14 +207,14 @@ test('[ADP-9] RESPOSTA MUITO GRANDE: o limite é passado ao transporte (1 MiB p�
 
 test('[ADP-10] CONTEÚDO INVÁLIDO: tipo que não é HTML, JSON malformado, codificação comprimida inesperada, resposta fora da forma e bytes aleatórios são tratados sem lançar; nada é executado', async () => {
   for (const [nome, resposta] of [['pdf', resp(200, '%PDF-1.4', { 'content-type': 'application/pdf' })], ['imagem', resp(200, 'GIF89a', { 'content-type': 'image/gif' })], ['sem tipo', { status: 200, headers: {}, body: Buffer.from('<a href="/x">x</a>') }], ['json como página', resp(200, '{"a":1}', { 'content-type': 'application/json' })]]) {
-    assert.deepEqual(await web({ [SITE]: resposta }).w.fetchPage(SITE), { ok: false, falha: FAILURE.ERRO }, nome);
+    assert.deepEqual(semCausa(await web({ [SITE]: resposta }).w.fetchPage(SITE)), { ok: false, falha: FAILURE.ERRO }, nome);
   }
   const gz = web({ [SITE]: html('x', { 'content-encoding': 'gzip' }) });
-  assert.deepEqual(await gz.w.fetchPage(SITE), { ok: false, falha: FAILURE.ERRO });
+  assert.deepEqual(semCausa(await gz.w.fetchPage(SITE)), { ok: false, falha: FAILURE.ERRO });
   assert.ok(eventos(gz.w).includes('CODIFICACAO'));
   assert.equal((await web({ [SITE]: html('x', { 'content-encoding': 'identity' }) }).w.fetchPage(SITE)).ok, true);
   for (const lixo of [null, 5, 'x', {}, { status: 200 }, { status: '200', headers: {}, body: Buffer.from('') }, { status: 200, headers: {}, body: 'texto' }]) {
-    assert.deepEqual(await web({ [SITE]: lixo }).w.fetchPage(SITE), { ok: false, falha: FAILURE.ERRO }, JSON.stringify(lixo));
+    assert.deepEqual(semCausa(await web({ [SITE]: lixo }).w.fetchPage(SITE)), { ok: false, falha: FAILURE.ERRO }, JSON.stringify(lixo));
   }
   const bytes = Buffer.from(Array.from({ length: 5000 }, (_, i) => (i * 37) % 256));
   const r = await web({ [SITE]: { status: 200, headers: { 'content-type': 'text/html' }, body: bytes } }).w.fetchPage(SITE);
@@ -216,7 +222,7 @@ test('[ADP-10] CONTEÚDO INVÁLIDO: tipo que não é HTML, JSON malformado, codi
   const script = await web({ [SITE]: html('<script>document.location="https://evil.example.test/"; fetch("https://evil.example.test/steal")</script><a href="/ok">ok</a><!-- <a href="https://evil.example.test/c">c</a> -->') }).w.fetchPage(SITE);
   assert.deepEqual(script.links.map((l) => l.href), ['https://alfa-teste.example.test/ok'], 'script e comentário não são lidos nem seguidos');
   const json = web({ 'https://api.example.test/x': resp(200, '{ quebrado', { 'content-type': 'application/json' }) });
-  assert.deepEqual(await json.w.getJson('https://api.example.test/x'), { ok: false, falha: FAILURE.ERRO });
+  assert.deepEqual(semCausa(await json.w.getJson('https://api.example.test/x')), { ok: false, falha: FAILURE.ERRO });
   assert.deepEqual(await web({ 'https://api.example.test/x': resp(200, '[1,2]', { 'content-type': 'application/json; charset=utf-8' }) }).w.getJson('https://api.example.test/x'), { ok: true, data: [1, 2] });
   assert.equal((await web({ 'https://api.example.test/x': resp(200, '[]', { 'content-type': 'text/html' }) }).w.getJson('https://api.example.test/x')).ok, false);
 });
@@ -225,7 +231,7 @@ test('[ADP-11] ERRO DE REDE: rede = FORA_DO_AR; TLS = ERRO; exceção desconheci
   for (const [erro, falha, evento] of [[new TransportError('NETWORK'), FAILURE.FORA_DO_AR, 'ERRO_DE_REDE'], [new TransportError('TLS'), FAILURE.ERRO, 'TLS'], [new TransportError('INVALID_URL'), FAILURE.ERRO, 'URL_INVALIDA'], [new Error('C:\\segredo\\x ECONNRESET https://interno.example.test'), FAILURE.ERRO, 'ERRO_INTERNO'], [new TypeError('boom'), FAILURE.ERRO, 'ERRO_INTERNO']]) {
     const { w } = web({ [SITE]: erro });
     const r = await w.fetchPage(SITE);
-    assert.deepEqual(r, { ok: false, falha }, erro.message);
+    assert.deepEqual(semCausa(r), { ok: false, falha }, erro.message);
     assert.ok(eventos(w).includes(evento), erro.message);
     assert.doesNotMatch(JSON.stringify([r, w.estatisticas()]), /segredo|interno\.example|ECONNRESET|boom|https:\/\/alfa-teste\.example\.test\/[a-z]/i);
   }
@@ -237,8 +243,8 @@ test('[ADP-12] LIMITE DE REQUISIÇÕES: o orçamento total (robots.txt incluído
   const { w, t } = web(rotas, { maxRequests: 3, minIntervalMs: 0 });
   assert.equal((await w.fetchPage('https://alfa-teste.example.test/p0')).ok, true); // robots + página = 2
   assert.equal((await w.fetchPage('https://alfa-teste.example.test/p1')).ok, true); // 3
-  assert.deepEqual(await w.fetchPage('https://alfa-teste.example.test/p2'), { ok: false, falha: FAILURE.ERRO });
-  assert.deepEqual(await w.fetchPage('https://alfa-teste.example.test/p3'), { ok: false, falha: FAILURE.ERRO });
+  assert.deepEqual(semCausa(await w.fetchPage('https://alfa-teste.example.test/p2')), { ok: false, falha: FAILURE.ERRO });
+  assert.deepEqual(semCausa(await w.fetchPage('https://alfa-teste.example.test/p3')), { ok: false, falha: FAILURE.ERRO });
   assert.equal(t.chamadas.length, 3, 'nenhuma requisição além do orçamento');
   assert.ok(eventos(w).includes('LIMITE_DE_REQUISICOES'));
   assert.equal(w.estatisticas().requisicoes, 3);
@@ -287,7 +293,7 @@ test('[ADP-14] DATA: quem carimba a data da pesquisa é o RELÓGIO INJETADO do R
   const t = transporteFake({ [SITE]: html(PAGINA_COM_LINKS) });
   const ports = createResearchPorts({ transport: t, userAgent: UA, now: () => new Date('2001-01-01T00:00:00Z'), sleep: async () => {}, minIntervalMs: 0 });
   const pagina = await ports.fetchPage(SITE);
-  assert.deepEqual(Object.keys(pagina).sort(), ['links', 'ok', 'temFormularioContato', 'urlFinal']);
+  assert.deepEqual(Object.keys(pagina).sort(), ['links', 'ok', 'temFormularioContato', 'texto', 'urlFinal']);
   const busca = { ok: true, resultados: [{ nome: 'Clínica Alfa Teste', url: SITE, tipoResultado: 'SITE', fonteUrl: 'https://busca.example.test/r' }] };
   const saida = await createResearcher({ search: async () => busca, fetchPage: ports.fetchPage }, { now: () => AGORA }).research({ nicho: 'Psicologia', quantidadeDesejada: 1 });
   const datas = new Set();
@@ -349,14 +355,69 @@ test('[ADP-18] lacunas da mutação: o robots.txt vale também para a QUERY da U
   const robots = resp(200, 'User-agent: *\nDisallow: /*?segredo=', { 'content-type': 'text/plain' });
   const q = web({ 'https://alfa-teste.example.test/robots.txt': robots, 'https://alfa-teste.example.test/p': html('<a href="/x">x</a>'), 'https://alfa-teste.example.test/p?segredo=1': html('<a href="/x">x</a>') });
   assert.equal((await q.w.fetchPage('https://alfa-teste.example.test/p')).ok, true);
-  assert.deepEqual(await q.w.fetchPage('https://alfa-teste.example.test/p?segredo=1'), { ok: false, falha: FAILURE.ROBOTS });
+  assert.deepEqual(semCausa(await q.w.fetchPage('https://alfa-teste.example.test/p?segredo=1')), { ok: false, falha: FAILURE.ROBOTS });
   assert.equal(paginas(q.t).includes('https://alfa-teste.example.test/p?segredo=1'), false);
   const semSaltos = web({ [SITE]: resp(302, '', { location: '/login' }) }, { maxRedirects: 0 });
-  assert.deepEqual(await semSaltos.w.fetchPage(SITE), { ok: false, falha: FAILURE.LOGIN });
+  assert.deepEqual(semCausa(await semSaltos.w.fetchPage(SITE)), { ok: false, falha: FAILURE.LOGIN });
   assert.ok(eventos(semSaltos.w).includes('REDIRECT_TO_LOGIN'));
   const muitos = Array.from({ length: 700 }, (_, i) => `<a href="/p${i}">p${i}</a>`).join('');
   const l = web({ [SITE]: html(muitos) });
   const r = await l.w.fetchPage(SITE);
   assert.equal(r.links.length, 600);
   assert.ok(eventos(l.w).includes('LINKS_TRUNCADOS'), 'o corte de links é REPORTADO');
+});
+
+// ---------------------------------------------------------------------------------------------------------------------------------
+// Implementação 1: `texto` e a CAUSA técnica específica das falhas (o código externo `falha` não muda).
+
+const dnsFalha = () => new TransportError('NETWORK', 'DNS');
+
+test('[ADP-CAUSA-1] DNS: o domínio não resolve (no robots.txt) = falha ROBOTS externa, causa DNS — nunca ROBOTS_BLOQUEIA nem "empresa inexistente"', async () => {
+  const { w } = web({ 'https://alfa-teste.example.test/robots.txt': dnsFalha() });
+  const r = await w.fetchPage(SITE);
+  assert.deepEqual(r, { ok: false, falha: FAILURE.ROBOTS, causa: 'DNS' });
+  assert.notEqual(r.causa, 'ROBOTS_BLOQUEIA');
+  assert.deepEqual(eventos(w).filter((codigo) => codigo === 'ROBOTS_BLOQUEIA'), []);
+});
+
+test('[ADP-CAUSA-2] TLS (certificado expirado) no robots.txt = ROBOTS externo, causa TLS', async () => {
+  const { w } = web({ 'https://alfa-teste.example.test/robots.txt': new TransportError('TLS') });
+  assert.deepEqual(await w.fetchPage(SITE), { ok: false, falha: FAILURE.ROBOTS, causa: 'TLS' });
+});
+
+test('[ADP-CAUSA-3] NETWORK (queda, reset) no robots.txt = ROBOTS externo, causa NETWORK; o mesmo erro na PÁGINA = FORA_DO_AR com causa NETWORK e DNS na página = causa DNS', async () => {
+  const rede = web({ 'https://alfa-teste.example.test/robots.txt': new TransportError('NETWORK') });
+  assert.deepEqual(await rede.w.fetchPage(SITE), { ok: false, falha: FAILURE.ROBOTS, causa: 'NETWORK' });
+  const pagina = web({ [SITE]: new TransportError('NETWORK') });
+  assert.deepEqual(await pagina.w.fetchPage(SITE), { ok: false, falha: FAILURE.FORA_DO_AR, causa: 'NETWORK' });
+  const dns = web({ [SITE]: dnsFalha() });
+  assert.deepEqual(await dns.w.fetchPage(SITE), { ok: false, falha: FAILURE.FORA_DO_AR, causa: 'DNS' });
+});
+
+test('[ADP-CAUSA-4] ROBOTS_BLOQUEIA: só quando o robots.txt PROÍBE de verdade; e ROBOTS_NAO_VERIFICADO quando o robots.txt responde algo que impede verificar (403, 5xx)', async () => {
+  const bloqueia = web({ 'https://alfa-teste.example.test/robots.txt': resp(200, 'User-agent: *\nDisallow: /', { 'content-type': 'text/plain' }), [SITE]: html(PAGINA_COM_LINKS) });
+  assert.deepEqual(await bloqueia.w.fetchPage(SITE), { ok: false, falha: FAILURE.ROBOTS, causa: 'ROBOTS_BLOQUEIA' });
+  assert.deepEqual(paginas(bloqueia.t), [], 'a página nunca é pedida');
+  for (const status of [403, 500, 503]) {
+    const { w } = web({ 'https://alfa-teste.example.test/robots.txt': resp(status) });
+    assert.deepEqual(await w.fetchPage(SITE), { ok: false, falha: FAILURE.ROBOTS, causa: 'ROBOTS_NAO_VERIFICADO' }, String(status));
+  }
+});
+
+test('[ADP-CAUSA-5] outras falhas também carregam a causa (HTTP_403, HTTP_404...), e a mensagem da rede nunca aparece nela', async () => {
+  const { w } = web({ [SITE]: resp(403) });
+  assert.deepEqual(await w.fetchPage(SITE), { ok: false, falha: FAILURE.BLOQUEADO, causa: 'HTTP_403' });
+  const nada = web({ [SITE]: resp(404) });
+  assert.deepEqual(await nada.w.fetchPage(SITE), { ok: false, falha: FAILURE.REMOVIDA, causa: 'HTTP_404' });
+  const vazado = web({ [SITE]: new Error('C:\\segredo ECONNRESET https://interno.example.test') });
+  assert.doesNotMatch(JSON.stringify(await vazado.w.fetchPage(SITE)), /segredo|ECONNRESET|interno/);
+});
+
+test('[ADP-TEXTO-1] fetchPage devolve o texto público: título, descrição, h1, h2, rodapé e corpo — sem script, estilo, comentários, HTML nem bidi', async () => {
+  const pagina = '<html><head><title>Clínica Alfa</title><meta name="description" content="Estética em Petrópolis"><style>p{}</style><script>var segredo=1</script></head><body><h1>Alfa Estética</h1><h2>Harmonização</h2><!-- comentário oculto --><p>Rua A, 10 \u202e Petrópolis - RJ</p><footer>Rodapé Alfa</footer></body></html>';
+  const { w } = web({ [SITE]: resp(200, pagina) });
+  const r = await w.fetchPage(SITE);
+  assert.equal(r.ok, true);
+  for (const trecho of ['Clínica Alfa', 'Estética em Petrópolis', 'Alfa Estética', 'Harmonização', 'Rua A, 10', 'Petrópolis - RJ', 'Rodapé Alfa']) assert.ok(r.texto.includes(trecho), trecho);
+  assert.doesNotMatch(r.texto, /segredo|comentário oculto|p\{\}|<[a-z]|\u202e/);
 });

@@ -38,6 +38,7 @@ const paginaSite = (extras = {}) => ({
     { href: 'https://alfa-teste.example.test/agendar', texto: 'Agende sua consulta' },
   ],
   temFormularioContato: true,
+  texto: 'Clínica Alfa Teste\nPsicologia clínica e terapia\nRua das Flores, 10 - Petrópolis - RJ',
   ...extras,
 });
 const paginaPerfil = (perfil = {}) => ({ ok: true, urlFinal: IG, links: [], perfil: { postagens: ['2026-09-01', '2026-09-10', '2026-09-20'], ctaBio: 'Agende pelo link da bio', ...perfil } });
@@ -143,6 +144,9 @@ test('[RES-3] caminho feliz: um candidato vira UM achado rawFinding V2 válido, 
     ['anuncios.meta', 'DADO', 'IDENTIFICADO'],
     ['instagram.cta', 'DADO', 'Agende pelo link da bio'],
     ['instagram.postagensObservadas', 'DADO', ['2026-09-01', '2026-09-10', '2026-09-20']],
+    ['site.confirmaEmpresa', 'DADO', 'Clínica Alfa Teste'],
+    ['site.confirmaLocalizacao', 'DADO', 'Rua das Flores, 10 - Petrópolis'],
+    ['site.confirmaNicho', 'DADO', 'Psicologia'],
     ['site.ctaAgendamento', 'DADO', true],
     ['site.ctaWhatsapp', 'DADO', true],
     ['site.formularioContato', 'DADO', true],
@@ -177,7 +181,7 @@ test('[RES-5] falhas viram NAO_VERIFICADO com motivo e a pesquisa SEGUE; nada é
     const achado = saida.achados[0];
     assert.ok(achado, `${falha}: o achado existe (o site veio da busca)`);
     assert.deepEqual(achado.campos.site.map((e) => [e.valor, e.tipoFonte, e.url]), [[SITE, 'SECUNDARIA', BUSCA]], falha);
-    assert.deepEqual(achado.dossie.fatos.filter((f) => f.campo.startsWith('site.')).map((f) => [f.campo, f.status, f.valor, f.motivo, 'fonte' in f]), [['site.ctaWhatsapp', 'NAO_VERIFICADO', null, motivo, false], ['site.ctaAgendamento', 'NAO_VERIFICADO', null, motivo, false], ['site.formularioContato', 'NAO_VERIFICADO', null, motivo, false]], String(falha));
+    assert.deepEqual(achado.dossie.fatos.filter((f) => f.campo.startsWith('site.')).map((f) => [f.campo, f.status, f.valor, f.motivo, 'fonte' in f]), [['site.ctaWhatsapp', 'NAO_VERIFICADO', null, motivo, false], ['site.ctaAgendamento', 'NAO_VERIFICADO', null, motivo, false], ['site.formularioContato', 'NAO_VERIFICADO', null, motivo, false], ['site.confirmaEmpresa', 'NAO_VERIFICADO', null, motivo, false], ['site.confirmaNicho', 'NAO_VERIFICADO', null, motivo, false], ['site.confirmaLocalizacao', 'NAO_VERIFICADO', null, motivo, false]], String(falha));
     assert.deepEqual(chamadas.fetch, [SITE, IG], 'a pesquisa segue: o Instagram (da busca) ainda é visitado');
     assert.equal(saida.relatorio.falhas[falha === undefined || falha === 'INVENTADA' ? 'DESCONHECIDA' : falha], 1, falha);
     const texto = JSON.stringify(saida);
@@ -493,7 +497,7 @@ test('[RES-25] o Researcher NÃO decide nem grava: sem score/ranking/temperatura
     const codigo = fs.readFileSync(arquivo, 'utf8');
     const estatica = analyzeSource(codigo, toPosix(path.relative(raiz, arquivo)));
     assert.deepEqual(estatica.issues, [], nome);
-    for (const ref of estatica.refs) assert.match(ref.specifier, /^\.\/(rawFindingSchema|rawFindingV2|signalSchema|normalize|researchPolicy)$/, `${nome} importa ${ref.specifier}`);
+    for (const ref of estatica.refs) assert.match(ref.specifier, /^\.\/(rawFindingSchema|rawFindingV2|signalSchema|normalize|researchPolicy|pageVerification)$/, `${nome} importa ${ref.specifier}`);
     const semComentarios = codigo.replace(/\/\/.*$/gm, '');
     for (const proibido of [/node:/, /\bfetch\(/, /XMLHttpRequest|WebSocket|child_process/, /process\./, /Date\.now|Math\.random|crypto/, /\beval\(|new Function/, /approveProspect|rejectProspect|promoteProspect|proposeProspect|addProspect/, /createRecord|updateRecord|moveStatus|markDoNotContact|writeRecord/, /\bscore\b|ranking|temperatura|prioridade/i, /enviar|sendMessage|sendEmail/]) assert.doesNotMatch(semComentarios, proibido, `${nome}: ${proibido}`);
   }
@@ -509,15 +513,15 @@ test('[RES-25] o Researcher NÃO decide nem grava: sem score/ranking/temperatura
 // ---------------------------------------------------------------------------------------------------------------------------------
 test('[RES-26] só o que a página publica: sem link de WhatsApp/agendamento e sem formulário (false), NENHUM fato de CTA/formulário — ausência não é afirmação', async () => {
   const semNada = await pesquisar({ paginas: { [SITE]: paginaSite({ links: [{ href: IG }], temFormularioContato: false }) } });
-  assert.deepEqual(semNada.saida.achados[0].dossie.fatos.filter((f) => f.campo.startsWith('site.')), []);
+  assert.deepEqual(semNada.saida.achados[0].dossie.fatos.filter((f) => f.campo.startsWith('site.') && !f.campo.startsWith('site.confirma')), []);
   for (const valor of [undefined, 'sim', 1, null]) {
     const r = await pesquisar({ paginas: { [SITE]: paginaSite({ links: [{ href: IG }], temFormularioContato: valor }) } });
     assert.equal(fato(r.saida.achados[0], 'site.formularioContato'), undefined, String(valor));
   }
   const soZap = await pesquisar({ paginas: { [SITE]: paginaSite({ links: [{ href: IG }, { href: 'https://wa.me/5524987651000' }], temFormularioContato: false }) } });
-  assert.deepEqual(soZap.saida.achados[0].dossie.fatos.filter((f) => f.campo.startsWith('site.')).map((f) => f.campo), ['site.ctaWhatsapp']);
+  assert.deepEqual(soZap.saida.achados[0].dossie.fatos.filter((f) => f.campo.startsWith('site.') && !f.campo.startsWith('site.confirma')).map((f) => f.campo), ['site.ctaWhatsapp']);
   const soAgenda = await pesquisar({ paginas: { [SITE]: paginaSite({ links: [{ href: IG }, { href: 'https://calendly.com/alfa' }], temFormularioContato: false }) } });
-  assert.deepEqual(soAgenda.saida.achados[0].dossie.fatos.filter((f) => f.campo.startsWith('site.')).map((f) => f.campo), ['site.ctaAgendamento']);
+  assert.deepEqual(soAgenda.saida.achados[0].dossie.fatos.filter((f) => f.campo.startsWith('site.') && !f.campo.startsWith('site.confirma')).map((f) => f.campo), ['site.ctaAgendamento']);
 });
 
 test('[RES-27] a busca só vale com ok === true; a lista de links respeita o limite e a evidência repetida conta uma vez; um canal só aceita a URL do próprio canal', async () => {

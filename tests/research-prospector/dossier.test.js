@@ -152,7 +152,7 @@ test('[DOS-10] o catálogo de campos é FECHADO: campo desconhecido, ausente, co
     assert.equal(r.errors[0].path, 'fatos[0].campo');
   }
   assert.deepEqual(codigos(montar([{ valor: 'https://a.example.test', status: 'DADO', observadoEm: '2026-09-25', fonte: fonte() }])), ['fatos[0].campo:CAMPO_OBRIGATORIO']);
-  assert.deepEqual(Object.keys(FACT_CATALOG).length, 15);
+  assert.deepEqual(Object.keys(FACT_CATALOG).length, 18); // 15 + os 3 fatos de verificação do conteúdo da página (site.confirmaEmpresa/Nicho/Localizacao)
   assert.equal(Object.isFrozen(FACT_CATALOG), true);
 });
 

@@ -15,13 +15,16 @@ const { parsePublicUrl } = require('../research-prospector/researchPolicy');
 const { createGuardedLookup } = require('./netGuard');
 
 class TransportError extends Error {
-  constructor(code) {
+  // `detail` (opcional, vocabulário fechado: DNS) refina o `code` sem mudá-lo: um NETWORK por nome que não resolve é NETWORK/DNS.
+  constructor(code, detail) {
     super(`transporte: ${code}`);
     this.name = 'TransportError';
     this.code = code;
+    if (detail !== undefined) this.detail = detail;
   }
 }
 
+const DNS_CODES = new Set(['ENOTFOUND', 'EAI_AGAIN', 'EAI_NODATA', 'EAI_NONAME']);
 const TLS_CODES = new Set(['CERT_HAS_EXPIRED', 'DEPTH_ZERO_SELF_SIGNED_CERT', 'SELF_SIGNED_CERT_IN_CHAIN', 'UNABLE_TO_VERIFY_LEAF_SIGNATURE', 'ERR_TLS_CERT_ALTNAME_INVALID', 'UNABLE_TO_GET_ISSUER_CERT_LOCALLY', 'ERR_SSL_WRONG_VERSION_NUMBER']);
 
 // Só estes cabeçalhos de resposta são lidos (texto curto); Set-Cookie e o resto são ignorados.
@@ -76,7 +79,7 @@ function createHttpsTransport({ https = httpsModule, lookup = createGuardedLooku
           const code = error && error.code;
           if (code === 'ESSRF') return finish(reject, new TransportError('SSRF'));
           if (TLS_CODES.has(code) || (typeof code === 'string' && code.startsWith('ERR_SSL'))) return finish(reject, new TransportError('TLS'));
-          return finish(reject, new TransportError('NETWORK'));
+          return finish(reject, DNS_CODES.has(code) ? new TransportError('NETWORK', 'DNS') : new TransportError('NETWORK'));
         });
         request.end();
         return undefined;

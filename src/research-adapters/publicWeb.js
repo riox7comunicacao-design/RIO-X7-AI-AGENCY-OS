@@ -75,10 +75,12 @@ function createPublicWeb(options) {
   const event = (codigo, host) => {
     if (stats.eventos.length < limits.maxEvents) stats.eventos.push(host ? { codigo, host } : { codigo });
   };
-  const failure = (falha, codigo, host) => {
+  // `falha` é o código externo (vocabulário fechado de researchPolicy.FAILURE, inalterado); `causa` é a causa técnica ESPECÍFICA para o
+  // Researcher e os relatórios (ROBOTS_BLOQUEIA, ROBOTS_NAO_VERIFICADO, DNS, TLS, NETWORK, TIMEOUT, HTTP_403...). Nunca a mensagem da rede.
+  const failure = (falha, codigo, host, causa) => {
     stats.falhas[falha] = (stats.falhas[falha] || 0) + 1;
     event(codigo, host);
-    return { ok: false, falha };
+    return { ok: false, falha, causa: causa || codigo };
   };
 
   // exatamente estes cabeçalhos — nada de Cookie, Authorization, Referer, Proxy-*
@@ -107,7 +109,7 @@ function createPublicWeb(options) {
       if (code === 'TOO_LARGE') return { falha: FAILURE.ERRO, codigo: 'RESPOSTA_GRANDE', host };
       if (code === 'SSRF') return { falha: FAILURE.BLOQUEADO, codigo: 'ENDERECO_NAO_PUBLICO', host };
       if (code === 'TLS') return { falha: FAILURE.ERRO, codigo: 'TLS', host };
-      if (code === 'NETWORK') return { falha: FAILURE.FORA_DO_AR, codigo: 'ERRO_DE_REDE', host };
+      if (code === 'NETWORK') return { falha: FAILURE.FORA_DO_AR, codigo: 'ERRO_DE_REDE', causa: error.detail === 'DNS' ? 'DNS' : 'NETWORK', host };
       return { falha: FAILURE.ERRO, codigo: code === 'INVALID_URL' ? 'URL_INVALIDA' : 'ERRO_INTERNO', host };
     }
   }
@@ -120,7 +122,7 @@ function createPublicWeb(options) {
         let url = `${origin}/robots.txt`;
         for (let hop = 0; hop <= limits.maxRedirects; hop += 1) {
           const sent = await send(url, 'text/plain', limits.robotsMaxBytes);
-          if (!sent.response) return { naoVerificavel: true };
+          if (!sent.response) return { naoVerificavel: true, causa: sent.causa || sent.codigo };
           const { status, headers, body } = sent.response;
           if (status >= 300 && status < 400 && headers.location) {
             let next = null;
@@ -159,11 +161,11 @@ function createPublicWeb(options) {
       if (isLoginWall(url)) return failure(FAILURE.LOGIN, hop === 0 ? 'URL_DE_LOGIN' : 'REDIRECT_TO_LOGIN', host);
 
       const robots = await robotsFor(parsed.origin, host);
-      if (robots.naoVerificavel) return failure(FAILURE.ROBOTS, 'ROBOTS_NAO_VERIFICADO', host);
+      if (robots.naoVerificavel) return failure(FAILURE.ROBOTS, 'ROBOTS_NAO_VERIFICADO', host, robots.causa || 'ROBOTS_NAO_VERIFICADO');
       if (!robots.permite(`${parsed.pathname}${parsed.search}`)) return failure(FAILURE.ROBOTS, 'ROBOTS_BLOQUEIA', host);
 
       const sent = await send(url, accept, limits.maxBytes);
-      if (!sent.response) return failure(sent.falha, sent.codigo, host);
+      if (!sent.response) return failure(sent.falha, sent.codigo, host, sent.causa);
       const { status, headers } = sent.response;
 
       if (status >= 300 && status < 400) {
@@ -212,7 +214,7 @@ function createPublicWeb(options) {
     if (page.desafioForte || (page.marcadorCaptcha && page.totalLinks <= 3)) return failure(FAILURE.CAPTCHA, 'DESAFIO_NA_PAGINA', got.host);
     if (page.temSenha && page.totalLinks <= 3) return failure(FAILURE.LOGIN, 'MURO_DE_LOGIN', got.host);
     if (page.linksTruncados > 0) event('LINKS_TRUNCADOS', got.host);
-    return { ok: true, urlFinal: got.urlFinal, links: page.links, temFormularioContato: page.temFormularioContato };
+    return { ok: true, urlFinal: got.urlFinal, links: page.links, temFormularioContato: page.temFormularioContato, texto: page.texto };
   }
 
   async function getJson(url) {

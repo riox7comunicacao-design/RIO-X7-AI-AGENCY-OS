@@ -32,7 +32,9 @@
 //
 // PORTAS (injetadas; síncronas ou assíncronas; a saída é dado NÃO CONFIÁVEL e é revalidada aqui):
 //   search({ consulta, limite })  -> { ok: true, resultados: [{ nome, url, tipoResultado, fonteUrl, cidade?, estado?, tipo?, nicho? }] } | { ok: false, falha }
-//   fetchPage(url)                -> { ok: true, urlFinal, links: [{ href, texto? }], temFormularioContato?, perfil?: { privado?, postagens?: [data], ctaBio? } } | { ok: false, falha }
+//   fetchPage(url)                -> { ok: true, urlFinal, links: [{ href, texto? }], temFormularioContato?, texto?, perfil?: { privado?, postagens?: [data], ctaBio? } } | { ok: false, falha, causa? }
+//     `texto` (opcional): o texto público da página, SÓ para a verificação por código (pageVerification.js); nunca é copiado para o achado nem para um prompt.
+//     `causa` (opcional): a causa técnica específica da falha (DNS, TLS, ROBOTS_BLOQUEIA, ROBOTS_NAO_VERIFICADO, NETWORK...); vai só para o relatório.
 //   lookupAds({ plataforma, nome, regiao }) -> { ok: true, url, anunciantes: [{ nome }] } | { ok: false, falha }      (opcional)
 // `falha` é um código de researchPolicy.FAILURE. CONTRATO DO ADAPTADOR (futuro): só páginas públicas por https, respeitar robots.txt
 // (devolver ROBOTS), devolver LOGIN/CAPTCHA/BLOQUEADO em vez de tentar passar, limite de taxa e tempo por chamada.
@@ -40,6 +42,7 @@
 const { isPlainObject, ownEntries, ownItems, measure, checkText, checkDate, LIMITS: SCHEMA_LIMITS } = require('./rawFindingSchema');
 const { validateRawFindingsV2 } = require('./rawFindingV2');
 const { normalizeNameCity } = require('./normalize');
+const { verifyOnPage, parseRegion } = require('./pageVerification');
 const policy = require('./researchPolicy');
 
 const LIMITS = Object.freeze({
@@ -74,6 +77,9 @@ const OMISSAO = Object.freeze({
 });
 
 const hasOwn = (object, key) => Object.prototype.hasOwnProperty.call(object, key);
+
+// Os fatos da verificação por código do conteúdo da página (campo do catálogo de fatos -> chave de pageVerification.verifyOnPage).
+const VERIFICATION_FIELDS = Object.freeze([['site.confirmaEmpresa', 'empresa'], ['site.confirmaNicho', 'nicho'], ['site.confirmaLocalizacao', 'localizacao']]);
 
 // Uma cópia rasa e SEGURA das chaves de dado de um objeto que veio de uma porta (null se não for dado puro).
 function readObject(value, allowed) {
@@ -143,11 +149,16 @@ function createResearcher(ports, options = {}) {
     const hoje = started.toISOString().slice(0, 10);
     const alvo = Math.min(LIMITS.MAX_ACHADOS, briefing.quantidadeDesejada + Math.ceil(briefing.quantidadeDesejada / 2));
     const consulta = [briefing.nicho, briefing.tipo, briefing.regiao].filter(Boolean).join(' ');
-    const report = { consulta, alvo, resultadosRecebidos: 0, resultadosInvalidos: 0, candidatos: 0, achadosGerados: 0, achadosDescartados: [], paginasConsultadas: 0, consultasDeAnuncios: 0, falhas: {}, omissoes: [], interrompidaPorTempo: false };
+    const report = { consulta, alvo, resultadosRecebidos: 0, resultadosInvalidos: 0, candidatos: 0, achadosGerados: 0, achadosDescartados: [], paginasConsultadas: 0, consultasDeAnuncios: 0, falhas: {}, causas: {}, omissoes: [], interrompidaPorTempo: false };
     const omit = (campo, codigo, quantidade) => report.omissoes.push(quantidade === undefined ? { campo, codigo } : { campo, codigo, quantidade });
-    const fail = (falha) => {
+    // `causa` (opcional) é a causa técnica específica de uma falha de página; só o formato [A-Z0-9_] curto é aceito (dado de porta, não confiável).
+    const fail = (falha, causa) => {
       const key = typeof falha === 'string' && hasOwn(policy.FAILURE, falha) ? falha : 'DESCONHECIDA';
       report.falhas[key] = (report.falhas[key] || 0) + 1;
+      if (causa !== undefined) {
+        const cause = typeof causa === 'string' && /^[A-Z][A-Z0-9_]{1,39}$/.test(causa) ? causa : 'DESCONHECIDA';
+        report.causas[cause] = (report.causas[cause] || 0) + 1;
+      }
       return falha;
     };
     const expired = () => now().getTime() - started.getTime() > maxDurationMs;
@@ -247,7 +258,10 @@ function createResearcher(ports, options = {}) {
         const out = await call(fetchPage, url);
         const raw = isPlainObject(out) ? ownEntries(out) : null;
         const page = raw === null ? null : Object.fromEntries(raw);
-        if (page === null || measure(page) || page.ok !== true) return { ok: false, falha: fail(page && page.ok === false ? page.falha : 'DESCONHECIDA') };
+        if (page === null || measure(page) || page.ok !== true) {
+          const failed = page !== null && page.ok === false;
+          return { ok: false, falha: fail(failed ? page.falha : 'DESCONHECIDA', failed ? page.causa : undefined) };
+        }
         if (typeof page.urlFinal !== 'string' || policy.parsePublicUrl(page.urlFinal) === null) return { ok: false, falha: fail('DESCONHECIDA') };
         if (policy.isLoginWall(page.urlFinal)) return { ok: false, falha: fail(policy.FAILURE.LOGIN) };
         if (!validateFinal(page.urlFinal)) return { ok: false, falha: fail('DESCONHECIDA') };
@@ -269,7 +283,7 @@ function createResearcher(ports, options = {}) {
             readOfficialPage(visited.page, siteUrl);
           } else {
             addEvidence('site', sites[0].url, 'Busca pública', 'SECUNDARIA', sites[0].fonteUrl);
-            for (const campo of ['site.ctaWhatsapp', 'site.ctaAgendamento', 'site.formularioContato']) addUnverified(campo, visited.falha, true);
+            for (const campo of ['site.ctaWhatsapp', 'site.ctaAgendamento', 'site.formularioContato', ...VERIFICATION_FIELDS.map(([campo]) => campo)]) addUnverified(campo, visited.falha, true);
           }
         }
       }
@@ -307,6 +321,22 @@ function createResearcher(ports, options = {}) {
         if (whatsapp) addFact('site.ctaWhatsapp', true, siteUrl, 'OFICIAL', 'Site oficial');
         if (scheduling) addFact('site.ctaAgendamento', true, siteUrl, 'OFICIAL', 'Site oficial');
         if (page.temFormularioContato === true) addFact('site.formularioContato', true, siteUrl, 'OFICIAL', 'Site oficial');
+        verifyContent(page, siteUrl);
+      }
+
+      // A verificação por CÓDIGO do conteúdo da página oficial: empresa, nicho e localização. A prova é o texto da página; o nicho/cidade do
+      // briefing e da busca são só o que se PROCURA nela (hipótese), nunca evidência. Sem texto ou sem achado = NAO_VERIFICADO (nunca "inexistente").
+      function verifyContent(page, siteUrl) {
+        if (typeof page.texto !== 'string') return; // a porta não oferece texto: ausência de capacidade não é evidência sobre a empresa (nenhum fato)
+        const region = parseRegion(brief.regiao);
+        const hint = (key) => (results.find((r) => r[key]) || {})[key];
+        const hasText = page.texto.trim() !== '';
+        const result = hasText ? verifyOnPage(page.texto, { nome: empresa, nicho: brief.nicho, cidade: hint('cidade') || (region && region.cidade), uf: hint('estado') || (region && region.uf) }) : null;
+        for (const [campo, chave] of VERIFICATION_FIELDS) {
+          const item = result && result[chave];
+          if (item && item.status === 'VALIDADO') addFact(campo, item.evidencia, siteUrl, 'OFICIAL', 'Site oficial');
+          else fatos.push({ campo, valor: null, status: 'NAO_VERIFICADO', observadoEm: today, motivo: policy.motivoFor(policy.FAILURE.SEM_RESULTADO) });
+        }
       }
 
       // 3) Instagram público: só se houver UM perfil (dois valores diferentes são um conflito preservado, nunca escolhido)

@@ -14,6 +14,13 @@ const MAX_ANCHOR_BODY = 2000;
 const MAX_ANCHORS_SCANNED = 20000;
 const MAX_FORM_BODY = 100000;
 const MAX_FORMS_SCANNED = 50;
+// `texto`: o texto público da página para a verificação por código (nunca HTML bruto): tetos por parte e no total.
+const MAX_PAGE_TEXT = 12000;
+const MAX_TEXT_BODY = 6000;
+const MAX_TEXT_FOOTER = 1500;
+const MAX_TEXT_HEADING = 300;
+const MAX_HEADINGS = 10;
+const MAX_TEXT_META = 500;
 
 const ENTITIES = { amp: '&', lt: '<', gt: '>', quot: '"', apos: "'", nbsp: ' ' };
 function decodeEntities(text) {
@@ -29,7 +36,7 @@ function decodeEntities(text) {
 const asciiLower = (text) => text.replace(/[A-Z]/g, (c) => String.fromCharCode(c.charCodeAt(0) + 32)); // mantém o comprimento
 
 // Remove comentários e blocos inertes (script, style, noscript, template) por varredura linear. Um bloco sem fechamento descarta o resto.
-function stripInert(html) {
+function stripInert(html, extraBlocks = []) {
   let text = html;
   let lower = asciiLower(text);
   const cut = (open, close) => {
@@ -58,7 +65,7 @@ function stripInert(html) {
     lower = outLower + lower.slice(pos);
   };
   cut('<!--', '-->');
-  for (const name of ['script', 'style', 'noscript', 'template']) cut(`<${name}`, `</${name}>`);
+  for (const name of ['script', 'style', 'noscript', 'template', ...extraBlocks]) cut(`<${name}`, `</${name}>`);
   return { text, lower };
 }
 
@@ -93,7 +100,7 @@ function stripTags(fragment) {
     pos = close + 1;
   }
 }
-const visibleText = (fragment) => decodeEntities(stripTags(fragment)).replace(/[\u0000-\u001F\u007F​-‏‪-‮⁦-⁩﻿]/g, ' ').replace(/\s+/g, ' ').trim().slice(0, MAX_TEXT);
+const visibleText = (fragment, max = MAX_TEXT) => decodeEntities(stripTags(fragment)).replace(/[\u0000-\u001F\u007F​-‏‪-‮⁦-⁩﻿]/g, ' ').replace(/\s+/g, ' ').trim().slice(0, max);
 
 function attribute(tag, name) {
   const match = new RegExp(`\\b${name}\\s*=\\s*(?:"([^"]*)"|'([^']*)'|([^\\s>]+))`, 'i').exec(tag);
@@ -113,6 +120,46 @@ function safeHref(href, base) {
   } catch {
     return null;
   }
+}
+
+// O texto das tags `<nome ...>...</nome>` (as primeiras `limit`), já sem tags, sem controles e com teto por trecho. Varredura linear.
+function blockTexts(source, lower, name, limit, max) {
+  const out = [];
+  for (const { gt } of openTags(source, lower, name)) {
+    if (out.length >= limit) break;
+    const end = lower.indexOf(`</${name}`, gt);
+    if (end === -1) break;
+    const text = visibleText(source.slice(gt + 1, Math.min(end, gt + 1 + max * 4)), max);
+    if (text !== '') out.push(text);
+  }
+  return out;
+}
+
+// O texto público da página, para a verificação por CÓDIGO (nunca para um prompt): título, meta description, h1, h2, rodapé e o texto
+// visível do corpo — sem script, estilo, noscript, template, comentários, svg, iframe, controles nem bidi, e com teto de tamanho. O rodapé
+// vem ANTES do corpo para que um corpo longo não o corte. Não devolve HTML.
+function extractText(clean, lower) {
+  const parts = [];
+  parts.push(...blockTexts(clean, lower, 'title', 1, MAX_TEXT_HEADING));
+  let metas = 0;
+  for (const { tag } of openTags(clean, lower, 'meta')) {
+    const key = (attribute(tag, 'name') || attribute(tag, 'property') || '').toLowerCase();
+    if (key !== 'description' && key !== 'og:description') continue;
+    const content = attribute(tag, 'content');
+    const text = content === null ? '' : visibleText(content, MAX_TEXT_META);
+    if (text !== '') parts.push(text);
+    metas += 1;
+    if (metas >= 3) break;
+  }
+  parts.push(...blockTexts(clean, lower, 'h1', MAX_HEADINGS, MAX_TEXT_HEADING));
+  parts.push(...blockTexts(clean, lower, 'h2', MAX_HEADINGS, MAX_TEXT_HEADING));
+  parts.push(...blockTexts(clean, lower, 'footer', 1, MAX_TEXT_FOOTER));
+  const { text: bodySource, lower: bodyLower } = stripInert(clean, ['svg', 'iframe', 'object', 'select', 'head']);
+  const bodyStart = bodyLower.indexOf('<body');
+  const bodyFrom = bodyStart === -1 ? 0 : bodyLower.indexOf('>', bodyStart) + 1;
+  const body = visibleText(bodySource.slice(bodyFrom, bodyFrom + MAX_TEXT_BODY * 8), MAX_TEXT_BODY);
+  if (body !== '') parts.push(body);
+  return parts.join('\n').slice(0, MAX_PAGE_TEXT);
 }
 
 const STRONG_CHALLENGE = /cf-chl|challenge-platform|captcha-delivery|px-captcha|<title>\s*(just a moment|attention required|access denied|verifying you are human)/i;
@@ -177,7 +224,8 @@ function extractPage(html, baseUrl) {
     desafioForte: STRONG_CHALLENGE.test(raw.slice(0, 200000)),
     marcadorCaptcha: WEAK_CAPTCHA.test(raw.slice(0, 200000)),
     totalLinks: total,
+    texto: extractText(clean, lower),
   };
 }
 
-module.exports = { extractPage, decodeEntities, safeHref, MAX_LINKS, MAX_TEXT };
+module.exports = { extractPage, decodeEntities, safeHref, MAX_LINKS, MAX_TEXT, MAX_PAGE_TEXT };

@@ -65,6 +65,10 @@ const FACT_CATALOG = Object.freeze({
   'site.ctaWhatsapp': 'presence',
   'site.ctaAgendamento': 'presence',
   'site.formularioContato': 'presence',
+  // Verificação POR CÓDIGO do conteúdo da página oficial (pageVerification.js): o trecho curto que confirma a empresa, o nicho e a localização.
+  'site.confirmaEmpresa': 'text',
+  'site.confirmaNicho': 'text',
+  'site.confirmaLocalizacao': 'text',
   'anuncios.meta': 'ads',
   'anuncios.google': 'ads',
 });
@@ -133,6 +137,9 @@ const OBSERVATION_FIELDS = Object.freeze({
   'site.ctaWhatsapp': 'site',
   'site.ctaAgendamento': 'site',
   'site.formularioContato': 'site',
+  'site.confirmaEmpresa': 'site',
+  'site.confirmaNicho': 'site',
+  'site.confirmaLocalizacao': 'site',
   'anuncios.meta': null,
   'anuncios.google': null,
 });
