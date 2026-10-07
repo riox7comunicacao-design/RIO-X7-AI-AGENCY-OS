@@ -168,7 +168,7 @@ test('[JOB-8] ERRO: a descoberta que falha no primeiro ciclo termina ERRO com o 
   const quebrado = ambiente(t, {
     motor: motorFake({ rodadas: [{ candidatos: tresBons() }] }),
     paginas: paginasBoas(),
-    briefService: (real) => ({ getBrief: real.getBrief, markResearching: real.markResearching, ingestFindings: async () => { throw new Error('C:\\segredo\\x falhou'); } }),
+    briefService: (real) => ({ getBrief: real.getBrief, markResearching: real.markResearching, ingestReplacementFindings: real.ingestReplacementFindings, ingestFindings: async () => { throw new Error('C:\\segredo\\x falhou'); } }),
   });
   const { job: segundo } = await iniciar(quebrado);
   const fim2 = await quebrado.servico.waitFor(segundo.id);
@@ -230,6 +230,7 @@ test('[JOB-11] a ingestão já começou: o cancelamento é RECUSADO e a ingestã
     briefService: (real) => ({
       getBrief: real.getBrief,
       markResearching: real.markResearching,
+      ingestReplacementFindings: real.ingestReplacementFindings,
       ingestFindings: async (...args) => {
         chamadas += 1;
         entrouNaIngestao();
@@ -305,7 +306,8 @@ test('[JOB-15] ciclos ADAPTATIVOS: o tamanho de cada ciclo é recalculado pelo q
   assert.equal(fim.candidatesDiscovered, 7, 'o repetido (mesmo nome e site) não conta duas vezes');
   assert.equal(fim.status, JOB_STATUS.CONCLUIDO);
   assert.equal(motor.pedidos.length, 3, 'parou ao atingir a quantidade: o 4º ciclo nunca foi pedido');
-  assert.deepEqual(env.ingestoes, [3], 'a ingestão é UMA só, mesmo com vários ciclos');
+  assert.deepEqual(env.ingestoes, [1, 1, 1], 'a cada rodada o que foi comprovado passa pela cadeia de ingestão e a entrega é medida (2.2)');
+  assert.equal(fim.lote.naFila, 3);
 });
 
 test('[JOB-15b] o teto absoluto de 40 candidatos: o último ciclo só pede o que ainda cabe; a quantidade pedida NÃO define o teto; termina PARCIAL (CANDIDATOS) sem inventar ninguém', async (t) => {
@@ -486,9 +488,9 @@ test('[JOB-20] persistência mínima: nenhum texto de página, prompt nem achado
   assert.equal(bruto.includes(MARCADOR), false, 'o texto da página nunca é persistido');
   assert.doesNotMatch(bruto, /prompt|Responda APENAS|achadosValidados":\[\{/i);
   assert.deepEqual(salvo.achadosValidados, []);
-  assert.deepEqual(Object.keys(salvo.candidatos[0]).sort(), ['empresa', 'entrega', 'evidencias', 'fonteDaValidacao', 'fontesDescoberta', 'localizacao', 'nicho', 'nome', 'outrasPresencas', 'presencaDigital', 'resultado', 'siteOficial', 'url']);
+  assert.deepEqual(Object.keys(salvo.candidatos[0]).sort(), ['ciclo', 'empresa', 'entrega', 'evidencias', 'fonteDaValidacao', 'fontesDescoberta', 'localizacao', 'nicho', 'nome', 'outrasPresencas', 'presencaDigital', 'resultado', 'siteOficial', 'url']);
   for (const aspecto of ['empresa', 'nicho', 'localizacao']) assert.ok(salvo.candidatos[0].evidencias[aspecto].trecho.length <= 80, 'evidência curta');
-  assert.deepEqual(Object.keys(salvo.telemetria).sort(), ['custoUsd', 'discoveryMs', 'discoveryRuns', 'limitReached', 'validationMs', 'webSearchRequests']);
+  assert.deepEqual(Object.keys(salvo.telemetria).sort(), ['candidatosDescobertos', 'candidatosNovos', 'candidatosRepetidos', 'ciclosExecutados', 'ciclosReposicao', 'custoUsd', 'discoveryMs', 'discoveryRuns', 'eventos', 'foraDaFila', 'limitReached', 'naFila', 'reposicoesNecessarias', 'reposicoesRealizadas', 'validadosPeloMotor', 'validationMs', 'webSearchRequests']);
 });
 
 test('[JOB-21] segurança do motor: o pedido leva só o que o brief diz (nunca texto de página, contexto de usuário nem CRM) e o Service não entrega ao motor nenhuma porta do CRM', async (t) => {
@@ -505,13 +507,14 @@ test('[JOB-21] segurança do motor: o pedido leva só o que o brief diz (nunca t
 });
 
 test('[JOB-22] dependências obrigatórias: sem autorizador, brief service (com markResearching), repositório, motor ou leitor de página o Service não nasce; limites inválidos também', () => {
-  const base = { authorizeProposer: authorizeProposerForLeadApproval, briefService: { getBrief() {}, markResearching() {}, ingestFindings() {} }, repository: createInMemoryJobRepository(), discoveryEngine: { discover() {} }, createFetchPage: () => () => {} };
+  const base = { authorizeProposer: authorizeProposerForLeadApproval, briefService: { getBrief() {}, markResearching() {}, ingestFindings() {}, ingestReplacementFindings() {} }, repository: createInMemoryJobRepository(), discoveryEngine: { discover() {} }, createFetchPage: () => () => {} };
   assert.ok(createProspectingJobService(base));
   for (const faltando of ['authorizeProposer', 'briefService', 'repository', 'discoveryEngine', 'createFetchPage']) {
     assert.throws(() => createProspectingJobService({ ...base, [faltando]: undefined }), undefined, faltando);
   }
   assert.throws(() => createProspectingJobService({ ...base, briefService: { getBrief() {}, ingestFindings() {} } }), /markResearching/);
   assert.throws(() => createProspectingJobService({ ...base, briefService: { getBrief() {}, markResearching() {} } }), /ingestFindings/);
+  assert.throws(() => createProspectingJobService({ ...base, briefService: { getBrief() {}, markResearching() {}, ingestFindings() {} } }), /ingestReplacementFindings/);
   assert.throws(() => createProspectingJobService({ ...base, briefService: { getBrief() {}, generateResearchPackage() {}, ingestFindings() {} } }), /markResearching/, 'o pacote manual não substitui markResearching');
   assert.throws(() => createProspectingJobService({ ...base, checkPermanentExclusion: 'x' }), /checkPermanentExclusion/);
   assert.throws(() => createProspectingJobService({ ...base, limits: { maxCycles: 0 } }), /maxCycles/);

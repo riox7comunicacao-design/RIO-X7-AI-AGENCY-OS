@@ -47,9 +47,9 @@ async function erroDe(fn) {
   throw new Error('esperava que a função lançasse, e ela não lançou');
 }
 
-test('[BRIEF-SVC-1] o Service expõe exatamente as 9 operações do Workbench (as 8 de antes + markResearching), congelado', () => {
+test('[BRIEF-SVC-1] o Service expõe exatamente as 10 operações do Workbench (as 8 de antes + markResearching + ingestReplacementFindings), congelado', () => {
   const servico = criarServico();
-  assert.deepEqual(Object.keys(servico).sort(), ['cancelBrief', 'createBrief', 'generateResearchPackage', 'getBrief', 'ingestFindings', 'listBriefs', 'markConcluded', 'markReadyForResearch', 'markResearching']);
+  assert.deepEqual(Object.keys(servico).sort(), ['cancelBrief', 'createBrief', 'generateResearchPackage', 'getBrief', 'ingestFindings', 'ingestReplacementFindings', 'listBriefs', 'markConcluded', 'markReadyForResearch', 'markResearching']);
   assert.ok(Object.isFrozen(servico));
 });
 
@@ -405,4 +405,39 @@ test('[BRIEF-SVC-MR-2] o fluxo MANUAL continua funcionando: generateResearchPack
   const viaAuto = await servico.ingestFindings(admin(), auto.id, [achado]);
   assert.equal(viaAuto.brief.status, 'AGUARDANDO_REVISAO');
   assert.equal(prospecting.chamadas.length, 2);
+});
+
+test('[BRIEF-SVC-REP-1] ingestReplacementFindings (2.2): só num brief JÁ em AGUARDANDO_REVISAO; passa pela MESMA cadeia (exclusões -> Prospecting Service); mantém o lote e as contagens da 1ª ingestão e só ACRESCENTA o lote novo e os bloqueios', async () => {
+  const prospecting = prospectingDouble();
+  const bloqueado = { empresa: 'Força Digital', motivo: 'Exclusão permanente de prospecção' };
+  const servico = criarServico({ prospectingService: prospecting, checkPermanentExclusion: (finding) => (finding.empresa === 'Força Digital' ? bloqueado : false) });
+  const brief = await servico.createBrief(admin(), briefInput());
+  await servico.markReadyForResearch(admin(), brief.id);
+  servico.markResearching(admin(), brief.id);
+  const achado = (empresa) => ({ empresa, tipo: 'clínica', cidade: 'Petrópolis', estado: 'RJ', nicho: 'Psicologia', campos: { site: [{ valor: `${empresa.toLowerCase().replace(/\W/g, '')}.example.test`, fonte: 'Fonte', tipoFonte: 'OFICIAL' }] }, fontes: ['https://x.example.test'] });
+
+  // antes da 1ª ingestão (PESQUISANDO) a reposição é recusada
+  assert.equal((await erroDe(() => servico.ingestReplacementFindings(admin(), brief.id, [achado('A')]))).code, 'BRIEF_INVALID_STATE');
+  const primeira = await servico.ingestFindings(admin(), brief.id, [achado('A')]);
+  assert.equal(primeira.brief.status, 'AGUARDANDO_REVISAO');
+
+  const segunda = await servico.ingestReplacementFindings(admin(), brief.id, [achado('B'), achado('Força Digital')]);
+  assert.deepEqual(prospecting.chamadas.at(-1).rawFindings.map((f) => f.empresa), ['B'], 'a exclusão permanente vale na reposição também (mesma cadeia)');
+  assert.equal(segunda.excluidosPermanentemente, 1);
+  assert.equal(segunda.brief.status, 'AGUARDANDO_REVISAO');
+  assert.equal(segunda.brief.loteRealId, primeira.brief.loteRealId, 'o brief mantém o lote da 1ª ingestão');
+  assert.deepEqual(segunda.brief.contagens, primeira.brief.contagens);
+  assert.deepEqual(segunda.brief.lotesAdicionais, [segunda.lote.loteId]);
+  assert.deepEqual(segunda.brief.bloqueiosPermanentes, [bloqueado]);
+  assert.equal(segunda.brief.excluidosPermanentemente, 1);
+
+  const terceira = await servico.ingestReplacementFindings(admin(), brief.id, [achado('C')]);
+  assert.equal(terceira.brief.lotesAdicionais.length, 2);
+  assert.equal(terceira.brief.excluidosPermanentemente, 1, 'os bloqueios são somados, nunca zerados');
+
+  // ingestFindings continua exatamente como era: não aceita um brief já em AGUARDANDO_REVISAO
+  assert.equal((await erroDe(() => servico.ingestFindings(admin(), brief.id, [achado('D')]))).code, 'BRIEF_INVALID_STATE');
+  // mesma autorização
+  await erroDe(() => servico.ingestReplacementFindings(closer(), brief.id, [achado('E')]));
+  assert.equal((await erroDe(() => servico.ingestReplacementFindings(admin(), 'x', []))).code, 'BRIEF_INVALID_INPUT');
 });

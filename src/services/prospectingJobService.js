@@ -20,9 +20,13 @@
 // motor); PARCIAL = menos (candidatos/ciclos/tempo, válidos insuficientes OU válidos que o pipeline reteve: dados insuficientes, DNC, duplicado...); ERRO só
 // por falha operacional do job. Nunca se "completa" com candidatos não validados, e um validado que não chegou à fila continua nos resultados.
 //
-// CANCELAR: só ANTES da ingestão. O pedido marca o job e aborta o motor de descoberta em andamento; a execução para na PRÓXIMA fronteira segura
-// (antes de uma nova descoberta, de uma nova validação ou da ingestão) e termina CANCELADO, sem ingestão parcial. Quando a ingestão começa, o job
-// recusa o cancelamento (nada é desfeito).
+// REPOSIÇÃO (2.2): se a ingestão deixa a meta por atingir (parte dos leads foi retida pelo pipeline), o job descobre candidatos NOVOS e repete validação, ingestão e medição
+// — até a meta, 6 ciclos TOTAIS, 40 candidatos ou 15 minutos, o que vier primeiro. Candidatos já vistos no job (qualquer desfecho) nunca voltam; uma rodada sem nenhum
+// candidato novo encerra o job (PARCIAL). Cada ingestão passa pela MESMA cadeia (exclusões, deduplicação, DNC, Approval Queue); reposição não é um estado novo.
+//
+// CANCELAR: o pedido marca o job e aborta o motor de descoberta em andamento; a execução para na PRÓXIMA fronteira segura (antes de uma nova descoberta, de uma nova
+// validação ou de uma ingestão) e termina CANCELADO. Enquanto uma ingestão está EM ANDAMENTO o job recusa o cancelamento (nada é desfeito); o que já foi entregue à fila
+// em rodadas anteriores fica entregue e continua no resultado do job.
 //
 // REINÍCIO: um job que estava rodando quando o servidor caiu NUNCA finge ter concluído — `recoverInterruptedJobs()` (chamado na subida) o marca ERRO
 // com o código JOB_INTERRUPTED.
@@ -97,8 +101,17 @@ function defaultIsProcessAlive(pid) {
   }
 }
 
-// a identidade de um candidato para não repeti-lo entre ciclos: nome + site (ou, sem site, a primeira fonte)
-const candidateKey = (candidate) => `${normalizeNameCity(candidate.nome, 'x') || candidate.nome.toLowerCase()}|${normalizeDomain(candidate.siteOficial || (candidate.fontesDescoberta[0] && candidate.fontesDescoberta[0].url) || '') || candidate.siteOficial || ''}`;
+// As CHAVES de identidade de um candidato, para nunca reprocessá-lo entre ciclos/reposições (a deduplicação do pipeline continua sendo a autoridade final; isto só
+// impede a repetição DURANTE a descoberta): o domínio do site (confirmado, ou o hipotético até a confirmação), depois nome + cidade; sem nenhum dos dois, o nome. Um candidato
+// é CONHECIDO se QUALQUER chave já foi vista — e continua conhecido seja qual for o seu desfecho (fora da fila, DNC, duplicado, erro...).
+const candidateKeys = (candidate, cidade) => {
+  const keys = [];
+  const domain = candidate.siteOficial ? normalizeDomain(candidate.siteOficial) : null;
+  if (domain) keys.push(`dominio:${domain}`);
+  const nameCity = normalizeNameCity(candidate.nome, cidade);
+  keys.push(nameCity ? `nome:${nameCity}` : `nome:${candidate.nome.toLowerCase()}`);
+  return keys;
+};
 
 // O candidato como o job o usa: re-normalizado POR CÓDIGO (nunca se confia no tipo de uma fonte nem em um site de terceiro que veio do motor). null se não tem nome.
 function normalizeCandidate(raw) {
@@ -116,7 +129,7 @@ const CHANNEL_RESULT_TYPE = Object.freeze({ instagram: 'INSTAGRAM', facebook: 'F
 
 // dependencies:
 //   authorizeProposer(context, PROPOSE:LEAD_APPROVAL)   OBRIGATÓRIA — a mesma ponte do Brief Service (nenhuma permissão nova)
-//   briefService      OBRIGATÓRIA — só usa getBrief, markResearching e ingestFindings (o caminho oficial; o pacote de pesquisa manual não é usado)
+//   briefService      OBRIGATÓRIA — só usa getBrief, markResearching, ingestFindings e ingestReplacementFindings (o caminho oficial de ingestão, a 1ª e as de reposição; o pacote de pesquisa manual não é usado)
 //   repository        OBRIGATÓRIA — a porta de jobs (list/getById/save)
 //   discoveryEngine   OBRIGATÓRIA — { discover(request) } (o motor externo; nos testes, um double)
 //   createFetchPage   OBRIGATÓRIA — () => fetchPage: a porta de leitura de página, nova a cada job (orçamento próprio)
@@ -128,7 +141,7 @@ function createProspectingJobService(dependencies) {
   const { authorizeProposer, briefService, repository, discoveryEngine, createFetchPage, checkPermanentExclusion, now = () => new Date(), limits: limitOverrides = {}, processId = process.pid, isProcessAlive = defaultIsProcessAlive } = dependencies || {};
 
   if (typeof authorizeProposer !== 'function') throw new Error('createProspectingJobService exige { authorizeProposer } (função)');
-  for (const method of ['getBrief', 'markResearching', 'ingestFindings']) {
+  for (const method of ['getBrief', 'markResearching', 'ingestFindings', 'ingestReplacementFindings']) {
     if (!briefService || typeof briefService[method] !== 'function') throw new Error(`createProspectingJobService exige { briefService } com ${method}()`);
   }
   assertValidJobRepository(repository);
@@ -260,12 +273,13 @@ function createProspectingJobService(dependencies) {
       error: null,
       cancelRequested: false,
       ingestionStarted: false,
+      leadsNaFila: 0,
       limits: { maxCandidates, maxDurationMs: limits.maxDurationMs, maxCycles: limits.maxCycles },
       cycles: 0,
       candidatos: [],
       achadosValidados: [],
       lote: null,
-      telemetria: { discoveryMs: 0, validationMs: 0, custoUsd: 0, webSearchRequests: 0, discoveryRuns: 0, limitReached: null },
+      telemetria: { discoveryMs: 0, validationMs: 0, custoUsd: 0, webSearchRequests: 0, discoveryRuns: 0, limitReached: null, ciclosExecutados: 0, ciclosReposicao: 0, candidatosDescobertos: 0, candidatosNovos: 0, candidatosRepetidos: 0, validadosPeloMotor: 0, naFila: 0, foraDaFila: 0, reposicoesNecessarias: 0, reposicoesRealizadas: 0, eventos: [] },
     };
     saveJob(job);
     job.status = JOB_STATUS.EXECUTANDO;
@@ -360,11 +374,37 @@ function createProspectingJobService(dependencies) {
     const timeLeft = () => deadline - now().getTime();
     const maxCandidates = limits.candidatesAbsoluteMax;
     const quantity = brief.quantidade;
-    const tele = { discoveryMs: 0, validationMs: 0, custoUsd: 0, webSearchRequests: 0, discoveryRuns: 0, limitReached: null };
+    const tele = {
+      discoveryMs: 0,
+      validationMs: 0,
+      custoUsd: 0,
+      webSearchRequests: 0,
+      discoveryRuns: 0,
+      limitReached: null,
+      ciclosExecutados: 0, // ciclos de descoberta (TOTAIS: os mesmos 6 para a busca inicial e para a reposição)
+      ciclosReposicao: 0, // os ciclos que começaram DEPOIS de uma ingestão, com a meta ainda por atingir
+      candidatosDescobertos: 0, // novos + repetidos, como o motor devolveu
+      candidatosNovos: 0, // os que entraram no processamento do job
+      candidatosRepetidos: 0, // os já conhecidos: nunca voltam à validação, à ingestão nem à fila
+      validadosPeloMotor: 0,
+      naFila: 0,
+      foraDaFila: 0,
+      reposicoesNecessarias: 0, // quantas vezes a ingestão deixou a meta por atingir
+      reposicoesRealizadas: 0, // ciclos de reposição que terminaram
+      eventos: [], // REPOSICAO_INICIADA | REPOSICAO_CONCLUIDA | REPOSICAO_SEM_CANDIDATOS_NOVOS | META_ATINGIDA (só código e ciclo)
+    };
+    const event = (codigo, ciclo) => {
+      if (tele.eventos.length < 50) tele.eventos.push({ codigo, ciclo });
+    };
 
-    const seen = new Set();
+    const knownKeys = new Set(); // os candidatos já vistos neste job (qualquer desfecho)
     const candidates = []; // um registro por candidato: { _in (a hipótese do motor), ...o resultado que o job decidiu }
-    const valid = []; // achados V2 validados (só os internos, até a ingestão)
+    let pending = []; // os achados validados NESTA rodada, ainda não ingeridos (só os internos)
+    const delivered = new Set(); // os prospectIds que CHEGARAM à Approval Queue: cada lead conta uma única vez
+    const lotes = []; // o lote de cada ingestão (identificadores e contagens, nunca texto de página)
+    let ingestedAchados = 0; // quantos achados já foram entregues ao pipeline de ingestão
+    let excludedTotal = 0;
+    let alreadyInQueue = 0; // validados que o pipeline encontrou JÁ na fila (não são entrega deste job)
     let stopReason = null;
 
     const RECORD_KEYS = ['resultado', 'motivo', 'entrega', 'causa', 'faltando', 'empresa', 'nicho', 'localizacao', 'evidencias', 'fonteDaValidacao', 'siteOficial', 'presencaDigital', 'outrasPresencas', 'fontesDescoberta'];
@@ -373,6 +413,7 @@ function createProspectingJobService(dependencies) {
       nome: entry.nome,
       url: entry.siteOficial && entry.siteOficial.url ? entry.siteOficial.url : null,
       resultado: entry.resultado || null,
+      ...(entry.ciclo ? { ciclo: entry.ciclo } : {}),
       ...Object.fromEntries(RECORD_KEYS.filter((key) => key !== 'resultado' && entry[key] !== undefined && entry[key] !== null).map((key) => [key, entry[key]])),
     });
     const counts = () => ({
@@ -381,14 +422,37 @@ function createProspectingJobService(dependencies) {
       candidatesRejected: candidates.filter((c) => c.resultado === CANDIDATE_RESULT.NAO_VERIFICADO || c.resultado === CANDIDATE_RESULT.DESCARTADO).length,
       candidatesUnverified: candidates.filter((c) => c.resultado === CANDIDATE_RESULT.NAO_VERIFICADO).length,
       candidatesDiscarded: candidates.filter((c) => c.resultado === CANDIDATE_RESULT.DESCARTADO).length,
+      leadsNaFila: delivered.size,
     });
+    const syncTelemetry = () => {
+      tele.validadosPeloMotor = ingestedAchados + pending.length;
+      tele.naFila = delivered.size;
+      tele.foraDaFila = Math.max(0, ingestedAchados - delivered.size);
+      return { ...tele, eventos: tele.eventos.map((e) => ({ ...e })) };
+    };
     const checked = () => candidates.filter((c) => c.resultado !== undefined).length;
-    // 15% = descobrindo; de 20% a 90% = candidatos já examinados; 95% = ingestão; 100% = terminou. Nunca regride.
+    // 15% = descobrindo; de 20% a 90% = candidatos já examinados; 92% = ingerindo; 100% = terminou. Nunca regride.
     const progressNow = () => (candidates.length === 0 ? 15 : Math.min(90, 20 + Math.round((70 * checked()) / candidates.length)));
-    const save = (step, extra = {}) => patch(id, { ...counts(), currentStep: step, progress: Math.max(requireJob(id).progress, extra.progress ?? progressNow()), candidatos: candidates.map(summary), achadosValidados: valid, telemetria: { ...tele }, ...extra });
+    const save = (step, extra = {}) =>
+      patch(id, { ...counts(), currentStep: step, progress: Math.max(requireJob(id).progress, extra.progress ?? progressNow()), candidatos: candidates.map(summary), achadosValidados: pending, telemetria: syncTelemetry(), ...extra });
+
+    // o agregado das ingestões (uma ou mais): o último lote, todos os ids, e a distinção validado pelo motor x entregue à fila x retido pelo pipeline
+    const aggregateLote = () =>
+      lotes.length === 0
+        ? null
+        : {
+            loteId: lotes[lotes.length - 1].loteId,
+            lotes: lotes.map((lote) => lote.loteId),
+            contagens: lotes[lotes.length - 1].contagens,
+            excluidosPermanentemente: excludedTotal,
+            validadosPeloMotor: ingestedAchados, // comprovados por código (empresa + nicho + localização)
+            naFila: delivered.size, // encaminhados de fato à Approval Queue: só estes contam para a meta
+            foraDaFila: Math.max(0, ingestedAchados - delivered.size), // validados pelo motor, mas que NÃO foram uma nova entrega deste job (retidos: dados insuficientes, DNC, duplicado...; ou já estavam na fila)
+            jaEstavamNaFila: alreadyInQueue, // dos validados, os que o pipeline encontrou JÁ na fila (jaExistiaNaFila): auditoria, não contam para a meta
+          };
 
     const cancelled = () => {
-      finalize(id, JOB_STATUS.CANCELADO, { ...counts(), candidatos: candidates.map(summary), telemetria: { ...tele } });
+      finalize(id, JOB_STATUS.CANCELADO, { ...counts(), candidatos: candidates.map(summary), telemetria: syncTelemetry(), ...(lotes.length > 0 ? { lote: aggregateLote() } : {}) });
       return true;
     };
 
@@ -505,23 +569,110 @@ function createProspectingJobService(dependencies) {
       return { record, achado };
     }
 
-    // ---- ciclos de descoberta + validação (adaptativos) ----
-    let cycle = 0;
-    while (cycle < limits.maxCycles) {
+    // ---- ciclos: DESCOBERTA -> VALIDAÇÃO -> INGESTÃO -> MEDIÇÃO DA ENTREGA -> (meta atingida? senão, REPOSIÇÃO com candidatos NOVOS) ----
+    // Os limites são GLOBAIS (os mesmos para a busca inicial e para a reposição): 6 ciclos, 40 candidatos, 15 minutos. A meta é só o que CHEGOU à Approval Queue.
+    // Os candidatos NOVOS que ainda não foram examinados (porque a rodada já comprovou o que faltava) ficam no `backlog` e são examinados antes de uma nova descoberta:
+    // se o pipeline reter os comprovados, os que sobraram continuam podendo entrar na fila — nada que foi descoberto é jogado fora.
+    const backlog = [];
+
+    // uma RODADA sobre o backlog: valida até comprovar o que ainda FALTA na fila, ingere pela cadeia EXISTENTE (a 1ª pelo caminho de sempre; as seguintes pela ingestão de
+    // reposição do Brief Service, que passa pelas mesmas exclusões, deduplicação, DNC e Approval Queue) e MEDE a entrega. Devolve true se o job já terminou (cancelado/erro).
+    async function processRound() {
+      pending = [];
+      while (backlog.length > 0) {
+        if (wasCancelRequested(id)) return cancelled();
+        if (pending.length >= quantity - delivered.size) break;
+        if (timeLeft() <= 0) {
+          stopReason = STOP_REASON.TEMPO;
+          break;
+        }
+        const entry = backlog.shift();
+        const startedValidation = now().getTime();
+        let outcome;
+        try {
+          outcome = await evaluateCandidate(entry._in);
+        } catch {
+          outcome = { record: { resultado: CANDIDATE_RESULT.NAO_VERIFICADO, motivo: CANDIDATE_REASON.VALIDACAO_FALHOU } };
+        }
+        tele.validationMs += now().getTime() - startedValidation;
+        Object.assign(entry, outcome.record);
+        const confirmed = outcome.record.siteOficial && outcome.record.siteOficial.url ? normalizeDomain(outcome.record.siteOficial.url) : null;
+        if (confirmed) knownKeys.add(`dominio:${confirmed}`); // o domínio confirmado também identifica o candidato
+        if (outcome.record.resultado === CANDIDATE_RESULT.VALIDADO && outcome.achado) pending.push(outcome.achado);
+        save(JOB_STEP.VALIDANDO);
+      }
+      if (pending.length === 0) return false;
+
+      // o cancelamento é recusado SÓ enquanto a ingestão está EM ANDAMENTO
       if (wasCancelRequested(id)) return cancelled();
-      if (valid.length >= quantity) break;
+      const round = pending;
+      patch(id, { ingestionStarted: true, currentStep: JOB_STEP.INGERINDO, progress: Math.max(requireJob(id).progress, 92), ...counts(), candidatos: candidates.map(summary), achadosValidados: round, telemetria: syncTelemetry() });
+      let result;
+      try {
+        result = lotes.length === 0 ? await briefService.ingestFindings(context, brief.id, round) : await briefService.ingestReplacementFindings(context, brief.id, round);
+      } catch {
+        patch(id, { ingestionStarted: false });
+        finalize(id, JOB_STATUS.ERRO, { ...counts(), candidatos: candidates.map(summary), telemetria: syncTelemetry(), ...(lotes.length > 0 ? { lote: aggregateLote() } : {}), error: { code: ERROR_CODE.INGESTION_FAILED, message: 'A ingestão dos candidatos validados falhou; nada foi promovido ao CRM.' } });
+        return true;
+      }
+      // MEDIÇÃO DA ENTREGA: o que o pipeline REALMENTE entregou à fila nesta rodada (lote.prospectIds); só isto conta para a meta. Um validado retido
+      // (DADOS_INSUFICIENTES, DNC, DUPLICADO, REJEITADO...) NÃO conta e permanece nos resultados com o seu estado real.
+      const batchResult = result && result.lote && typeof result.lote === 'object' ? result.lote : null;
+      const outcomes = batchResult && Array.isArray(batchResult.resultados) ? batchResult.resultados : [];
+      // SÓ conta o lead que ESTE job entregou à fila: o pipeline marca `naFila` também para um prospect que JÁ estava na fila (`jaExistiaNaFila`, de outro job, ainda
+      // aguardando, já aprovado ou já rejeitado) — isso continua verdadeiro e auditável, mas NÃO é uma nova entrega do job. Sem o detalhe por candidato (`resultados`),
+      // cai-se nos `prospectIds` do lote.
+      const roundIds = Array.isArray(batchResult && batchResult.resultados)
+        ? outcomes.filter((item) => item && item.naFila === true && item.jaExistiaNaFila !== true && typeof item.prospectId === 'string').map((item) => item.prospectId)
+        : batchResult && Array.isArray(batchResult.prospectIds)
+          ? batchResult.prospectIds
+          : [];
+      for (const prospectId of roundIds) delivered.add(prospectId);
+      alreadyInQueue += outcomes.filter((item) => item && item.naFila === true && item.jaExistiaNaFila === true).length;
+      for (const finding of round) {
+        const entry = candidates.find((candidate) => candidate.nome === finding.empresa && candidate.resultado === CANDIDATE_RESULT.VALIDADO && !candidate.entrega);
+        const outcome = outcomes.find((item) => item && item.empresa === finding.empresa);
+        if (entry && outcome) entry.entrega = { naFila: outcome.naFila === true && outcome.jaExistiaNaFila !== true, ...(outcome.jaExistiaNaFila === true ? { jaExistiaNaFila: true } : {}), estadoOperacional: typeof outcome.estadoOperacional === 'string' ? outcome.estadoOperacional : null, ...(typeof outcome.motivo === 'string' ? { motivo: outcome.motivo } : {}) };
+      }
+      lotes.push({ loteId: batchResult ? batchResult.loteId : null, contagens: batchResult ? batchResult.contagens : null });
+      excludedTotal += result && Number.isInteger(result.excluidosPermanentemente) ? result.excluidosPermanentemente : 0;
+      ingestedAchados += round.length;
+      pending = [];
+      patch(id, { ingestionStarted: false });
+      if (delivered.size < quantity) tele.reposicoesNecessarias += 1;
+      save(JOB_STEP.VALIDANDO);
+      return false;
+    }
+
+    let cycle = 0;
+    for (;;) {
+      if (wasCancelRequested(id)) return cancelled();
+      if (delivered.size >= quantity) break;
       if (timeLeft() <= 0) {
         stopReason = STOP_REASON.TEMPO;
         break;
       }
+      if (backlog.length > 0) {
+        if (await processRound()) return undefined;
+        if (stopReason === STOP_REASON.TEMPO) break;
+        continue;
+      }
+      if (cycle >= limits.maxCycles) break;
       if (candidates.length >= maxCandidates) {
         stopReason = STOP_REASON.CANDIDATOS;
         break;
       }
       cycle += 1;
-      patch(id, { currentStep: JOB_STEP.DESCOBRINDO, cycles: cycle, ...counts(), telemetria: { ...tele } });
+      tele.ciclosExecutados = cycle;
+      const replenishing = lotes.length > 0; // já houve uma ingestão e a meta ainda não foi atingida
+      if (replenishing) {
+        tele.ciclosReposicao += 1;
+        event('REPOSICAO_INICIADA', cycle);
+      }
+      patch(id, { currentStep: JOB_STEP.DESCOBRINDO, cycles: cycle, ...counts(), telemetria: syncTelemetry() });
 
-      const batch = computeBatchSize(quantity, valid.length, { multiplier: limits.batchMultiplier, min: limits.batchMin, max: limits.batchMax }, maxCandidates - candidates.length);
+      // faltam = pedidos - JÁ NA FILA; o ciclo pede clamp(faltam x 3, 6, 12), nunca mais do que cabe nos 40
+      const batch = computeBatchSize(quantity, delivered.size, { multiplier: limits.batchMultiplier, min: limits.batchMin, max: limits.batchMax }, maxCandidates - candidates.length);
       const askedAt = now().getTime();
       const found = await discoveryEngine.discover({
         nicho: brief.nicho,
@@ -541,95 +692,65 @@ function createProspectingJobService(dependencies) {
       if (wasCancelRequested(id)) return cancelled();
       if (!found || found.ok !== true || !Array.isArray(found.candidatos)) {
         if (cycle === 1 && candidates.length === 0) {
-          finalize(id, JOB_STATUS.ERRO, { ...counts(), telemetria: { ...tele }, error: { code: ERROR_CODE.DISCOVERY_FAILED, message: 'A descoberta de candidatos falhou.', cause: found && typeof found.code === 'string' ? found.code : 'DESCONHECIDA' } });
+          finalize(id, JOB_STATUS.ERRO, { ...counts(), telemetria: syncTelemetry(), error: { code: ERROR_CODE.DISCOVERY_FAILED, message: 'A descoberta de candidatos falhou.', cause: found && typeof found.code === 'string' ? found.code : 'DESCONHECIDA' } });
           return undefined;
         }
         stopReason = STOP_REASON.DESCOBERTA;
         break;
       }
 
-      // candidatos novos (sem repetir nome/site já vistos), no máximo até o teto absoluto; nunca se inventa um candidato
+      // só candidatos NOVOS entram no processamento; os já conhecidos (qualquer desfecho anterior) são contados na telemetria e nada mais: nunca voltam à validação,
+      // à ingestão nem à fila. Nunca além do teto absoluto nem do que foi pedido neste ciclo; nunca se inventa um candidato.
       const fresh = [];
+      let repeated = 0;
       for (const raw of found.candidatos) {
-        if (candidates.length + fresh.length >= maxCandidates || fresh.length >= batch) break; // nunca além do teto absoluto nem do que foi pedido neste ciclo
         const item = normalizeCandidate(raw);
         if (item === null) continue;
-        const key = candidateKey(item);
-        if (seen.has(key)) continue;
-        seen.add(key);
-        fresh.push({ nome: item.nome, _in: item });
+        const keys = candidateKeys(item, hint.cidade);
+        if (keys.some((key) => knownKeys.has(key))) {
+          repeated += 1;
+          continue;
+        }
+        if (candidates.length + fresh.length >= maxCandidates || fresh.length >= batch) break;
+        for (const key of keys) knownKeys.add(key);
+        fresh.push({ nome: item.nome, ciclo: cycle, _in: item });
       }
-      for (const entry of fresh) candidates.push(entry);
+      tele.candidatosRepetidos += repeated;
+      tele.candidatosNovos += fresh.length;
+      tele.candidatosDescobertos += fresh.length + repeated;
+      for (const entry of fresh) {
+        candidates.push(entry);
+        backlog.push(entry);
+      }
       save(JOB_STEP.VALIDANDO);
       if (fresh.length === 0) {
         stopReason = STOP_REASON.SEM_CANDIDATOS_NOVOS;
+        if (replenishing) event('REPOSICAO_SEM_CANDIDATOS_NOVOS', cycle);
         break;
       }
 
-      for (const entry of fresh) {
-        if (wasCancelRequested(id)) return cancelled();
-        if (valid.length >= quantity) break;
-        if (timeLeft() <= 0) {
-          stopReason = STOP_REASON.TEMPO;
-          break;
-        }
-        const startedValidation = now().getTime();
-        let outcome;
-        try {
-          outcome = await evaluateCandidate(entry._in);
-        } catch {
-          outcome = { record: { resultado: CANDIDATE_RESULT.NAO_VERIFICADO, motivo: CANDIDATE_REASON.VALIDACAO_FALHOU } };
-        }
-        tele.validationMs += now().getTime() - startedValidation;
-        Object.assign(entry, outcome.record);
-        if (outcome.record.resultado === CANDIDATE_RESULT.VALIDADO && outcome.achado) valid.push(outcome.achado);
-        save(JOB_STEP.VALIDANDO);
+      if (await processRound()) return undefined;
+      if (replenishing) {
+        tele.reposicoesRealizadas += 1;
+        event('REPOSICAO_CONCLUIDA', cycle);
       }
       if (stopReason === STOP_REASON.TEMPO) break;
     }
-    if (valid.length < quantity && stopReason === null) stopReason = candidates.length >= maxCandidates ? STOP_REASON.CANDIDATOS : STOP_REASON.CICLOS;
+    if (delivered.size < quantity && stopReason === null) stopReason = candidates.length >= maxCandidates ? STOP_REASON.CANDIDATOS : STOP_REASON.CICLOS;
+    const metaAtingida = delivered.size >= quantity;
+    if (metaAtingida) event('META_ATINGIDA', cycle);
 
-    // ---- fronteira segura final: ainda dá para cancelar, e SÓ ATÉ AQUI ----
-    if (wasCancelRequested(id)) return cancelled();
-    tele.limitReached = valid.length >= quantity ? null : stopReason;
+    // sem nenhuma ingestão ainda, um cancelamento tardio ainda vale (nada foi entregue); depois de uma ingestão o job termina pelo que foi entregue
+    if (lotes.length === 0 && wasCancelRequested(id)) return cancelled();
+    tele.limitReached = metaAtingida ? null : stopReason;
 
-    // nada validado: nada a ingerir (o brief continua PESQUISANDO; um novo job não é aceito nesse estado)
-    if (valid.length === 0) {
-      finalize(id, JOB_STATUS.PARCIAL, { ...counts(), candidatos: candidates.map(summary), telemetria: { ...tele } });
+    // nada validado e nada ingerido: nada a entregar (o brief continua PESQUISANDO; um novo job não é aceito nesse estado)
+    if (lotes.length === 0) {
+      finalize(id, JOB_STATUS.PARCIAL, { ...counts(), candidatos: candidates.map(summary), telemetria: syncTelemetry() });
       return undefined;
     }
-
-    // ---- a ingestão: UMA passagem pelo caminho oficial. A partir daqui o cancelamento é recusado. ----
-    const toIngest = valid.slice(0, quantity);
-    patch(id, { ingestionStarted: true, currentStep: JOB_STEP.INGERINDO, progress: 95, ...counts(), candidatos: candidates.map(summary), telemetria: { ...tele } });
-    let result;
-    try {
-      result = await briefService.ingestFindings(context, brief.id, toIngest);
-    } catch {
-      finalize(id, JOB_STATUS.ERRO, { ...counts(), telemetria: { ...tele }, error: { code: ERROR_CODE.INGESTION_FAILED, message: 'A ingestão dos candidatos validados falhou; nada foi promovido ao CRM.' } });
-      return undefined;
-    }
-    // A META COMERCIAL: o que o pipeline oficial REALMENTE entregou à Approval Queue (lote.prospectIds = os itens que entraram na fila). Um lead VALIDADO pelo
-    // motor que termina DADOS_INSUFICIENTES, DNC, DUPLICADO ou REJEITADO NÃO conta; ele permanece nos resultados do job com o seu estado real no pipeline.
-    const batch = result && result.lote && typeof result.lote === 'object' ? result.lote : null;
-    const outcomes = batch && Array.isArray(batch.resultados) ? batch.resultados : [];
-    const inQueue = batch && Array.isArray(batch.prospectIds) ? batch.prospectIds.length : outcomes.filter((item) => item && item.naFila === true).length;
-    for (const finding of toIngest) {
-      const entry = candidates.find((candidate) => candidate.nome === finding.empresa && candidate.resultado === CANDIDATE_RESULT.VALIDADO);
-      const outcome = outcomes.find((item) => item && item.empresa === finding.empresa);
-      if (entry && outcome) entry.entrega = { naFila: outcome.naFila === true, estadoOperacional: typeof outcome.estadoOperacional === 'string' ? outcome.estadoOperacional : null, ...(typeof outcome.motivo === 'string' ? { motivo: outcome.motivo } : {}) };
-    }
-    const delivered = inQueue >= quantity;
-    if (!delivered) tele.limitReached = tele.limitReached || STOP_REASON.ENTREGA_INSUFICIENTE;
-    const lote = {
-      loteId: batch ? batch.loteId : null,
-      contagens: batch ? batch.contagens : null,
-      excluidosPermanentemente: result && Number.isInteger(result.excluidosPermanentemente) ? result.excluidosPermanentemente : 0,
-      validadosPeloMotor: toIngest.length, // comprovados por código (empresa + nicho + localização)
-      naFila: inQueue, // encaminhados de fato à Approval Queue: só estes contam para a meta
-      foraDaFila: Math.max(0, toIngest.length - inQueue), // validados pelo motor, mas retidos pelo pipeline (dados insuficientes, DNC, duplicado...)
-    };
-    finalize(id, delivered ? JOB_STATUS.CONCLUIDO : JOB_STATUS.PARCIAL, { ...counts(), candidatos: candidates.map(summary), telemetria: { ...tele }, lote });
+    // CONCLUIDO = a quantidade pedida de leads que CHEGARAM à Approval Queue; senão PARCIAL
+    finalize(id, metaAtingida ? JOB_STATUS.CONCLUIDO : JOB_STATUS.PARCIAL, { ...counts(), candidatos: candidates.map(summary), telemetria: syncTelemetry(), lote: aggregateLote() });
     return undefined;
   }
 

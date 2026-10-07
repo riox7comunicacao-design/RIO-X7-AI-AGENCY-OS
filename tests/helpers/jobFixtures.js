@@ -120,6 +120,11 @@ function ambiente(t, { motor, paginas = {}, fetchPage: fetchPageProprio, exclusa
       achadosIngeridos.push(...args[2]);
       return briefService.ingestFindings(...args);
     },
+    ingestReplacementFindings: async (...args) => {
+      ingestoes.push(args[2].length);
+      achadosIngeridos.push(...args[2]);
+      return briefService.ingestReplacementFindings(...args);
+    },
   };
   const servico = createProspectingJobService({
     authorizeProposer: authorizeProposerForLeadApproval,

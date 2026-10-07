@@ -229,17 +229,11 @@ function createProspectingBriefService(dependencies) {
     return copy(brief);
   }
 
-  // Ingestão dos achados (rawFindings, no formato já existente): chama o Prospecting Service REAL. Nenhum erro
-  // dele é mascarado; o brief só é atualizado em caso de SUCESSO (nada de "meia-ingestão").
-  async function ingestFindings(context, id, rawFindings) {
-    authorize(context);
-    const brief = requireBrief(id);
-    requireStatus(brief, [BRIEF_STATUS.PESQUISANDO]);
-
+  // A cadeia de ingestão, UMA só para as duas operações abaixo: (1) as exclusões permanentes — cada bloqueio vira um registro { empresa, motivo } preservado
+  // (nunca "apagado em silêncio"; `isPermanentlyExcluded` devolve `false` ou a EXCLUSÃO que bateu — ver prospectingExclusionService.js#isExcluded) — e (2) o
+  // Prospecting Service REAL (valida, deduplica, DNC, Approval Queue). Nenhum erro dele é mascarado.
+  async function screenAndSubmit(context, brief, rawFindings) {
     const lista = Array.isArray(rawFindings) ? rawFindings : [];
-    // Bloqueios permanentes (Etapa 2): nunca "apagados em silêncio" — cada um vira um registro { empresa, motivo }
-    // preservado no brief (seção 8 do comando). `isPermanentlyExcluded` devolve `false` (nenhuma correspondência) ou
-    // a EXCLUSÃO que bateu (nunca só um booleano) — ver o cabeçalho de prospectingExclusionService.js#isExcluded.
     const bloqueios = [];
     const incluidos = [];
     for (const finding of lista) {
@@ -253,9 +247,16 @@ function createProspectingBriefService(dependencies) {
         incluidos.push(finding);
       }
     }
-
     const resultado = await prospectingService.submitProspecting(context, { briefing: toLegacyBriefing(brief), rawFindings: incluidos });
+    return { resultado, bloqueios };
+  }
 
+  // Ingestão dos achados (rawFindings, no formato já existente): o brief só é atualizado em caso de SUCESSO (nada de "meia-ingestão").
+  async function ingestFindings(context, id, rawFindings) {
+    authorize(context);
+    const brief = requireBrief(id);
+    requireStatus(brief, [BRIEF_STATUS.PESQUISANDO]);
+    const { resultado, bloqueios } = await screenAndSubmit(context, brief, rawFindings);
     const instant = now();
     brief.status = BRIEF_STATUS.AGUARDANDO_REVISAO;
     brief.loteRealId = resultado.loteId;
@@ -263,6 +264,22 @@ function createProspectingBriefService(dependencies) {
     brief.excluidosPermanentemente = bloqueios.length;
     brief.bloqueiosPermanentes = bloqueios;
     brief.atualizadoEm = instant.toISOString();
+    saveBrief(brief);
+    return { brief: copy(brief), lote: resultado, excluidosPermanentemente: bloqueios.length, bloqueiosPermanentes: bloqueios };
+  }
+
+  // REPOSIÇÃO (prospecção automática): uma ingestão ADICIONAL num brief que JÁ está em AGUARDANDO_REVISAO (a primeira ingestão já aconteceu). Passa pela MESMA
+  // cadeia de ingestFindings (exclusões -> Prospecting Service: dedup, DNC, Approval Queue) — nada é duplicado. O brief mantém o seu lote e as suas contagens
+  // (loteRealId/contagens são os da 1ª ingestão); o lote novo é APENAS acrescentado a `lotesAdicionais`, e os bloqueios permanentes são somados.
+  async function ingestReplacementFindings(context, id, rawFindings) {
+    authorize(context);
+    const brief = requireBrief(id);
+    requireStatus(brief, [BRIEF_STATUS.AGUARDANDO_REVISAO]);
+    const { resultado, bloqueios } = await screenAndSubmit(context, brief, rawFindings);
+    brief.lotesAdicionais = [...(Array.isArray(brief.lotesAdicionais) ? brief.lotesAdicionais : []), resultado.loteId];
+    brief.excluidosPermanentemente = (Number.isInteger(brief.excluidosPermanentemente) ? brief.excluidosPermanentemente : 0) + bloqueios.length;
+    brief.bloqueiosPermanentes = [...(Array.isArray(brief.bloqueiosPermanentes) ? brief.bloqueiosPermanentes : []), ...bloqueios];
+    brief.atualizadoEm = now().toISOString();
     saveBrief(brief);
     return { brief: copy(brief), lote: resultado, excluidosPermanentemente: bloqueios.length, bloqueiosPermanentes: bloqueios };
   }
@@ -287,7 +304,7 @@ function createProspectingBriefService(dependencies) {
     return copy(brief);
   }
 
-  return Object.freeze({ createBrief, listBriefs, getBrief, markReadyForResearch, markResearching, generateResearchPackage, ingestFindings, cancelBrief, markConcluded });
+  return Object.freeze({ createBrief, listBriefs, getBrief, markReadyForResearch, markResearching, generateResearchPackage, ingestFindings, ingestReplacementFindings, cancelBrief, markConcluded });
 }
 
 module.exports = { createProspectingBriefService, ProspectingBriefError, ERROR };

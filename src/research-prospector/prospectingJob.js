@@ -65,7 +65,6 @@ const STOP_REASON = Object.freeze({
   TEMPO: 'TEMPO', // o tempo máximo
   SEM_CANDIDATOS_NOVOS: 'SEM_CANDIDATOS_NOVOS', // o motor não trouxe nenhuma empresa nova
   DESCOBERTA: 'DESCOBERTA', // a descoberta falhou depois do primeiro ciclo
-  ENTREGA_INSUFICIENTE: 'ENTREGA_INSUFICIENTE', // a quantidade foi VALIDADA pelo motor, mas menos leads chegaram de fato à Approval Queue
 });
 
 const LIMITS = Object.freeze({

@@ -94,6 +94,7 @@ function deliveryText(candidate) {
   const delivery = candidate && candidate.entrega;
   if (!delivery || typeof delivery !== 'object') return '—';
   if (delivery.naFila === true) return 'Na fila';
+  if (delivery.jaExistiaNaFila === true) return 'Já estava na fila';
   const state = typeof delivery.estadoOperacional === 'string' ? RESULT_STATUS_LABELS[delivery.estadoOperacional] || delivery.estadoOperacional : 'estado desconhecido';
   return `Fora da fila: ${state}`;
 }
@@ -494,16 +495,22 @@ export function createProspectingView({ document, root, api, permissions, schedu
     const title = { CONCLUIDO: 'PROSPECÇÃO CONCLUÍDA', PARCIAL: 'PROSPECÇÃO PARCIAL', CANCELADO: 'PROSPECÇÃO CANCELADA', ERRO: 'A PROSPECÇÃO FALHOU' }[job.status];
     if (title) nodes.push(el('h4', { className: 'job-title', text: title }));
     nodes.push(el('p', {}, el('span', { className: `badge ${tone}`, text: JOB_STATUS_LABELS[job.status] || job.status }), ' ', el('span', { className: 'muted', text: JOB_STEP_LABELS[job.currentStep] || '' })));
+    // a meta é só o que CHEGOU à Approval Queue; "reposições" = ciclos de busca de candidatos novos para substituir o que o pipeline reteve
+    const queued = Number.isInteger(job.leadsNaFila) ? job.leadsNaFila : job.lote && Number.isInteger(job.lote.naFila) ? job.lote.naFila : 0;
+    const processed = (Number(job.candidatesValidated) || 0) + (Number(job.candidatesRejected) || 0);
+    const replenished = job.telemetria && Number.isInteger(job.telemetria.reposicoesRealizadas) ? job.telemetria.reposicoesRealizadas : 0;
     nodes.push(
       el('progress', { className: 'pipeline-bar', max: '100', value: String(Math.max(0, Math.min(100, Number(job.progress) || 0))), 'aria-label': 'Progresso da prospecção' }),
       el('p', { text: `Empresas descobertas: ${job.candidatesDiscovered} · Validadas pela página: ${job.candidatesValidated} · Não validadas: ${job.candidatesRejected} · Solicitadas: ${job.requestedQuantity}` }),
+      el('p', { id: 'pros-job-queue', text: `Leads na Approval Queue: ${queued} de ${job.requestedQuantity} · Candidatos processados: ${processed} · Reposições: ${replenished}` }),
       el('p', { className: 'muted', text: `Tempo decorrido: ${formatElapsed(job.elapsedMs)}` })
     );
     if (active && job.currentStep !== 'INGERINDO') nodes.push(el('button', { type: 'button', className: 'btn danger', id: 'pros-cancel-job', disabled: state.busy || job.status === 'CANCELAMENTO_SOLICITADO', onclick: onCancelJob, text: 'CANCELAR PROSPECÇÃO' }));
     if (job.status === 'ERRO') nodes.push(el('p', { className: 'notice bad', role: 'note', text: JOB_ERROR_TEXT[job.error && job.error.code] || JOB_ERROR_TEXT.JOB_INTERNAL }));
     if (job.status === 'CONCLUIDO' || job.status === 'PARCIAL') {
+      if (replenished > 0) nodes.push(el('p', { className: 'muted', id: 'pros-job-replenish', text: `Reposições realizadas: ${replenished}` }));
       // a meta conta só os leads que CHEGARAM à Approval Queue; validado pela pesquisa não é o mesmo que entregue à fila
-      const naFila = job.lote && Number.isInteger(job.lote.naFila) ? job.lote.naFila : 0;
+      const naFila = job.lote && Number.isInteger(job.lote.naFila) ? job.lote.naFila : queued;
       const foraDaFila = job.lote && Number.isInteger(job.lote.foraDaFila) ? job.lote.foraDaFila : 0;
       nodes.push(
         el('p', { text: naFila > 0 ? `${naFila} de ${job.requestedQuantity} lead(s) solicitado(s) chegaram à Approval Queue.` : job.candidatesValidated > 0 ? 'Nenhum lead chegou à Approval Queue.' : 'Nenhuma empresa pôde ser comprovada pela página; nada foi enviado para a aprovação.' }),

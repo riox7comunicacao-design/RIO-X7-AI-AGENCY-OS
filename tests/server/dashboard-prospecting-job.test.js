@@ -309,3 +309,28 @@ test('[DASH-JOB-9] nenhum dado externo vira HTML: nomes e erros entram só como 
   assert.doesNotMatch(t.tela(), /<img|<script|alert\(1\)/);
   assert.match(t.tela(), /A prospecção falhou por um erro interno/);
 });
+
+test('[DASH-JOB-REP] reposição (2.2): durante a execução mostra "Leads na Approval Queue: N de Q", os candidatos processados e as reposições; ao terminar, "Reposições realizadas: N" de forma discreta (só se houve)', async () => {
+  const t = await montar({
+    respostas: [
+      job({ currentStep: 'VALIDANDO', progress: 60, candidatesDiscovered: 9, candidatesValidated: 3, candidatesRejected: 4, leadsNaFila: 2, telemetria: { reposicoesRealizadas: 1 } }),
+      job({ status: 'PARCIAL', currentStep: 'FINALIZADO', progress: 100, candidatesDiscovered: 12, candidatesValidated: 4, candidatesRejected: 8, leadsNaFila: 2, telemetria: { reposicoesRealizadas: 2 }, lote: { loteId: 'lote:z', validadosPeloMotor: 4, naFila: 2, foraDaFila: 2 } }),
+    ],
+  });
+  await selecionar(t);
+  t.browser.click(t.browser.by.id(t.browser.root, 'pros-start-job'));
+  await t.browser.flush(8);
+  await t.rodarAgendada();
+  assert.equal(t.browser.by.id(t.browser.root, 'pros-job-queue').textContent, 'Leads na Approval Queue: 2 de 3 · Candidatos processados: 7 · Reposições: 1');
+  assert.equal(t.browser.by.id(t.browser.root, 'pros-job-replenish'), null, 'em execução não há o resumo final');
+  await t.rodarAgendada();
+  assert.match(t.tela(), /2 de 3 lead\(s\) solicitado\(s\) chegaram à Approval Queue/);
+  assert.equal(t.browser.by.id(t.browser.root, 'pros-job-replenish').textContent, 'Reposições realizadas: 2');
+
+  const sem = await montar({ respostas: [job({ status: 'CONCLUIDO', currentStep: 'FINALIZADO', progress: 100, candidatesValidated: 3, leadsNaFila: 3, lote: { loteId: 'lote:w', validadosPeloMotor: 3, naFila: 3, foraDaFila: 0 } })] });
+  await selecionar(sem);
+  sem.browser.click(sem.browser.by.id(sem.browser.root, 'pros-start-job'));
+  await sem.browser.flush(8);
+  await sem.rodarAgendada();
+  assert.equal(sem.browser.by.id(sem.browser.root, 'pros-job-replenish'), null, 'sem reposição nada é mostrado');
+});

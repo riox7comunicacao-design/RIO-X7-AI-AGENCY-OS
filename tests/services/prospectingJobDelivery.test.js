@@ -49,7 +49,7 @@ test('[ENTREGA-b] 3 validados pelo motor -> 2 na Approval Queue -> PARCIAL (o te
   assert.equal(porNome['Clínica Alfa'].resultado, CANDIDATE_RESULT.VALIDADO, 'o validado retido NÃO é descartado: segue nos resultados');
   assert.deepEqual(porNome['Clínica Alfa'].entrega, { naFila: false, estadoOperacional: 'DNC', motivo: 'DNC' }, 'com o estado REAL do pipeline');
   assert.equal(porNome['Clínica Beta'].entrega.naFila, true);
-  assert.equal(fim.telemetria.limitReached, STOP_REASON.ENTREGA_INSUFICIENTE);
+  assert.equal(fim.telemetria.limitReached, STOP_REASON.SEM_CANDIDATOS_NOVOS, 'a reposição tentou e o motor não trouxe candidatos novos');
   assert.equal(lote.resultados.filter((r) => r.naFila).length, 2);
 });
 
@@ -109,7 +109,7 @@ test('[ENTREGA-f] regressão: a conclusão usa o resultado REAL do pipeline — 
   const vazio = ambiente(t, {
     motor: motorFake({ rodadas: [{ candidatos: tresBons() }] }),
     paginas: paginasBoas(),
-    briefService: (real) => ({ getBrief: real.getBrief, markResearching: real.markResearching, ingestFindings: async () => ({ brief: {}, lote: { loteId: 'lote:00000000-0000-4000-8000-000000000000', contagens: { validos: 0 }, prospectIds: [], resultados: [] }, excluidosPermanentemente: 0 }) }),
+    briefService: (real) => ({ getBrief: real.getBrief, markResearching: real.markResearching, ingestReplacementFindings: async () => ({}), ingestFindings: async () => ({ brief: {}, lote: { loteId: 'lote:00000000-0000-4000-8000-000000000000', contagens: { validos: 0 }, prospectIds: [], resultados: [] }, excluidosPermanentemente: 0 }) }),
   });
   const a = await rodar(vazio, 3, { lerLote: false });
   assert.equal(a.fim.status, JOB_STATUS.PARCIAL);
@@ -118,7 +118,7 @@ test('[ENTREGA-f] regressão: a conclusão usa o resultado REAL do pipeline — 
   const semLote = ambiente(t, {
     motor: motorFake({ rodadas: [{ candidatos: tresBons() }] }),
     paginas: paginasBoas(),
-    briefService: (real) => ({ getBrief: real.getBrief, markResearching: real.markResearching, ingestFindings: async () => ({}) }),
+    briefService: (real) => ({ getBrief: real.getBrief, markResearching: real.markResearching, ingestReplacementFindings: async () => ({}), ingestFindings: async () => ({}) }),
   });
   const b = await rodar(semLote, 3, { lerLote: false });
   assert.equal(b.fim.status, JOB_STATUS.PARCIAL);
