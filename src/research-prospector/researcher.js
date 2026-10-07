@@ -79,6 +79,14 @@ const OMISSAO = Object.freeze({
 const hasOwn = (object, key) => Object.prototype.hasOwnProperty.call(object, key);
 
 // Os fatos da verificação por código do conteúdo da página (campo do catálogo de fatos -> chave de pageVerification.verifyOnPage).
+// o host (sem "www.") de uma URL já validada pela porta, para a corroboração do nome pelo domínio (pageVerification)
+const hostOfUrl = (url) => {
+  try {
+    return new URL(url).hostname.toLowerCase().replace(/^www\./, '');
+  } catch {
+    return null;
+  }
+};
 const VERIFICATION_FIELDS = Object.freeze([['site.confirmaEmpresa', 'empresa'], ['site.confirmaNicho', 'nicho'], ['site.confirmaLocalizacao', 'localizacao']]);
 
 // Uma cópia rasa e SEGURA das chaves de dado de um objeto que veio de uma porta (null se não for dado puro).
@@ -332,7 +340,7 @@ function createResearcher(ports, options = {}) {
         const region = parseRegion(brief.regiao);
         const hint = (key) => (results.find((r) => r[key]) || {})[key];
         const hasText = page.texto.trim() !== '';
-        const result = hasText ? verifyOnPage(page.texto, { nome: empresa, nicho: brief.nicho, cidade: hint('cidade') || (region && region.cidade), uf: hint('estado') || (region && region.uf) }) : null;
+        const result = hasText ? verifyOnPage(page.texto, { nome: empresa, nicho: brief.nicho, cidade: hint('cidade') || (region && region.cidade), uf: hint('estado') || (region && region.uf), host: hostOfUrl(siteUrl), identidade: page.identidade }) : null;
         // o veredito por candidato também sai no RELATÓRIO (só estados, nenhum trecho): quem consome o resultado (o job de prospecção) não precisa
         // abrir a estrutura do achado para saber o que foi comprovado
         report.verificacoes.push({ paginaOficial: true, ...Object.fromEntries(VERIFICATION_FIELDS.map(([, chave]) => [chave, result && result[chave] && result[chave].status === 'VALIDADO' ? 'VALIDADO' : 'NAO_VERIFICADO'])) });

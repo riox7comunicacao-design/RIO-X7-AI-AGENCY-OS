@@ -162,6 +162,11 @@ function extractText(clean, lower) {
   return parts.join('\n').slice(0, MAX_PAGE_TEXT);
 }
 
+// A IDENTIDADE da página (título + H1): onde uma empresa se apresenta. Usada pela verificação do site oficial (o nome da empresa no título/H1).
+function extractIdentity(clean, lower) {
+  return [...blockTexts(clean, lower, 'title', 1, MAX_TEXT_HEADING), ...blockTexts(clean, lower, 'h1', MAX_HEADINGS, MAX_TEXT_HEADING)].join('\n').slice(0, 1000);
+}
+
 const STRONG_CHALLENGE = /cf-chl|challenge-platform|captcha-delivery|px-captcha|<title>\s*(just a moment|attention required|access denied|verifying you are human)/i;
 const WEAK_CAPTCHA = /g-recaptcha|h-captcha|cf-turnstile|captcha/i;
 const isType = (tag, names) => {
@@ -225,6 +230,7 @@ function extractPage(html, baseUrl) {
     marcadorCaptcha: WEAK_CAPTCHA.test(raw.slice(0, 200000)),
     totalLinks: total,
     texto: extractText(clean, lower),
+    identidade: extractIdentity(clean, lower),
   };
 }
 

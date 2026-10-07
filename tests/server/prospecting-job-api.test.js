@@ -26,12 +26,12 @@ async function chamar(env, usuario, { method = 'GET', url, body, headers = {}, c
   return { status: response.status, headers: response.headers, text: response.body, json: () => JSON.parse(response.body) };
 }
 
-const siteDe = (slug) => `https://${slug}.example.test/`;
-const pagina = (nome, slug) => ({ ok: true, urlFinal: siteDe(slug), links: [], temFormularioContato: false, texto: `${nome}\nClínica de estética e harmonização\nRua das Flores, 10 - Petrópolis - RJ` });
+const siteDe = (slug) => `https://${slug}.com.br/`;
+const pagina = (nome, slug) => ({ ok: true, urlFinal: siteDe(slug), links: [], temFormularioContato: false, texto: `${nome}\nClínica de estética e harmonização\nRua das Flores, 10 - Petrópolis - RJ`, identidade: `${nome} | Clínica` });
 
 function ambiente(t, { esperar } = {}) {
-  const candidatos = [['Clínica Alfa', 'alfa'], ['Clínica Beta', 'beta'], ['Clínica Gama', 'gama']].map(([nome, slug]) => ({ nome, url: siteDe(slug), fonteUrl: 'https://busca.example.test/r' }));
-  const paginas = Object.fromEntries(candidatos.map((c, i) => [c.url, pagina(c.nome, ['alfa', 'beta', 'gama'][i])]));
+  const candidatos = [['Clínica Alfa', 'alfa'], ['Clínica Beta', 'beta'], ['Clínica Gama', 'gama']].map(([nome, slug]) => ({ nome, siteOficial: siteDe(slug), fontesDescoberta: [], presencaDigital: {} }));
+  const paginas = Object.fromEntries(candidatos.map((c, i) => [c.siteOficial, pagina(c.nome, ['alfa', 'beta', 'gama'][i])]));
   let pedidos = 0;
   const motor = {
     discover: async ({ signal }) => {
@@ -182,6 +182,9 @@ test('[JOB-API-6] o corpo da resposta do job nunca carrega achados, texto de pá
   const job = (await chamar(env, BRENO, { method: 'POST', url: '/api/prospecting/jobs', body: { briefId: brief.id } })).json().item;
   const fim = await esperarJob(env, job.id);
   const texto = JSON.stringify(fim);
-  assert.doesNotMatch(texto, /achadosValidados|Rua das Flores|authUserId|access_token|service_role|prompt/i);
+  assert.doesNotMatch(texto, /achadosValidados|authUserId|access_token|service_role|prompt/i);
+  // só trechos curtos de evidência (o endereço inteiro e o texto da página não vão junto)
+  assert.doesNotMatch(texto, /Clínica de estética e harmonização\\nRua/);
+  for (const candidato of fim.candidatos) for (const evidencia of Object.values(candidato.evidencias || {})) assert.ok(evidencia.trecho.length <= 80);
   assert.deepEqual(Object.keys(fim.criadoPor).sort(), ['name', 'role', 'userId']);
 });

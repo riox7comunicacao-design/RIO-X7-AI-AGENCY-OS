@@ -79,6 +79,25 @@ const JOB_ERROR_TEXT = Object.freeze({
   JOB_INTERNAL: 'A prospecção falhou por um erro interno. Tente novamente.',
 });
 
+const CANDIDATE_RESULT_LABELS = Object.freeze({ VALIDADO: 'Validada', NAO_VERIFICADO: 'Não verificada', DESCARTADO: 'Descartada' });
+const CHANNEL_LABELS = Object.freeze({ instagram: 'Instagram', facebook: 'Facebook', googleMeuNegocio: 'Google Meu Negócio', linkedin: 'LinkedIn', youtube: 'YouTube', tiktok: 'TikTok', whatsapp: 'WhatsApp' });
+
+// Os canais públicos CONFIRMADOS da empresa, em texto ("Instagram, Facebook"); "—" se nenhum.
+function confirmedChannelsText(presence) {
+  if (!presence || typeof presence !== 'object') return '—';
+  const names = Object.keys(CHANNEL_LABELS).filter((canal) => presence[canal] && presence[canal].confirmacao === 'CONFIRMADO').map((canal) => CHANNEL_LABELS[canal]);
+  return names.length > 0 ? names.join(', ') : '—';
+}
+
+// Onde o candidato terminou no pipeline oficial: "Na fila" (chegou à Approval Queue) ou "Fora da fila: <estado real>"; "—" se não foi ingerido.
+function deliveryText(candidate) {
+  const delivery = candidate && candidate.entrega;
+  if (!delivery || typeof delivery !== 'object') return '—';
+  if (delivery.naFila === true) return 'Na fila';
+  const state = typeof delivery.estadoOperacional === 'string' ? RESULT_STATUS_LABELS[delivery.estadoOperacional] || delivery.estadoOperacional : 'estado desconhecido';
+  return `Fora da fila: ${state}`;
+}
+
 function formatElapsed(ms) {
   const total = Math.max(0, Math.floor((Number(ms) || 0) / 1000));
   return `${String(Math.floor(total / 60)).padStart(2, '0')}:${String(total % 60).padStart(2, '0')}`;
@@ -114,6 +133,7 @@ export function createProspectingView({ document, root, api, permissions, schedu
     busy: false,
     message: null,
     job: null, // o job de prospecção automática do brief selecionado (o mais recente)
+    manualOpen: false, // o "Modo manual" (fluxo antigo) está aberto?
   };
   let stopPolling = null;
   let pollFailures = 0;
@@ -482,13 +502,47 @@ export function createProspectingView({ document, root, api, permissions, schedu
     if (active && job.currentStep !== 'INGERINDO') nodes.push(el('button', { type: 'button', className: 'btn danger', id: 'pros-cancel-job', disabled: state.busy || job.status === 'CANCELAMENTO_SOLICITADO', onclick: onCancelJob, text: 'CANCELAR PROSPECÇÃO' }));
     if (job.status === 'ERRO') nodes.push(el('p', { className: 'notice bad', role: 'note', text: JOB_ERROR_TEXT[job.error && job.error.code] || JOB_ERROR_TEXT.JOB_INTERNAL }));
     if (job.status === 'CONCLUIDO' || job.status === 'PARCIAL') {
+      // a meta conta só os leads que CHEGARAM à Approval Queue; validado pela pesquisa não é o mesmo que entregue à fila
+      const naFila = job.lote && Number.isInteger(job.lote.naFila) ? job.lote.naFila : 0;
+      const foraDaFila = job.lote && Number.isInteger(job.lote.foraDaFila) ? job.lote.foraDaFila : 0;
       nodes.push(
-        el('p', { text: job.candidatesValidated > 0 ? `${job.candidatesValidated} de ${job.requestedQuantity} empresa(s) solicitada(s) foram comprovadas e enviadas para a aprovação.` : 'Nenhuma empresa pôde ser comprovada pela página; nada foi enviado para a aprovação.' }),
+        el('p', { text: naFila > 0 ? `${naFila} de ${job.requestedQuantity} lead(s) solicitado(s) chegaram à Approval Queue.` : job.candidatesValidated > 0 ? 'Nenhum lead chegou à Approval Queue.' : 'Nenhuma empresa pôde ser comprovada pela página; nada foi enviado para a aprovação.' }),
+        ...(foraDaFila > 0 ? [el('p', { className: 'muted', text: `${job.candidatesValidated} empresa(s) comprovada(s) pela pesquisa, mas ${foraDaFila} não foi(ram) entregue(s) à fila (dados insuficientes, DNC ou duplicado).` })] : []),
         ...(job.status === 'PARCIAL' && job.candidatesValidated > 0 ? [el('p', { className: 'muted', text: 'A quantidade pedida não foi atingida: nenhuma empresa fraca foi incluída para completar.' })] : []),
-        ...(job.candidatesValidated > 0 ? [el('a', { className: 'btn secondary', id: 'pros-open-approvals', href: '#/aprovacoes', text: 'Abrir Aprovações' })] : [])
+        ...(naFila > 0 ? [el('a', { className: 'btn secondary', id: 'pros-open-approvals', href: '#/aprovacoes', text: 'Abrir Aprovações' })] : [])
+      );
+    }
+    // o resultado por empresa examinada (sem JSON): resultado, se o site oficial foi encontrado e quais canais públicos foram CONFIRMADOS
+    const examined = Array.isArray(job.candidatos) ? job.candidatos.filter((c) => c && c.resultado) : [];
+    if (!active && examined.length > 0) {
+      nodes.push(
+        el('table', { className: 'crm-table', id: 'pros-job-candidates' },
+          el('thead', {}, el('tr', {}, el('th', { text: 'Empresa' }), el('th', { text: 'Resultado' }), el('th', { text: 'Site oficial' }), el('th', { text: 'Presença digital confirmada' }), el('th', { text: 'Approval Queue' }))),
+          el('tbody', {}, ...examined.map((c) => el('tr', {}, el('td', { text: c.nome }), el('td', { text: CANDIDATE_RESULT_LABELS[c.resultado] || c.resultado }), el('td', { text: c.siteOficial && c.siteOficial.status === 'ENCONTRADO' ? 'Encontrado' : 'Não encontrado' }), el('td', { text: confirmedChannelsText(c.presencaDigital) }), el('td', { text: deliveryText(c) })))))
       );
     }
     return el('div', { className: 'job-box' }, ...nodes);
+  }
+
+  // O "Modo manual" (o fluxo ANTIGO: gerar o pacote de pesquisa, levar ao Claude/Web e colar o JSON de volta): um bloco discreto, recolhido, SÓ quando não há
+  // prospecção automática para este brief. Havendo um job (ativo ou terminado), a tela mostra só o fluxo automático: nenhum pacote JSON, nenhum "copiar",
+  // nenhuma ingestão manual.
+  function buildManualMode(brief) {
+    if (state.job) return null;
+    const canGenerate = brief.status === 'PRONTO_PARA_PESQUISA' || brief.status === 'PESQUISANDO';
+    if (!canGenerate && !brief.pacotePesquisa) return null;
+    return el(
+      'div', { className: 'manual-mode', id: 'pros-manual' },
+      el('button', { type: 'button', className: 'link', id: 'pros-manual-toggle', onclick: () => { state.manualOpen = !state.manualOpen; render(); }, text: state.manualOpen ? 'Ocultar modo manual' : 'Modo manual' }),
+      ...(state.manualOpen
+        ? [
+            el('p', { className: 'muted', text: 'Fluxo antigo: gere um pacote de pesquisa, leve-o ao Claude/Web e cole o resultado de volta.' }),
+            canGenerate ? actionButton('Gerar pacote de pesquisa', () => runAction(() => api.generateProspectingPackage(brief.id)), 'secondary') : null,
+            buildPackageBlock(brief),
+            brief.status === 'PESQUISANDO' ? buildIngestBlock() : null,
+          ]
+        : [])
+    );
   }
 
   function buildSelected() {
@@ -510,12 +564,10 @@ export function createProspectingView({ document, root, api, permissions, schedu
       buildAutoRun(brief),
       el('div', { className: 'actions' },
         brief.status === 'RASCUNHO' ? actionButton('Marcar pronto para pesquisa', () => runAction(() => api.markProspectingBriefReady(brief.id)), 'primary') : null,
-        (brief.status === 'PRONTO_PARA_PESQUISA' || brief.status === 'PESQUISANDO') ? actionButton('Gerar pacote de pesquisa', () => runAction(() => api.generateProspectingPackage(brief.id)), 'primary') : null,
         brief.status === 'AGUARDANDO_REVISAO' ? actionButton('Marcar concluído', () => runAction(() => api.concludeProspectingBrief(brief.id)), 'secondary') : null,
         !['CONCLUIDO', 'CANCELADO'].includes(brief.status) ? actionButton('Cancelar lote', () => runAction(() => api.cancelProspectingBrief(brief.id)), 'danger') : null
       ),
-      buildPackageBlock(brief),
-      brief.status === 'PESQUISANDO' && !(state.job && JOB_ACTIVE.includes(state.job.status)) ? buildIngestBlock() : null,
+      buildManualMode(brief),
       buildFindingsTable()
     );
   }

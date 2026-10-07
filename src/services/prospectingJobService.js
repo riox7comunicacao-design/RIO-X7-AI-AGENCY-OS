@@ -4,17 +4,21 @@
 //                                                                    prospectingBriefService.ingestFindings -> exclusões -> dedup -> DNC -> Approval Queue
 //
 // O QUE FAZ: com o brief PRONTO_PARA_PESQUISA (e SÓ nele), cria um JOB persistido em arquivo, devolve o id NA HORA e executa em
-// segundo plano: (1) descobre candidatos pelo motor injetado (`claude -p`, só ferramentas de pesquisa web; limite = quantidade x 2, no máximo 40);
-// (2) aplica as exclusões permanentes ANTES de gastar uma leitura de página; (3) valida CADA candidato pelo Researcher existente — a prova é o texto
-// da página (verifyOnPage), nunca o que o agente afirmou; (4) faz UMA única passagem dos VALIDADOS pelo caminho oficial de ingestão.
+// segundo plano: (1) descobre candidatos pelo motor injetado (`claude -p`, só ferramentas de pesquisa web) em ciclos ADAPTATIVOS — cada ciclo pede
+// clamp(faltam x 3, 6, 12) candidatos, até 6 ciclos, 40 candidatos no total (a quantidade pedida NÃO define o teto) e 15 minutos;
+// (2) aplica as exclusões permanentes ANTES de gastar uma leitura de página; (3) valida CADA candidato por código — a prova é o texto de uma página
+// (verifyOnPage), nunca o que o agente afirmou: o site oficial é só uma HIPÓTESE (confirmada por domínio/título + nome + conteúdo) e NÃO é requisito do lead;
+// as páginas de terceiros (diretório, notícia) servem de evidência de existência, nunca de "site oficial"; mapeia a presença digital pública (perfis só
+// CONFIRMADOS por vínculo público); (4) faz UMA única passagem dos VALIDADOS pelo caminho oficial de ingestão.
 //
 // O QUE NÃO FAZ: não cria outro caminho de ingestão, não promove para o CRM (a Approval Queue segue sendo o ponto de aprovação humana), não altera
 // permissões (reaproveita PROPOSE:LEAD_APPROVAL, a mesma do Brief Service), não "conserta" nem completa candidatos fracos para atingir a quantidade
 // (se faltar: PARCIAL), não guarda prompt nem texto de página.
 //
 // ESTADOS: CRIADO -> EXECUTANDO -> CONCLUIDO | PARCIAL | CANCELADO | ERRO (e CANCELAMENTO_SOLICITADO entre o pedido de cancelamento e a próxima
-// fronteira segura). CONCLUIDO = a quantidade pedida foi validada; PARCIAL = menos (candidatos/ciclos/tempo/válidos insuficientes); nunca se
-// "completa" com candidatos não validados.
+// fronteira segura). CONCLUIDO = a quantidade pedida de leads que CHEGARAM à Approval Queue (o resultado real do pipeline de ingestão, não o veredito do
+// motor); PARCIAL = menos (candidatos/ciclos/tempo, válidos insuficientes OU válidos que o pipeline reteve: dados insuficientes, DNC, duplicado...); ERRO só
+// por falha operacional do job. Nunca se "completa" com candidatos não validados, e um validado que não chegou à fila continua nos resultados.
 //
 // CANCELAR: só ANTES da ingestão. O pedido marca o job e aborta o motor de descoberta em andamento; a execução para na PRÓXIMA fronteira segura
 // (antes de uma nova descoberta, de uma nova validação ou da ingestão) e termina CANCELADO, sem ingestão parcial. Quando a ingestão começa, o job
@@ -28,7 +32,9 @@
 
 const { PERMISSION } = require('../auth');
 const { createResearcher } = require('../research-prospector/researcher');
-const { parseRegion } = require('../research-prospector/pageVerification');
+const { parseRegion, verifyOnPage, verifyOfficialSite } = require('../research-prospector/pageVerification');
+const digital = require('../research-prospector/digitalPresence');
+const { validateRawFindingsV2 } = require('../research-prospector/rawFindingV2');
 const { summarizeGeografia, BRIEF_STATUS, GEO_LEVEL } = require('../research-prospector/prospectingBrief');
 const { normalizeNameCity, normalizeDomain } = require('../research-prospector/normalize');
 const { assertValidJobRepository } = require('../research-prospector/jobRepository');
@@ -38,12 +44,13 @@ const {
   CANDIDATE_RESULT,
   CANDIDATE_REASON,
   ERROR_CODE,
+  STOP_REASON,
   LIMITS,
   JOB_ID_PATTERN,
-  computeCandidateLimit,
+  computeBatchSize,
   buildJobId,
   isActive,
-  classifyResearch,
+  decideLead,
 } = require('../research-prospector/prospectingJob');
 
 class ProspectingJobError extends Error {
@@ -90,11 +97,26 @@ function defaultIsProcessAlive(pid) {
   }
 }
 
-const candidateKey = (candidate) => `${normalizeNameCity(candidate.nome, 'x') || candidate.nome.toLowerCase()}|${normalizeDomain(candidate.url) || candidate.url}`;
+// a identidade de um candidato para não repeti-lo entre ciclos: nome + site (ou, sem site, a primeira fonte)
+const candidateKey = (candidate) => `${normalizeNameCity(candidate.nome, 'x') || candidate.nome.toLowerCase()}|${normalizeDomain(candidate.siteOficial || (candidate.fontesDescoberta[0] && candidate.fontesDescoberta[0].url) || '') || candidate.siteOficial || ''}`;
+
+// O candidato como o job o usa: re-normalizado POR CÓDIGO (nunca se confia no tipo de uma fonte nem em um site de terceiro que veio do motor). null se não tem nome.
+function normalizeCandidate(raw) {
+  if (!isPlainObject(raw) || typeof raw.nome !== 'string' || raw.nome.trim() === '') return null;
+  const origin = typeof raw.siteOficial === 'string' ? digital.normalizeToOrigin(raw.siteOficial) : null;
+  return {
+    nome: raw.nome.trim(),
+    siteOficial: origin !== null && !digital.isKnownThirdPartyHost(digital.hostOf(origin)) ? origin : null,
+    fontesDescoberta: digital.classifySources((Array.isArray(raw.fontesDescoberta) ? raw.fontesDescoberta : []).map((origem) => origem && origem.url)),
+    presencaDigital: digital.readProfileHints(raw.presencaDigital),
+  };
+}
+
+const CHANNEL_RESULT_TYPE = Object.freeze({ instagram: 'INSTAGRAM', facebook: 'FACEBOOK', linkedin: 'LINKEDIN', youtube: 'YOUTUBE', googleMeuNegocio: 'GOOGLE_PERFIL' });
 
 // dependencies:
 //   authorizeProposer(context, PROPOSE:LEAD_APPROVAL)   OBRIGATÓRIA — a mesma ponte do Brief Service (nenhuma permissão nova)
-//   briefService      OBRIGATÓRIA — só usa getBrief, generateResearchPackage e ingestFindings (o caminho oficial)
+//   briefService      OBRIGATÓRIA — só usa getBrief, markResearching e ingestFindings (o caminho oficial; o pacote de pesquisa manual não é usado)
 //   repository        OBRIGATÓRIA — a porta de jobs (list/getById/save)
 //   discoveryEngine   OBRIGATÓRIA — { discover(request) } (o motor externo; nos testes, um double)
 //   createFetchPage   OBRIGATÓRIA — () => fetchPage: a porta de leitura de página, nova a cada job (orçamento próprio)
@@ -106,7 +128,7 @@ function createProspectingJobService(dependencies) {
   const { authorizeProposer, briefService, repository, discoveryEngine, createFetchPage, checkPermanentExclusion, now = () => new Date(), limits: limitOverrides = {}, processId = process.pid, isProcessAlive = defaultIsProcessAlive } = dependencies || {};
 
   if (typeof authorizeProposer !== 'function') throw new Error('createProspectingJobService exige { authorizeProposer } (função)');
-  for (const method of ['getBrief', 'generateResearchPackage', 'ingestFindings']) {
+  for (const method of ['getBrief', 'markResearching', 'ingestFindings']) {
     if (!briefService || typeof briefService[method] !== 'function') throw new Error(`createProspectingJobService exige { briefService } com ${method}()`);
   }
   assertValidJobRepository(repository);
@@ -119,8 +141,11 @@ function createProspectingJobService(dependencies) {
   const isExcluded = typeof checkPermanentExclusion === 'function' ? checkPermanentExclusion : () => false;
 
   const limits = Object.freeze({
-    candidatesMultiplier: limitOverrides.candidatesMultiplier ?? LIMITS.CANDIDATES_MULTIPLIER,
-    candidatesAbsoluteMax: Math.min(limitOverrides.candidatesAbsoluteMax ?? LIMITS.CANDIDATES_ABSOLUTE_MAX, LIMITS.CANDIDATES_ABSOLUTE_MAX),
+    // o teto ABSOLUTO de candidatos (nunca acima de 40); a quantidade pedida NÃO define o teto
+    candidatesAbsoluteMax: Math.min(limitOverrides.candidatesAbsoluteMax ?? LIMITS.MAX_CANDIDATES, LIMITS.MAX_CANDIDATES),
+    batchMultiplier: limitOverrides.batchMultiplier ?? LIMITS.BATCH_MULTIPLIER,
+    batchMin: limitOverrides.batchMin ?? LIMITS.BATCH_MIN,
+    batchMax: limitOverrides.batchMax ?? LIMITS.BATCH_MAX,
     maxCycles: limitOverrides.maxCycles ?? LIMITS.MAX_CYCLES,
     maxDurationMs: limitOverrides.maxDurationMs ?? LIMITS.MAX_DURATION_MS,
     discoveryTimeoutMs: limitOverrides.discoveryTimeoutMs ?? LIMITS.DISCOVERY_TIMEOUT_MS,
@@ -208,12 +233,13 @@ function createProspectingJobService(dependencies) {
     // uma prospecção automática por vez (cada uma consome pesquisa e leitura de páginas): nunca duas em paralelo
     if (all.some((job) => isActive(job.status))) throw new ProspectingJobError(ERROR.ALREADY_RUNNING, 'Prospecção: já existe uma prospecção em execução.');
 
-    await briefService.generateResearchPackage(context, brief.id); // PRONTO -> PESQUISANDO
+    // PRONTO_PARA_PESQUISA -> PESQUISANDO, SEM gerar o pacote de pesquisa (o fluxo manual é que o usa)
+    await briefService.markResearching(context, brief.id);
 
     const instant = now();
     const prefix = `JOB-${instant.getUTCFullYear()}${String(instant.getUTCMonth() + 1).padStart(2, '0')}${String(instant.getUTCDate()).padStart(2, '0')}-`;
     const id = buildJobId(instant, all.filter((job) => job.id.startsWith(prefix)).length + 1);
-    const maxCandidates = computeCandidateLimit(brief.quantidade, { multiplier: limits.candidatesMultiplier, absoluteMax: limits.candidatesAbsoluteMax });
+    const maxCandidates = limits.candidatesAbsoluteMax;
     const job = {
       id,
       briefId: brief.id,
@@ -332,15 +358,23 @@ function createProspectingJobService(dependencies) {
     const startMs = now().getTime();
     const deadline = startMs + limits.maxDurationMs;
     const timeLeft = () => deadline - now().getTime();
-    const maxCandidates = requireJob(id).limits.maxCandidates;
+    const maxCandidates = limits.candidatesAbsoluteMax;
     const quantity = brief.quantidade;
     const tele = { discoveryMs: 0, validationMs: 0, custoUsd: 0, webSearchRequests: 0, discoveryRuns: 0, limitReached: null };
 
     const seen = new Set();
-    const candidates = []; // { nome, url, fonteUrl, resultado, motivo, causa? }
-    const valid = []; // achados V2 validados
-    let limitReached = null;
+    const candidates = []; // um registro por candidato: { _in (a hipótese do motor), ...o resultado que o job decidiu }
+    const valid = []; // achados V2 validados (só os internos, até a ingestão)
+    let stopReason = null;
 
+    const RECORD_KEYS = ['resultado', 'motivo', 'entrega', 'causa', 'faltando', 'empresa', 'nicho', 'localizacao', 'evidencias', 'fonteDaValidacao', 'siteOficial', 'presencaDigital', 'outrasPresencas', 'fontesDescoberta'];
+    // o que é persistido por candidato: estados, trechos curtos e URLs — nunca texto de página
+    const summary = (entry) => ({
+      nome: entry.nome,
+      url: entry.siteOficial && entry.siteOficial.url ? entry.siteOficial.url : null,
+      resultado: entry.resultado || null,
+      ...Object.fromEntries(RECORD_KEYS.filter((key) => key !== 'resultado' && entry[key] !== undefined && entry[key] !== null).map((key) => [key, entry[key]])),
+    });
     const counts = () => ({
       candidatesDiscovered: candidates.length,
       candidatesValidated: candidates.filter((c) => c.resultado === CANDIDATE_RESULT.VALIDADO).length,
@@ -352,57 +386,149 @@ function createProspectingJobService(dependencies) {
     // 15% = descobrindo; de 20% a 90% = candidatos já examinados; 95% = ingestão; 100% = terminou. Nunca regride.
     const progressNow = () => (candidates.length === 0 ? 15 : Math.min(90, 20 + Math.round((70 * checked()) / candidates.length)));
     const save = (step, extra = {}) => patch(id, { ...counts(), currentStep: step, progress: Math.max(requireJob(id).progress, extra.progress ?? progressNow()), candidatos: candidates.map(summary), achadosValidados: valid, telemetria: { ...tele }, ...extra });
-    const summary = (c) => ({ nome: c.nome, url: c.url, resultado: c.resultado || null, ...(c.motivo ? { motivo: c.motivo } : {}), ...(c.causa ? { causa: c.causa } : {}), ...(c.faltando ? { faltando: c.faltando } : {}) });
 
     const cancelled = () => {
       finalize(id, JOB_STATUS.CANCELADO, { ...counts(), candidatos: candidates.map(summary), telemetria: { ...tele } });
       return true;
     };
 
+    // leitura de página com cache POR JOB: a mesma URL nunca é lida duas vezes (o Researcher reaproveita o que o job já leu)
     const fetchPage = createFetchPage();
+    const pageCache = new Map();
+    const fetchCached = (url) => {
+      if (!pageCache.has(url)) pageCache.set(url, Promise.resolve().then(() => fetchPage(url)).catch(() => ({ ok: false, falha: 'ERRO', causa: 'ERRO_INTERNO' })));
+      return pageCache.get(url);
+    };
     const hint = { cidade: region.cidade, estado: region.uf };
     const region0 = summarizeGeografia(brief);
+    const verifyContext = (extra = {}) => ({ nicho: brief.nicho, cidade: hint.cidade, uf: hint.estado, ...extra });
+    const failureOf = (page) => ({ falha: page && typeof page.falha === 'string' ? page.falha : 'ERRO', causa: page && typeof page.causa === 'string' ? page.causa : 'DESCONHECIDA' });
 
-    // ---- um candidato: exclusão permanente -> Researcher (página + verificação por código) ----
-    async function validateCandidate(candidate) {
-      try {
-        const excluded = await isExcluded({ empresa: candidate.nome, cidade: hint.cidade, ...(hint.estado ? { estado: hint.estado } : {}) });
-        if (excluded) return { resultado: CANDIDATE_RESULT.DESCARTADO, motivo: CANDIDATE_REASON.EXCLUSAO_PERMANENTE };
-      } catch {
-        return { resultado: CANDIDATE_RESULT.NAO_VERIFICADO, motivo: CANDIDATE_REASON.EXCLUSAO_NAO_CONSULTADA };
+    // o achado V2 de um candidato COMPROVADO: o Researcher monta com o site oficial CONFIRMADO e os perfis CONFIRMADOS; sem nenhum dos dois, um achado mínimo (só o que
+    // foi comprovado e as URLs de onde veio) — nada é inferido
+    async function buildFinding(candidate, decision, siteOficial, presencaDigital, outrasPresencas) {
+      const origem = decision.fonteDaValidacao.url;
+      const results = [];
+      if (siteOficial.status === digital.SITE_STATUS.ENCONTRADO) results.push({ nome: candidate.nome, url: siteOficial.url, tipoResultado: 'SITE', fonteUrl: origem, cidade: hint.cidade, ...(hint.estado ? { estado: hint.estado } : {}) });
+      for (const { canal, url } of digital.confirmedChannels(presencaDigital)) {
+        if (CHANNEL_RESULT_TYPE[canal]) results.push({ nome: candidate.nome, url, tipoResultado: CHANNEL_RESULT_TYPE[canal], fonteUrl: origem, cidade: hint.cidade, ...(hint.estado ? { estado: hint.estado } : {}) });
       }
-      try {
-        const researcher = createResearcher(
-          { search: async () => ({ ok: true, resultados: [{ nome: candidate.nome, url: candidate.url, tipoResultado: 'SITE', fonteUrl: candidate.fonteUrl }] }), fetchPage },
-          { now, maxDurationMs: Math.max(1, Math.min(limits.candidateTimeoutMs, timeLeft())) }
-        );
-        const output = await researcher.research({ nicho: brief.nicho, quantidadeDesejada: 1, regiao: region0, ...(brief.subnicho ? { tipo: brief.subnicho } : {}) });
-        return classifyResearch(output);
-      } catch {
-        return { resultado: CANDIDATE_RESULT.NAO_VERIFICADO, motivo: CANDIDATE_REASON.VALIDACAO_FALHOU };
+      let finding = null;
+      if (results.length > 0) {
+        try {
+          const researcher = createResearcher({ search: async () => ({ ok: true, resultados: results }), fetchPage: fetchCached }, { now, maxDurationMs: Math.max(1, Math.min(limits.candidateTimeoutMs, timeLeft())) });
+          const output = await researcher.research({ nicho: brief.nicho, quantidadeDesejada: 1, regiao: region0, ...(brief.subnicho ? { tipo: brief.subnicho } : {}) });
+          if (output && output.ok === true && Array.isArray(output.achados) && output.achados.length > 0) finding = output.achados[0];
+        } catch {
+          finding = null;
+        }
       }
+      if (finding === null) {
+        const fontes = [...new Set([origem, ...outrasPresencas.map((p) => p.url)])].slice(0, 10);
+        finding = { empresa: candidate.nome, cidade: hint.cidade, ...(hint.estado ? { estado: hint.estado } : {}), nicho: brief.nicho, fontes, dataDaPesquisa: now().toISOString().slice(0, 10) };
+      }
+      const checkedFinding = validateRawFindingsV2([finding], { now: now() });
+      return checkedFinding.ok ? finding : null;
     }
 
-    // ---- ciclos de descoberta + validação ----
-    for (let cycle = 1; cycle <= limits.maxCycles; cycle += 1) {
+    // ---- um candidato: exclusão permanente -> site oficial (hipótese) -> páginas de terceiros -> decisão -> presença digital -> achado ----
+    async function evaluateCandidate(candidate) {
+      const nothing = { empresa: 'NAO_VERIFICADO', nicho: 'NAO_VERIFICADO', localizacao: 'NAO_VERIFICADO', siteOficial: { status: digital.SITE_STATUS.NAO_ENCONTRADO, url: null }, presencaDigital: digital.emptyPresence(), outrasPresencas: [], fontesDescoberta: candidate.fontesDescoberta };
+      try {
+        const excluded = await isExcluded({ empresa: candidate.nome, cidade: hint.cidade, ...(hint.estado ? { estado: hint.estado } : {}) });
+        if (excluded) return { record: { ...nothing, resultado: CANDIDATE_RESULT.DESCARTADO, motivo: CANDIDATE_REASON.EXCLUSAO_PERMANENTE } };
+      } catch {
+        return { record: { ...nothing, resultado: CANDIDATE_RESULT.NAO_VERIFICADO, motivo: CANDIDATE_REASON.EXCLUSAO_NAO_CONSULTADA } };
+      }
+
+      const pages = [];
+      let siteOficial = { status: digital.SITE_STATUS.NAO_ENCONTRADO, url: null, motivo: 'NAO_INFORMADO' };
+      let officialPage = null;
+
+      // 1) o site oficial é uma HIPÓTESE: confirma-se por código (domínio/título + nome + conteúdo institucional); HTTP 200 sozinho não prova nada
+      if (candidate.siteOficial) {
+        const page = await fetchCached(candidate.siteOficial);
+        if (!page || page.ok !== true) {
+          const failure = failureOf(page);
+          siteOficial = { status: digital.SITE_STATUS.NAO_ENCONTRADO, url: null, motivo: 'PAGINA_INACESSIVEL', causa: failure.causa };
+          pages.push({ origem: { url: candidate.siteOficial, tipo: digital.classifySource(candidate.siteOficial) }, falha: failure.falha, causa: failure.causa });
+        } else {
+          const finalUrl = typeof page.urlFinal === 'string' ? page.urlFinal : candidate.siteOficial;
+          const link = verifyOfficialSite(page.texto, { nome: candidate.nome, url: finalUrl, identidade: page.identidade, ...verifyContext() });
+          if (link.status === 'VALIDADO') {
+            const origin = digital.normalizeToOrigin(finalUrl);
+            siteOficial = { status: digital.SITE_STATUS.ENCONTRADO, url: origin, regra: link.regra };
+            officialPage = page;
+            pages.push({ origem: { url: origin, tipo: digital.SOURCE_TYPE.OFICIAL }, veredito: verifyOnPage(page.texto, { nome: candidate.nome, ...verifyContext({ host: digital.hostOf(origin), identidade: page.identidade }) }) });
+          } else {
+            siteOficial = { status: digital.SITE_STATUS.NAO_ENCONTRADO, url: null, motivo: link.motivo };
+          }
+        }
+      }
+
+      // 2) sem uma página que comprove os três aspectos, as páginas de TERCEIROS (diretório, notícia) que descobriram a empresa: servem de evidência de
+      //    existência, nunca de "site oficial"
+      let decision = decideLead(pages);
+      if (decision.resultado !== CANDIDATE_RESULT.VALIDADO) {
+        const thirdParty = candidate.fontesDescoberta.filter((origem) => origem.tipo === digital.SOURCE_TYPE.DIRETORIO || origem.tipo === digital.SOURCE_TYPE.NOTICIA_OU_TERCEIRO).slice(0, LIMITS.MAX_THIRD_PARTY_PAGES);
+        for (const origem of thirdParty) {
+          if (timeLeft() <= 0 || wasCancelRequested(id)) break;
+          const page = await fetchCached(origem.url);
+          if (!page || page.ok !== true) {
+            const failure = failureOf(page);
+            pages.push({ origem, falha: failure.falha, causa: failure.causa });
+          } else {
+            pages.push({ origem, links: (Array.isArray(page.links) ? page.links : []).map((l) => l && l.href).filter((href) => typeof href === 'string'), veredito: verifyOnPage(page.texto, { nome: candidate.nome, ...verifyContext() }) });
+          }
+          decision = decideLead(pages);
+          if (decision.resultado === CANDIDATE_RESULT.VALIDADO) break;
+        }
+      }
+
+      // 3) a presença digital (separada do site) e as fontes classificadas por código
+      const officialHost = siteOficial.status === digital.SITE_STATUS.ENCONTRADO ? digital.hostOf(siteOficial.url) : null;
+      const validatingPage = decision.resultado === CANDIDATE_RESULT.VALIDADO ? pages.find((p) => p.origem.url === decision.fonteDaValidacao.url && p.origem.tipo !== digital.SOURCE_TYPE.OFICIAL) : null;
+      const presencaDigital = digital.buildPresence({
+        hints: candidate.presencaDigital,
+        officialLinks: officialPage && Array.isArray(officialPage.links) ? officialPage.links.map((l) => l && l.href).filter((href) => typeof href === 'string') : [],
+        crossLinks: validatingPage ? validatingPage.links : [],
+        otherSources: candidate.fontesDescoberta.filter((origem) => origem.tipo === digital.SOURCE_TYPE.REDE_SOCIAL && (digital.classifyHost(digital.hostOf(origem.url)) || {}).canal === null),
+      });
+      const fontesDescoberta = digital.classifySources([...(officialHost ? [siteOficial.url] : []), ...candidate.fontesDescoberta.map((origem) => origem.url)], officialHost);
+      const outrasPresencas = fontesDescoberta.filter((origem) => origem.tipo === digital.SOURCE_TYPE.DIRETORIO || origem.tipo === digital.SOURCE_TYPE.NOTICIA_OU_TERCEIRO);
+      const { resultado, motivo, causa, faltando, empresa, nicho, localizacao, evidencias, fonteDaValidacao } = decision;
+      const record = { resultado, motivo, causa, faltando, empresa, nicho, localizacao, evidencias, fonteDaValidacao, siteOficial, presencaDigital, outrasPresencas, fontesDescoberta };
+
+      if (resultado !== CANDIDATE_RESULT.VALIDADO) return { record };
+      const achado = await buildFinding(candidate, decision, siteOficial, presencaDigital, outrasPresencas);
+      if (achado === null) return { record: { ...record, resultado: CANDIDATE_RESULT.NAO_VERIFICADO, motivo: CANDIDATE_REASON.VALIDACAO_FALHOU, evidencias: undefined, fonteDaValidacao: undefined } };
+      return { record, achado };
+    }
+
+    // ---- ciclos de descoberta + validação (adaptativos) ----
+    let cycle = 0;
+    while (cycle < limits.maxCycles) {
       if (wasCancelRequested(id)) return cancelled();
+      if (valid.length >= quantity) break;
       if (timeLeft() <= 0) {
-        limitReached = 'TEMPO';
+        stopReason = STOP_REASON.TEMPO;
         break;
       }
       if (candidates.length >= maxCandidates) {
-        limitReached = 'CANDIDATOS';
+        stopReason = STOP_REASON.CANDIDATOS;
         break;
       }
+      cycle += 1;
       patch(id, { currentStep: JOB_STEP.DESCOBRINDO, cycles: cycle, ...counts(), telemetria: { ...tele } });
 
+      const batch = computeBatchSize(quantity, valid.length, { multiplier: limits.batchMultiplier, min: limits.batchMin, max: limits.batchMax }, maxCandidates - candidates.length);
       const askedAt = now().getTime();
       const found = await discoveryEngine.discover({
         nicho: brief.nicho,
         subnicho: brief.subnicho,
         cidade: region.cidade,
         uf: region.uf,
-        limit: maxCandidates - candidates.length,
+        limit: batch,
         excluir: candidates.map((c) => c.nome),
         signal: controller.signal,
         timeoutMs: Math.max(1, Math.min(limits.discoveryTimeoutMs, timeLeft())),
@@ -418,47 +544,54 @@ function createProspectingJobService(dependencies) {
           finalize(id, JOB_STATUS.ERRO, { ...counts(), telemetria: { ...tele }, error: { code: ERROR_CODE.DISCOVERY_FAILED, message: 'A descoberta de candidatos falhou.', cause: found && typeof found.code === 'string' ? found.code : 'DESCONHECIDA' } });
           return undefined;
         }
-        limitReached = limitReached || 'DESCOBERTA';
+        stopReason = STOP_REASON.DESCOBERTA;
         break;
       }
 
-      // candidatos novos (sem repetir nome/site já vistos), no máximo até o limite
+      // candidatos novos (sem repetir nome/site já vistos), no máximo até o teto absoluto; nunca se inventa um candidato
       const fresh = [];
-      for (const item of found.candidatos) {
-        if (candidates.length + fresh.length >= maxCandidates) break;
+      for (const raw of found.candidatos) {
+        if (candidates.length + fresh.length >= maxCandidates || fresh.length >= batch) break; // nunca além do teto absoluto nem do que foi pedido neste ciclo
+        const item = normalizeCandidate(raw);
+        if (item === null) continue;
         const key = candidateKey(item);
         if (seen.has(key)) continue;
         seen.add(key);
-        fresh.push({ nome: item.nome, url: item.url, fonteUrl: item.fonteUrl });
+        fresh.push({ nome: item.nome, _in: item });
       }
-      for (const item of fresh) candidates.push(item);
+      for (const entry of fresh) candidates.push(entry);
       save(JOB_STEP.VALIDANDO);
-      if (fresh.length === 0) break; // nada novo: não adianta repetir
+      if (fresh.length === 0) {
+        stopReason = STOP_REASON.SEM_CANDIDATOS_NOVOS;
+        break;
+      }
 
-      for (const candidate of fresh) {
+      for (const entry of fresh) {
         if (wasCancelRequested(id)) return cancelled();
         if (valid.length >= quantity) break;
         if (timeLeft() <= 0) {
-          limitReached = 'TEMPO';
+          stopReason = STOP_REASON.TEMPO;
           break;
         }
         const startedValidation = now().getTime();
-        const outcome = await validateCandidate(candidate);
+        let outcome;
+        try {
+          outcome = await evaluateCandidate(entry._in);
+        } catch {
+          outcome = { record: { resultado: CANDIDATE_RESULT.NAO_VERIFICADO, motivo: CANDIDATE_REASON.VALIDACAO_FALHOU } };
+        }
         tele.validationMs += now().getTime() - startedValidation;
-        candidate.resultado = outcome.resultado;
-        if (outcome.motivo) candidate.motivo = outcome.motivo;
-        if (outcome.causa) candidate.causa = outcome.causa;
-        if (outcome.faltando) candidate.faltando = outcome.faltando;
-        if (outcome.resultado === CANDIDATE_RESULT.VALIDADO && outcome.achado) valid.push(outcome.achado);
+        Object.assign(entry, outcome.record);
+        if (outcome.record.resultado === CANDIDATE_RESULT.VALIDADO && outcome.achado) valid.push(outcome.achado);
         save(JOB_STEP.VALIDANDO);
       }
-      if (valid.length >= quantity || limitReached) break;
+      if (stopReason === STOP_REASON.TEMPO) break;
     }
-    if (limitReached === null && valid.length < quantity && candidates.length >= maxCandidates) limitReached = 'CANDIDATOS';
+    if (valid.length < quantity && stopReason === null) stopReason = candidates.length >= maxCandidates ? STOP_REASON.CANDIDATOS : STOP_REASON.CICLOS;
 
     // ---- fronteira segura final: ainda dá para cancelar, e SÓ ATÉ AQUI ----
     if (wasCancelRequested(id)) return cancelled();
-    tele.limitReached = limitReached;
+    tele.limitReached = valid.length >= quantity ? null : stopReason;
 
     // nada validado: nada a ingerir (o brief continua PESQUISANDO; um novo job não é aceito nesse estado)
     if (valid.length === 0) {
@@ -476,12 +609,27 @@ function createProspectingJobService(dependencies) {
       finalize(id, JOB_STATUS.ERRO, { ...counts(), telemetria: { ...tele }, error: { code: ERROR_CODE.INGESTION_FAILED, message: 'A ingestão dos candidatos validados falhou; nada foi promovido ao CRM.' } });
       return undefined;
     }
+    // A META COMERCIAL: o que o pipeline oficial REALMENTE entregou à Approval Queue (lote.prospectIds = os itens que entraram na fila). Um lead VALIDADO pelo
+    // motor que termina DADOS_INSUFICIENTES, DNC, DUPLICADO ou REJEITADO NÃO conta; ele permanece nos resultados do job com o seu estado real no pipeline.
+    const batch = result && result.lote && typeof result.lote === 'object' ? result.lote : null;
+    const outcomes = batch && Array.isArray(batch.resultados) ? batch.resultados : [];
+    const inQueue = batch && Array.isArray(batch.prospectIds) ? batch.prospectIds.length : outcomes.filter((item) => item && item.naFila === true).length;
+    for (const finding of toIngest) {
+      const entry = candidates.find((candidate) => candidate.nome === finding.empresa && candidate.resultado === CANDIDATE_RESULT.VALIDADO);
+      const outcome = outcomes.find((item) => item && item.empresa === finding.empresa);
+      if (entry && outcome) entry.entrega = { naFila: outcome.naFila === true, estadoOperacional: typeof outcome.estadoOperacional === 'string' ? outcome.estadoOperacional : null, ...(typeof outcome.motivo === 'string' ? { motivo: outcome.motivo } : {}) };
+    }
+    const delivered = inQueue >= quantity;
+    if (!delivered) tele.limitReached = tele.limitReached || STOP_REASON.ENTREGA_INSUFICIENTE;
     const lote = {
-      loteId: result && result.lote ? result.lote.loteId : null,
-      contagens: result && result.lote ? result.lote.contagens : null,
+      loteId: batch ? batch.loteId : null,
+      contagens: batch ? batch.contagens : null,
       excluidosPermanentemente: result && Number.isInteger(result.excluidosPermanentemente) ? result.excluidosPermanentemente : 0,
+      validadosPeloMotor: toIngest.length, // comprovados por código (empresa + nicho + localização)
+      naFila: inQueue, // encaminhados de fato à Approval Queue: só estes contam para a meta
+      foraDaFila: Math.max(0, toIngest.length - inQueue), // validados pelo motor, mas retidos pelo pipeline (dados insuficientes, DNC, duplicado...)
     };
-    finalize(id, valid.length >= quantity ? JOB_STATUS.CONCLUIDO : JOB_STATUS.PARCIAL, { ...counts(), candidatos: candidates.map(summary), telemetria: { ...tele }, lote });
+    finalize(id, delivered ? JOB_STATUS.CONCLUIDO : JOB_STATUS.PARCIAL, { ...counts(), candidatos: candidates.map(summary), telemetria: { ...tele }, lote });
     return undefined;
   }
 

@@ -47,9 +47,9 @@ async function erroDe(fn) {
   throw new Error('esperava que a função lançasse, e ela não lançou');
 }
 
-test('[BRIEF-SVC-1] o Service expõe exatamente as 8 operações do Workbench, congelado', () => {
+test('[BRIEF-SVC-1] o Service expõe exatamente as 9 operações do Workbench (as 8 de antes + markResearching), congelado', () => {
   const servico = criarServico();
-  assert.deepEqual(Object.keys(servico).sort(), ['cancelBrief', 'createBrief', 'generateResearchPackage', 'getBrief', 'ingestFindings', 'listBriefs', 'markConcluded', 'markReadyForResearch']);
+  assert.deepEqual(Object.keys(servico).sort(), ['cancelBrief', 'createBrief', 'generateResearchPackage', 'getBrief', 'ingestFindings', 'listBriefs', 'markConcluded', 'markReadyForResearch', 'markResearching']);
   assert.ok(Object.isFrozen(servico));
 });
 
@@ -366,4 +366,43 @@ test('[BRIEF-SVC-18] EXCLUSÃO PERMANENTE PONTA A PONTA (Prospecting Exclusion S
   // Consequência estrutural: sem entrada na fila, não há prospect para promover ao CRM nem Card para criar — as
   // duas ações downstream (crmIntegrationService/funnelService) nunca têm um id para agir, então nunca acontecem.
   assert.equal((await crmService.listRecords(admin(), {})).length, 0, 'nada foi promovido ao CRM ainda (a aprovação humana continua sendo o próximo passo, só para o achado normal)');
+});
+
+test('[BRIEF-SVC-MR-1] markResearching: PRONTO_PARA_PESQUISA -> PESQUISANDO SEM gerar pacote de pesquisa (é o que a prospecção automática usa); só nesse estado; exige a mesma autorização', async () => {
+  const servico = criarServico();
+  const brief = await servico.createBrief(admin(), briefInput());
+  assert.equal((await erroDe(() => servico.markResearching(admin(), brief.id))).code, 'BRIEF_INVALID_STATE', 'RASCUNHO não vai direto a PESQUISANDO');
+  await servico.markReadyForResearch(admin(), brief.id);
+  const pesquisando = servico.markResearching(admin(), brief.id);
+  assert.equal(pesquisando.status, 'PESQUISANDO');
+  assert.deepEqual([pesquisando.pacotePesquisa, pesquisando.pacoteGeradoEm], [null, null], 'NENHUM pacote de pesquisa é gerado');
+  assert.equal(pesquisando.atualizadoEm, AGORA.toISOString());
+  assert.equal((await erroDe(() => servico.markResearching(admin(), brief.id))).code, 'BRIEF_INVALID_STATE', 'PESQUISANDO não repete a transição');
+  assert.equal((await erroDe(() => servico.markResearching(admin(), 'PROS-20260929-099'))).code, 'BRIEF_NOT_FOUND');
+  assert.equal((await erroDe(() => servico.markResearching(admin(), 'x'))).code, 'BRIEF_INVALID_INPUT');
+  const outro = await servico.createBrief(admin(), briefInput());
+  await servico.markReadyForResearch(admin(), outro.id);
+  await erroDe(() => servico.markResearching(closer(), outro.id)); // COMMERCIAL_CLOSER não tem PROPOSE:LEAD_APPROVAL
+  await erroDe(() => servico.markResearching(inativo(), outro.id));
+  assert.equal((await servico.getBrief(admin(), outro.id)).status, 'PRONTO_PARA_PESQUISA', 'as recusas não mudam nada');
+});
+
+test('[BRIEF-SVC-MR-2] o fluxo MANUAL continua funcionando: generateResearchPackage ainda leva PRONTO -> PESQUISANDO COM pacote, e a ingestão manual segue valendo depois de markResearching', async () => {
+  const prospecting = prospectingDouble();
+  const servico = criarServico({ prospectingService: prospecting });
+  const manual = await servico.createBrief(admin(), briefInput());
+  await servico.markReadyForResearch(admin(), manual.id);
+  const comPacote = await servico.generateResearchPackage(admin(), manual.id);
+  assert.equal(comPacote.status, 'PESQUISANDO');
+  assert.ok(comPacote.pacotePesquisa && comPacote.pacoteGeradoEm, 'o fluxo manual gera o pacote');
+  const achado = { empresa: 'Clínica Manual', tipo: 'clínica', cidade: 'Petrópolis', estado: 'RJ', nicho: 'Psicologia', campos: { site: [{ valor: 'manual.example.test', fonte: 'Fonte', tipoFonte: 'OFICIAL' }] }, fontes: ['https://manual.example.test'] };
+  const ingerido = await servico.ingestFindings(admin(), manual.id, [achado]);
+  assert.equal(ingerido.brief.status, 'AGUARDANDO_REVISAO');
+  // depois de markResearching (sem pacote) a ingestão também funciona: é o mesmo estado PESQUISANDO
+  const auto = await servico.createBrief(admin(), briefInput());
+  await servico.markReadyForResearch(admin(), auto.id);
+  servico.markResearching(admin(), auto.id);
+  const viaAuto = await servico.ingestFindings(admin(), auto.id, [achado]);
+  assert.equal(viaAuto.brief.status, 'AGUARDANDO_REVISAO');
+  assert.equal(prospecting.chamadas.length, 2);
 });

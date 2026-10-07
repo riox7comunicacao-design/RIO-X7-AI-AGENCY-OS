@@ -17,6 +17,10 @@
 // As regras (fechadas e explícitas):
 //   empresa      nome              o nome completo, como palavras inteiras (sem acento, sem diferença de caixa)
 //                nome_sem_titulo   o nome sem o título inicial (Dr., Dra., Prof., Profa.), quando sobra mais de uma palavra
+//                nome_nucleo       o NOME-NÚCLEO: o nome sem o que vem entre parênteses ou depois de " - ", " – ", " | ", sem qualificador de unidade/filial
+//                                  e sem sufixo jurídico; os tokens DISTINTIVOS (não genéricos) aparecem na mesma ordem, como palavras inteiras. Se TODOS
+//                                  os tokens forem genéricos (ex.: "Espaço Facial"), exige corroboração: o rótulo do domínio + o título/H1 da página.
+//                                  Nunca valida por uma palavra genérica isolada.
 //   nicho        termo_nicho       um termo da LISTA CONTROLADA do nicho do briefing (NICHE_VOCABULARY)
 //                frase_nicho       nicho sem lista controlada: a própria frase do nicho, palavra por palavra
 //   localizacao  endereco          a cidade logo depois de um indicador de endereço (rua, avenida, estrada, bairro, cep...)
@@ -24,6 +28,7 @@
 //                cidade            a cidade, como palavra inteira
 
 const { stripAccents } = require('./normalize');
+const digital = require('./digitalPresence');
 
 const MAX_EVIDENCE = 80;
 const MAX_TEXT = 20000; // o htmlExtract já limita; esta função não confia nisso
@@ -47,6 +52,13 @@ const NICHE_VOCABULARY = Object.freeze([
   { gatilhos: ['fisioterap'], termos: ['fisioterapia', 'fisioterapeuta', 'pilates', 'reabilitacao', 'rpg'] },
   { gatilhos: ['veterin'], termos: ['veterinaria', 'veterinario', 'clinica veterinaria', 'pet shop'] },
 ]);
+
+// Termos GENÉRICOS do nicho/negócio (nunca bastam sozinhos para provar uma empresa) e as palavras de ligação. Lista fechada e explícita.
+const GENERIC_TERMS = Object.freeze(new Set(['clinica', 'estetica', 'instituto', 'espaco', 'centro', 'saude', 'dermatologia', 'odonto', 'odontologia', 'studio', 'spa', 'avancada', 'facial', 'medicina']));
+const CONNECTORS = Object.freeze(['de', 'da', 'do', 'das', 'dos', 'e', 'a', 'o', 'em', 'para', 'com']);
+const LEGAL_SUFFIXES = Object.freeze(new Set(['ltda', 'me', 'epp', 'eireli', 'sa', 'mei', 'cia']));
+const UNIT_MARKERS = Object.freeze(['unidade', 'filial', 'loja', 'matriz']);
+const MIN_DISTINCTIVE_LENGTH = 5; // os tokens distintivos juntos: um nome curtíssimo casaria com qualquer coisa
 
 const ADDRESS_MARKERS = ['rua', 'avenida', 'av', 'estrada', 'rodovia', 'travessa', 'alameda', 'praca', 'largo', 'bairro', 'endereco', 'cep', 'loja', 'sala', 'galeria', 'shopping', 'centro'];
 
@@ -105,9 +117,59 @@ function clean(text) {
   return flat.length > MAX_EVIDENCE ? `${flat.slice(0, MAX_EVIDENCE - 1).trimEnd()}…` : flat;
 }
 
-function verifyCompany(source, view, nome) {
+// O NOME-NÚCLEO de um candidato: { tokens, distinctive } ou null. Remove o que está entre parênteses e o que vem depois de " - ", " – ", " — " ou " | ",
+// o qualificador de unidade/filial (e tudo depois), sufixos jurídicos e o título inicial. `distinctive` são os tokens que NÃO são genéricos nem ligações.
+function coreName(nome) {
+  if (typeof nome !== 'string') return null;
+  const text = nome.slice(0, MAX_NAME).replace(/\([^)]*\)?/g, ' ').split(/\s[-–—|]\s/)[0];
+  const all = words(text);
+  if (all === null) return null;
+  let list = all;
+  const unit = list.findIndex((token, index) => index > 0 && UNIT_MARKERS.includes(token));
+  if (unit > 0) list = list.slice(0, unit);
+  while (list.length > 1 && LEGAL_SUFFIXES.has(list[list.length - 1])) list = list.slice(0, -1);
+  if (list.length > 1 && TITLE_PREFIXES.includes(list[0])) list = list.slice(1);
+  const distinctive = list.filter((token) => !GENERIC_TERMS.has(token) && !CONNECTORS.includes(token) && !TITLE_PREFIXES.includes(token));
+  return { tokens: list, distinctive };
+}
+
+// Os tokens distintivos, na mesma ordem, como palavras inteiras (uma palavra de ligação entre eles é tolerada). { start, end } ou null.
+function findDistinctive(text, distinctive) {
+  const glue = ` +(?:(?:${CONNECTORS.join('|')}) +)?`;
+  const found = new RegExp(`${WORD_EDGE_BEFORE}${distinctive.join(glue)}${WORD_EDGE_AFTER}`).exec(text);
+  return found ? { start: found.index, end: found.index + found[0].length } : null;
+}
+
+// O rótulo do domínio contém os tokens distintivos (ou, se todos são genéricos, todos os tokens juntos: espacofacial)?
+function domainMatches(host, core) {
+  const label = digital.registrableLabel(host);
+  if (label === '' || core === null) return false;
+  const tokens = core.distinctive.filter((token) => token.length >= 3);
+  if (core.distinctive.length > 0) return tokens.length > 0 && tokens.every((token) => label.includes(token));
+  return core.tokens.length > 0 && label.includes(core.tokens.join(''));
+}
+
+// O núcleo do nome aparece no trecho (título/H1)? Mesma regra do núcleo, sobre o texto de identidade.
+function coreInText(identidade, core) {
+  if (typeof identidade !== 'string' || identidade.trim() === '' || core === null) return false;
+  const view = comparable(identidade.slice(0, MAX_TEXT));
+  // o núcleo INTEIRO (com os termos genéricos, como o título o escreve) ou, se os tokens distintivos são longos o bastante, só eles
+  if (core.tokens.length > 0 && findPhrase(view.text, core.tokens) !== null) return true;
+  return core.distinctive.length > 0 && core.distinctive.join('').length >= MIN_DISTINCTIVE_LENGTH && findDistinctive(view.text, core.distinctive) !== null;
+}
+
+function verifyCompany(source, view, nome, ctx) {
   const full = words(nome);
   if (full === null) return NOT_VERIFIED;
+  const core = coreName(nome);
+  // nome só com termos genéricos ("Espaço Facial"): nem a frase inteira vale sozinha — só com a corroboração do domínio + título/H1
+  if (core !== null && core.distinctive.length === 0) {
+    if (ctx && ctx.host && domainMatches(ctx.host, core) && coreInText(ctx.identidade, core)) {
+      const hit = findPhrase(view.text, core.tokens);
+      if (hit) return verified(snippet(source, view, hit.start, hit.end), 'nome_nucleo');
+    }
+    return NOT_VERIFIED;
+  }
   const attempts = [['nome', full]];
   if (full.length > 2 && TITLE_PREFIXES.includes(full[0])) attempts.push(['nome_sem_titulo', full.slice(1)]);
   else if (full.length === 2 && TITLE_PREFIXES.includes(full[0]) && full[1].length >= 4) attempts.push(['nome_sem_titulo', full.slice(1)]);
@@ -115,6 +177,16 @@ function verifyCompany(source, view, nome) {
     if (list.join('').length < 4) continue; // um nome curtíssimo casaria com qualquer coisa
     const hit = findPhrase(view.text, list);
     if (hit) return verified(snippet(source, view, hit.start, hit.end), regra);
+  }
+  // o NOME-NÚCLEO inteiro (com os termos genéricos, sem parênteses/unidade/sufixo): mais forte que só os tokens distintivos, vale para nomes curtos
+  if (core !== null && core.distinctive.length > 0 && core.tokens.length > 1 && core.tokens.join('').length >= 6) {
+    const hit = findPhrase(view.text, core.tokens);
+    if (hit) return verified(snippet(source, view, hit.start, hit.end), 'nome_nucleo');
+  }
+  // o NOME-NÚCLEO: os tokens distintivos, na mesma ordem, como palavras inteiras
+  if (core !== null && core.distinctive.join('').length >= MIN_DISTINCTIVE_LENGTH) {
+    const hit = findDistinctive(view.text, core.distinctive);
+    if (hit) return verified(snippet(source, view, hit.start, hit.end), 'nome_nucleo');
   }
   return NOT_VERIFIED;
 }
@@ -163,10 +235,33 @@ function verifyOnPage(texto, contexto) {
   const source = texto.slice(0, MAX_TEXT);
   const view = comparable(source);
   return {
-    empresa: verifyCompany(source, view, context.nome),
+    empresa: verifyCompany(source, view, context.nome, { host: typeof context.host === 'string' ? context.host : null, identidade: context.identidade }),
     nicho: verifyNiche(source, view, context.nicho),
     localizacao: verifyLocation(source, view, context.cidade, context.uf),
   };
+}
+
+// O VÍNCULO de uma página com a empresa como SITE OFICIAL (nunca só HTTP 200). A página é a da raiz do `siteOficial` sugerido pelo agente (hipótese).
+//   verifyOfficialSite(texto, { nome, url, identidade, nicho, cidade, uf }) -> { status: VALIDADO | NAO_VERIFICADO, regra?, motivo?, vinculos }
+// Regras: o host NÃO pode ser um terceiro conhecido (rede social, diretório, portal, notícia); o nome (ou o nome-núcleo) tem de estar na página; e o
+// vínculo é provado pelo DOMÍNIO (tokens distintivos no rótulo) ou pelo TÍTULO/H1 com o nome (nome só de termos genéricos exige os DOIS); e a página tem
+// conteúdo institucional (nicho ou localização comprovados nela). Rótulos: dominio_e_nome | titulo_e_nome. Motivos: URL_INVALIDA | HOST_DE_TERCEIRO |
+// NOME_INVALIDO | NOME_NAO_ENCONTRADO | VINCULO_NAO_CONFIRMADO | SEM_CONTEUDO_INSTITUCIONAL.
+function verifyOfficialSite(texto, context) {
+  const ctx = context && typeof context === 'object' ? context : {};
+  const fail = (motivo, vinculos = { dominio: false, titulo: false }) => ({ status: 'NAO_VERIFICADO', motivo, vinculos });
+  const host = digital.hostOf(ctx.url);
+  if (host === null) return fail('URL_INVALIDA');
+  if (digital.isKnownThirdPartyHost(host)) return fail('HOST_DE_TERCEIRO');
+  const core = coreName(ctx.nome);
+  if (core === null) return fail('NOME_INVALIDO');
+  const result = verifyOnPage(texto, { nome: ctx.nome, nicho: ctx.nicho, cidade: ctx.cidade, uf: ctx.uf, host, identidade: ctx.identidade });
+  const vinculos = { dominio: domainMatches(host, core), titulo: coreInText(ctx.identidade, core) };
+  if (result.empresa.status !== 'VALIDADO') return fail('NOME_NAO_ENCONTRADO', vinculos);
+  const linked = core.distinctive.length > 0 ? vinculos.dominio || vinculos.titulo : vinculos.dominio && vinculos.titulo;
+  if (!linked) return fail('VINCULO_NAO_CONFIRMADO', vinculos);
+  if (result.nicho.status !== 'VALIDADO' && result.localizacao.status !== 'VALIDADO') return fail('SEM_CONTEUDO_INSTITUCIONAL', vinculos);
+  return { status: 'VALIDADO', regra: vinculos.dominio ? 'dominio_e_nome' : 'titulo_e_nome', vinculos, evidencia: result.empresa.evidencia };
 }
 
 // O lugar esperado a partir do texto livre da região do briefing ("Cidade: Petrópolis/RJ", "Petrópolis - RJ", "Petrópolis, RJ"): { cidade, uf }
@@ -184,4 +279,4 @@ function parseRegion(regiao) {
   return text === '' || text.length > 120 ? null : { cidade: text, ...(uf ? { uf } : {}) };
 }
 
-module.exports = { verifyOnPage, parseRegion, NICHE_VOCABULARY, MAX_EVIDENCE };
+module.exports = { verifyOnPage, verifyOfficialSite, coreName, parseRegion, NICHE_VOCABULARY, GENERIC_TERMS, MAX_EVIDENCE };

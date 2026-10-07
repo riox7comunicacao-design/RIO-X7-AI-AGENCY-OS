@@ -101,7 +101,7 @@ test('[DASH-JOB-2] a tela consulta /status periodicamente: mostra etapa, contage
   const t = await montar({
     respostas: [
       job({ currentStep: 'VALIDANDO', progress: 55, candidatesDiscovered: 6, candidatesValidated: 2, candidatesRejected: 1, elapsedMs: 75000 }),
-      job({ status: 'CONCLUIDO', currentStep: 'FINALIZADO', progress: 100, candidatesDiscovered: 6, candidatesValidated: 3, candidatesRejected: 2, elapsedMs: 98000, lote: { loteId: 'lote:x' } }),
+      job({ status: 'CONCLUIDO', currentStep: 'FINALIZADO', progress: 100, candidatesDiscovered: 6, candidatesValidated: 3, candidatesRejected: 2, elapsedMs: 98000, lote: { loteId: 'lote:x', validadosPeloMotor: 3, naFila: 3, foraDaFila: 0 } }),
     ],
   });
   await selecionar(t);
@@ -116,7 +116,8 @@ test('[DASH-JOB-2] a tela consulta /status periodicamente: mostra etapa, contage
 
   await t.rodarAgendada();
   assert.match(t.tela(), /PROSPECÇÃO CONCLUÍDA/);
-  assert.match(t.tela(), /3 de 3 empresa\(s\) solicitada\(s\) foram comprovadas e enviadas para a aprovação/);
+  assert.match(t.tela(), /3 de 3 lead\(s\) solicitado\(s\) chegaram à Approval Queue/);
+  assert.doesNotMatch(t.tela(), /não foi\(ram\) entregue\(s\)/, 'nada ficou fora da fila');
   assert.equal(t.browser.by.id(t.browser.root, 'pros-cancel-job'), null, 'sem cancelar depois de terminar');
   const link = t.browser.by.id(t.browser.root, 'pros-open-approvals');
   assert.equal(link.getAttribute('href'), '#/aprovacoes');
@@ -125,13 +126,13 @@ test('[DASH-JOB-2] a tela consulta /status periodicamente: mostra etapa, contage
 });
 
 test('[DASH-JOB-3] PARCIAL: "PROSPECÇÃO PARCIAL" diz que a quantidade não foi atingida e que nada foi incluído para completar; sem nenhum válido, não há link para a aprovação', async () => {
-  const parcial = await montar({ respostas: [job({ status: 'PARCIAL', currentStep: 'FINALIZADO', progress: 100, candidatesDiscovered: 6, candidatesValidated: 2, candidatesRejected: 4 })] });
+  const parcial = await montar({ respostas: [job({ status: 'PARCIAL', currentStep: 'FINALIZADO', progress: 100, candidatesDiscovered: 6, candidatesValidated: 2, candidatesRejected: 4, lote: { loteId: 'lote:p', validadosPeloMotor: 2, naFila: 2, foraDaFila: 0 } })] });
   await selecionar(parcial);
   parcial.browser.click(parcial.browser.by.id(parcial.browser.root, 'pros-start-job'));
   await parcial.browser.flush(8);
   await parcial.rodarAgendada();
   assert.match(parcial.tela(), /PROSPECÇÃO PARCIAL/);
-  assert.match(parcial.tela(), /2 de 3 empresa\(s\) solicitada\(s\) foram comprovadas/);
+  assert.match(parcial.tela(), /2 de 3 lead\(s\) solicitado\(s\) chegaram à Approval Queue/);
   assert.match(parcial.tela(), /nenhuma empresa fraca foi incluída para completar/);
   assert.ok(parcial.browser.by.id(parcial.browser.root, 'pros-open-approvals'));
 
@@ -142,6 +143,16 @@ test('[DASH-JOB-3] PARCIAL: "PROSPECÇÃO PARCIAL" diz que a quantidade não foi
   await vazia.rodarAgendada();
   assert.match(vazia.tela(), /Nenhuma empresa pôde ser comprovada pela página; nada foi enviado para a aprovação/);
   assert.equal(vazia.browser.by.id(vazia.browser.root, 'pros-open-approvals'), null);
+
+  // validados pelo motor, mas NENHUM chegou à fila: PARCIAL, sem link para as Aprovações e com a distinção explícita
+  const retidos = await montar({ respostas: [job({ status: 'PARCIAL', currentStep: 'FINALIZADO', progress: 100, candidatesDiscovered: 5, candidatesValidated: 3, candidatesRejected: 2, lote: { loteId: 'lote:r', validadosPeloMotor: 3, naFila: 0, foraDaFila: 3 } })] });
+  await selecionar(retidos);
+  retidos.browser.click(retidos.browser.by.id(retidos.browser.root, 'pros-start-job'));
+  await retidos.browser.flush(8);
+  await retidos.rodarAgendada();
+  assert.match(retidos.tela(), /Nenhum lead chegou à Approval Queue/);
+  assert.match(retidos.tela(), /3 empresa\(s\) comprovada\(s\) pela pesquisa, mas 3 não foi\(ram\) entregue\(s\) à fila/);
+  assert.equal(retidos.browser.by.id(retidos.browser.root, 'pros-open-approvals'), null, 'sem lead na fila não há o que abrir');
 });
 
 test('[DASH-JOB-4] ERRO e CANCELADO: mensagens em português, nunca o código técnico nem JSON; ERRO por interrupção do servidor também', async () => {
@@ -195,24 +206,71 @@ test('[DASH-JOB-6] recuperação após refresh: ao abrir a tela com uma prospec�
   assert.equal(parado.proximaAgendada(), undefined, 'sem job ativo nada é agendado');
 });
 
-test('[DASH-JOB-7] brief em RASCUNHO não tem o botão; com um job ativo o colar-JSON manual some (um caminho só de cada vez); sem permissão a tela nem mostra o botão', async () => {
+test('[DASH-JOB-7] brief em RASCUNHO não tem o botão; sem permissão a tela nem mostra o botão; o brief PESQUISANDO (sem job) NÃO oferece iniciar outra prospecção', async () => {
   const rascunho = await montar({ briefs: [{ ...BRIEF, status: 'RASCUNHO' }] });
   await selecionar(rascunho);
   assert.equal(rascunho.browser.by.id(rascunho.browser.root, 'pros-start-job'), null);
+  assert.equal(rascunho.browser.by.id(rascunho.browser.root, 'pros-manual'), null, 'RASCUNHO não tem nada a pesquisar nem pacote: sem modo manual');
 
-  const pesquisando = await montar({ briefs: [{ ...BRIEF, status: 'PESQUISANDO' }], jobs: [job()] });
+  const pesquisando = await montar({ briefs: [{ ...BRIEF, status: 'PESQUISANDO' }] });
   await selecionar(pesquisando);
-  assert.equal(pesquisando.browser.by.id(pesquisando.browser.root, 'pros-findings'), null, 'com a prospecção ativa o caminho manual de colar JSON fica escondido');
-  const semJob = await montar({ briefs: [{ ...BRIEF, status: 'PESQUISANDO' }] });
-  await selecionar(semJob);
-  assert.ok(semJob.browser.by.id(semJob.browser.root, 'pros-findings'), 'sem job, o caminho manual continua existindo');
-  assert.equal(semJob.browser.by.id(semJob.browser.root, 'pros-start-job'), null, 'e o brief PESQUISANDO NÃO oferece iniciar uma nova prospecção');
+  assert.equal(pesquisando.browser.by.id(pesquisando.browser.root, 'pros-start-job'), null, 'PESQUISANDO não inicia um novo job (máquina de estados explícita)');
 
   const sem = await montar({ canPropose: false });
   assert.match(sem.tela(), /não pode usar o Workbench/);
   assert.equal(sem.browser.by.id(sem.browser.root, 'pros-start-job'), null);
 });
 
+test('[DASH-JOB-7b] com prospecção AUTOMÁTICA (job ativo ou terminado) a tela mostra SÓ o fluxo automático: nenhum pacote JSON, nenhum "copiar", nenhuma ingestão manual e nenhum "Modo manual"', async () => {
+  const comPacote = { ...BRIEF, status: 'PESQUISANDO', pacotePesquisa: { objetivo: 'x', formatoEsperado: { rawFindings: [] } }, pacoteGeradoEm: '2026-10-06T12:00:00.000Z' };
+  for (const estado of [job(), job({ status: 'PARCIAL', currentStep: 'FINALIZADO', progress: 100 }), job({ status: 'CONCLUIDO', currentStep: 'FINALIZADO', progress: 100, candidatesValidated: 3 })]) {
+    const t = await montar({ briefs: [comPacote], jobs: [estado] });
+    await selecionar(t);
+    assert.equal(t.browser.by.id(t.browser.root, 'pros-manual'), null, estado.status);
+    assert.equal(t.browser.by.id(t.browser.root, 'pros-findings'), null, 'sem o campo de colar JSON');
+    assert.equal(t.browser.by.tag(t.browser.root, 'textarea').filter((el) => el.id !== 'pros-observacoes').length, 0, 'nenhum textarea de pacote nem de achados');
+    assert.doesNotMatch(t.tela(), /Pacote de pesquisa|copie e cole|Ingerir achados|Gerar pacote|formatoEsperado|rawFindings|\{/);
+  }
+});
+
+test('[DASH-JOB-7c] MODO MANUAL: sem job, um bloco discreto e recolhido; ao abrir, o fluxo antigo continua disponível (gerar pacote; pacote existente; colar achados) — e o pacote antigo de um brief só aparece aí', async () => {
+  const pronto = await montar({ briefs: [BRIEF] });
+  await selecionar(pronto);
+  assert.ok(pronto.browser.by.id(pronto.browser.root, 'pros-start-job'), 'o automático é o caminho principal');
+  const alternar = pronto.browser.by.id(pronto.browser.root, 'pros-manual-toggle');
+  assert.equal(alternar.textContent, 'Modo manual');
+  assert.equal(pronto.browser.by.text(pronto.browser.root, 'Gerar pacote de pesquisa', 'button'), null, 'recolhido: nenhum botão do fluxo antigo à vista');
+  pronto.browser.click(alternar);
+  await pronto.browser.flush(4);
+  assert.ok(pronto.browser.by.text(pronto.browser.root, 'Gerar pacote de pesquisa', 'button'), 'aberto: o fluxo manual segue disponível');
+  assert.equal(pronto.browser.by.id(pronto.browser.root, 'pros-manual-toggle').textContent, 'Ocultar modo manual');
+
+  const pesquisando = await montar({ briefs: [{ ...BRIEF, status: 'PESQUISANDO', pacotePesquisa: { objetivo: 'x' } }] });
+  await selecionar(pesquisando);
+  assert.equal(pesquisando.browser.by.id(pesquisando.browser.root, 'pros-findings'), null, 'recolhido');
+  pesquisando.browser.click(pesquisando.browser.by.id(pesquisando.browser.root, 'pros-manual-toggle'));
+  await pesquisando.browser.flush(4);
+  assert.ok(pesquisando.browser.by.id(pesquisando.browser.root, 'pros-findings'), 'a ingestão manual continua possível no modo manual');
+  assert.match(pesquisando.tela(), /Pacote de pesquisa/);
+});
+
+test('[DASH-JOB-7d] o resultado por empresa (sem JSON): Validada/Não verificada, site oficial encontrado ou não, e só os canais públicos CONFIRMADOS', async () => {
+  const candidatos = [
+    { nome: 'Clínica Alfa', resultado: 'VALIDADO', siteOficial: { status: 'ENCONTRADO', url: 'https://alfa.com.br/' }, entrega: { naFila: true, estadoOperacional: 'VALIDADO_PARA_REVISAO' }, presencaDigital: { instagram: { status: 'ENCONTRADO', url: 'https://www.instagram.com/alfa', confirmacao: 'CONFIRMADO' }, facebook: { status: 'ENCONTRADO', url: 'https://www.facebook.com/alfa', confirmacao: 'NAO_CONFIRMADO' }, googleMeuNegocio: { status: 'ENCONTRADO', url: 'https://g.page/alfa', confirmacao: 'CONFIRMADO' } } },
+    { nome: 'Instituto Granja', resultado: 'VALIDADO', siteOficial: { status: 'NAO_ENCONTRADO', url: null }, presencaDigital: {}, entrega: { naFila: false, estadoOperacional: 'DADOS_INSUFICIENTES', motivo: 'DADOS_INSUFICIENTES' } },
+    { nome: 'Clínica Fora', resultado: 'NAO_VERIFICADO', siteOficial: { status: 'NAO_ENCONTRADO', url: null } },
+  ];
+  const t = await montar({ respostas: [job({ status: 'CONCLUIDO', currentStep: 'FINALIZADO', progress: 100, candidatesValidated: 2, candidatos })] });
+  await selecionar(t);
+  t.browser.click(t.browser.by.id(t.browser.root, 'pros-start-job'));
+  await t.browser.flush(8);
+  await t.rodarAgendada();
+  const tabela = t.browser.by.id(t.browser.root, 'pros-job-candidates');
+  assert.ok(tabela);
+  const linhas = t.browser.by.tag(tabela, 'tr').slice(1).map((linha) => t.browser.by.tag(linha, 'td').map((celula) => celula.textContent));
+  assert.deepEqual(linhas, [['Clínica Alfa', 'Validada', 'Encontrado', 'Instagram, Google Meu Negócio', 'Na fila'], ['Instituto Granja', 'Validada', 'Não encontrado', '—', 'Fora da fila: Dados insuficientes'], ['Clínica Fora', 'Não verificada', 'Não encontrado', '—', '—']]);
+  assert.doesNotMatch(t.tela(), /https:\/\/|\{|"status"/, 'nenhuma URL técnica nem JSON na tabela');
+});
 test('[DASH-JOB-8] destroy() para o acompanhamento (trocar de tela não deixa consulta pendurada) e falhas passageiras de rede não derrubam a tela', async () => {
   const t = await montar({ respostas: [job()] });
   await selecionar(t);

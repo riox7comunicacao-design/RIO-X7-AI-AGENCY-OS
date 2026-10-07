@@ -16,12 +16,21 @@ test('[JOBDOM-1] o vocabulário de estados é o pedido, e ativo/terminal partici
   assert.ok(Object.isFrozen(job.JOB_STATUS) && Object.isFrozen(job.LIMITS));
 });
 
-test('[JOBDOM-2] limite de candidatos = quantidade x 2, no máximo 40 (e nunca menos de 1); sobrescritas nunca passam de 40', () => {
-  assert.deepEqual([1, 2, 3, 10, 19, 20, 21, 100, 300].map((q) => job.computeCandidateLimit(q)), [2, 4, 6, 20, 38, 40, 40, 40, 40]);
-  assert.equal(job.computeCandidateLimit(30, { absoluteMax: 1000 }), 40, 'o teto absoluto não é sobrescrevível para cima');
-  assert.equal(job.computeCandidateLimit(30, { absoluteMax: 7 }), 7);
-  assert.equal(job.computeCandidateLimit(3, { multiplier: 3 }), 9);
-  for (const ruim of [0, -1, 1.5, '3', null, undefined, NaN]) assert.throws(() => job.computeCandidateLimit(ruim), /quantidade/);
+test('[JOBDOM-2] tamanho do ciclo de descoberta: clamp(faltam x 3, 6, 12), nunca além do que ainda cabe no teto absoluto de 40; a quantidade pedida NÃO define o teto', () => {
+  assert.equal(job.LIMITS.MAX_CANDIDATES, 40);
+  assert.equal(job.LIMITS.MAX_CYCLES, 6);
+  assert.deepEqual([job.LIMITS.BATCH_MULTIPLIER, job.LIMITS.BATCH_MIN, job.LIMITS.BATCH_MAX], [3, 6, 12]);
+  // 3 solicitados: o 1º ciclo é 9; 10 solicitados: 12 (o teto do ciclo)
+  assert.equal(job.computeBatchSize(3, 0), 9);
+  assert.equal(job.computeBatchSize(10, 0), 12);
+  // adaptativo: o que falta manda (mínimo 6, máximo 12)
+  assert.deepEqual([[3, 1], [3, 2], [3, 3], [10, 9], [10, 0], [100, 5], [1, 0], [1, 1]].map(([q, v]) => job.computeBatchSize(q, v)), [6, 6, 6, 6, 12, 12, 6, 6]);
+  // o último ciclo só pede o que ainda cabe nos 40
+  assert.deepEqual([36, 30, 39, 40].map((usados) => job.computeBatchSize(3, 0, {}, 40 - usados)), [4, 9, 1, 0]);
+  assert.equal(job.computeBatchSize(300, 0, {}, 40), 12, 'a quantidade pedida não aumenta o ciclo além de 12');
+  assert.equal(job.computeBatchSize(3, 0, { multiplier: 2, min: 3, max: 5 }), 5);
+  for (const ruim of [0, -1, 1.5, '3', null, undefined, NaN]) assert.throws(() => job.computeBatchSize(ruim, 0), /quantidade/);
+  for (const ruim of [-1, 1.5, '1', null]) assert.throws(() => job.computeBatchSize(3, ruim), /validated/);
 });
 
 test('[JOBDOM-3] id do job: JOB-AAAAMMDD-NNN, com a sequência do dia', () => {
@@ -30,33 +39,46 @@ test('[JOBDOM-3] id do job: JOB-AAAAMMDD-NNN, com a sequência do dia', () => {
   assert.doesNotMatch('JOB-1-1', job.JOB_ID_PATTERN);
 });
 
-const aspectos = (statuses) => ({ empresa: statuses[0], nicho: statuses[1], localizacao: statuses[2] });
-const saida = (achados, relatorio = {}, verificacao) => ({ ok: true, achados, relatorio: { resultadosInvalidos: 0, causas: {}, falhas: {}, verificacoes: verificacao === undefined ? [] : [verificacao], ...relatorio } });
-const lidaOk = (statuses) => ({ paginaOficial: true, ...aspectos(statuses) });
+const v = (status, evidencia = 'trecho', regra = 'nome') => ({ status, evidencia: status === 'VALIDADO' ? evidencia : null, regra: status === 'VALIDADO' ? regra : null });
+const veredito = (e, n, l) => ({ empresa: v(e), nicho: v(n, 'estética', 'termo_nicho'), localizacao: v(l, 'Petrópolis', 'cidade') });
+const lida = (url, tipo, e, n, l) => ({ origem: { url, tipo }, veredito: veredito(e, n, l) });
+const caida = (url, tipo, causa) => ({ origem: { url, tipo }, falha: 'FORA_DO_AR', causa });
+const V = 'VALIDADO';
+const N = 'NAO_VERIFICADO';
 
-test('[JOBDOM-4] classifyResearch: VALIDADO só com a página oficial lida e os TRÊS vereditos VALIDADO; qualquer falta é NAO_VERIFICADO (nunca "incompatível")', () => {
-  const bom = job.classifyResearch(saida([{ empresa: 'Clínica X' }], {}, lidaOk(['VALIDADO', 'VALIDADO', 'VALIDADO'])));
-  assert.deepEqual([bom.resultado, bom.motivo], [job.CANDIDATE_RESULT.VALIDADO, null]);
-  assert.deepEqual(bom.achado, { empresa: 'Clínica X' });
-  for (const [statuses, faltando] of [[['VALIDADO', 'VALIDADO', 'NAO_VERIFICADO'], ['localizacao']], [['NAO_VERIFICADO', 'VALIDADO', 'VALIDADO'], ['empresa']], [['VALIDADO', 'NAO_VERIFICADO', 'NAO_VERIFICADO'], ['nicho', 'localizacao']], [['VALIDADO', 'VALIDADO', 'qualquer'], ['localizacao']]]) {
-    const r = job.classifyResearch(saida([{ empresa: 'X' }], {}, lidaOk(statuses)));
-    assert.deepEqual([r.resultado, r.motivo, r.faltando], [job.CANDIDATE_RESULT.NAO_VERIFICADO, job.CANDIDATE_REASON.EVIDENCIA_INCOMPLETA, faltando]);
-    assert.equal('achado' in r, false);
-  }
-  // a página oficial não abriu: NAO_VERIFICADO com a causa técnica da primeira falha
-  const semPagina = job.classifyResearch(saida([{ empresa: 'X' }], { causas: { TLS: 1, ROBOTS_BLOQUEIA: 2 } }, { paginaOficial: false }));
-  assert.deepEqual([semPagina.resultado, semPagina.motivo, semPagina.causa], [job.CANDIDATE_RESULT.NAO_VERIFICADO, job.CANDIDATE_REASON.PAGINA_INACESSIVEL, 'TLS']);
-  // sem veredito nenhum (porta sem texto) ou veredito malformado: nunca validado
-  assert.equal(job.classifyResearch(saida([{ empresa: 'X' }])).resultado, job.CANDIDATE_RESULT.NAO_VERIFICADO);
-  assert.equal(job.classifyResearch(saida([{ empresa: 'X' }], {}, 'lixo')).resultado, job.CANDIDATE_RESULT.NAO_VERIFICADO);
+test('[JOBDOM-4] decideLead: VALIDADO exige UMA página que comprove os TRÊS aspectos; o site oficial NÃO é requisito (a página pode ser de um diretório ou de uma matéria)', () => {
+  const oficial = job.decideLead([lida('https://alfa.com.br/', 'OFICIAL', V, V, V)]);
+  assert.deepEqual([oficial.resultado, oficial.motivo, oficial.fonteDaValidacao], [job.CANDIDATE_RESULT.VALIDADO, null, { url: 'https://alfa.com.br/', tipo: 'OFICIAL' }]);
+  assert.deepEqual([oficial.empresa, oficial.nicho, oficial.localizacao], [V, V, V]);
+  assert.deepEqual(oficial.evidencias.localizacao, { trecho: 'Petrópolis', regra: 'cidade' });
+  const semSite = job.decideLead([lida('https://guiamais.com.br/x', 'DIRETORIO', V, V, V)]);
+  assert.equal(semSite.resultado, job.CANDIDATE_RESULT.VALIDADO);
+  assert.equal(semSite.fonteDaValidacao.tipo, 'DIRETORIO');
+  const materia = job.decideLead([caida('https://alfa.com.br/', 'NOTICIA_OU_TERCEIRO', 'DNS'), lida('https://portal.com.br/m', 'NOTICIA_OU_TERCEIRO', V, V, V)]);
+  assert.deepEqual([materia.resultado, materia.fonteDaValidacao.tipo], [job.CANDIDATE_RESULT.VALIDADO, 'NOTICIA_OU_TERCEIRO']);
 });
 
-test('[JOBDOM-5] classifyResearch: sem achado, URL inválida = DESCARTADO; resposta do Researcher malformada = NAO_VERIFICADO; nunca lança', () => {
-  assert.deepEqual(job.classifyResearch(saida([], { resultadosInvalidos: 1 })), { resultado: job.CANDIDATE_RESULT.DESCARTADO, motivo: job.CANDIDATE_REASON.URL_INVALIDA });
-  assert.equal(job.classifyResearch(saida([], { causas: { DNS: 1 } })).causa, 'DNS');
-  for (const lixo of [null, undefined, 5, 'x', {}, { ok: false }, { ok: true, achados: 'x', relatorio: {} }, { ok: true, achados: [], relatorio: null }]) {
-    const r = job.classifyResearch(lixo);
-    assert.deepEqual([r.resultado, r.motivo], [job.CANDIDATE_RESULT.NAO_VERIFICADO, job.CANDIDATE_REASON.VALIDACAO_FALHOU]);
+test('[JOBDOM-4b] decideLead: os aspectos NUNCA são completados entre páginas diferentes; sem nicho ou sem localização = NAO_VERIFICADO, com o que faltou e o melhor estado parcial', () => {
+  const duas = job.decideLead([lida('https://a.com.br/', 'OFICIAL', V, V, N), lida('https://b.com.br/', 'DIRETORIO', V, N, V)]);
+  assert.equal(duas.resultado, job.CANDIDATE_RESULT.NAO_VERIFICADO, 'empresa+nicho numa página e empresa+cidade noutra NÃO somam');
+  assert.equal(duas.motivo, job.CANDIDATE_REASON.EVIDENCIA_INCOMPLETA);
+  assert.deepEqual([duas.empresa, duas.nicho, duas.localizacao, duas.faltando], [V, V, N, ['localizacao']], 'o melhor estado parcial (a 1ª das duas, que empata, fica)');
+  for (const [estados, faltando] of [[[V, V, N], ['localizacao']], [[V, N, V], ['nicho']], [[N, V, V], ['empresa']], [[V, N, N], ['nicho', 'localizacao']]]) {
+    const r = job.decideLead([lida('https://a.com.br/', 'OFICIAL', ...estados)]);
+    assert.deepEqual([r.resultado, r.faltando], [job.CANDIDATE_RESULT.NAO_VERIFICADO, faltando]);
+    assert.equal('fonteDaValidacao' in r, false);
+  }
+});
+
+test('[JOBDOM-5] decideLead: sem página legível = NAO_VERIFICADO com a causa técnica (DNS, TLS...) — nunca "empresa inexistente"; sem nenhuma fonte = SEM_FONTE_VERIFICAVEL; entradas malformadas nunca lançam', () => {
+  const dns = job.decideLead([caida('https://a.com.br/', 'NOTICIA_OU_TERCEIRO', 'DNS'), caida('https://b.com.br/', 'DIRETORIO', 'TLS')]);
+  assert.deepEqual([dns.resultado, dns.motivo, dns.causa, dns.faltando], [job.CANDIDATE_RESULT.NAO_VERIFICADO, job.CANDIDATE_REASON.PAGINA_INACESSIVEL, 'DNS', ['empresa', 'nicho', 'localizacao']]);
+  assert.doesNotMatch(JSON.stringify(dns), /inexistente|n[ãa]o existe/i);
+  const nada = job.decideLead([]);
+  assert.deepEqual([nada.resultado, nada.motivo], [job.CANDIDATE_RESULT.NAO_VERIFICADO, job.CANDIDATE_REASON.SEM_FONTE_VERIFICAVEL]);
+  for (const lixo of [null, undefined, 5, 'x', {}, [null, 5, 'x'], [{ veredito: 'lixo' }], [{ origem: {}, veredito: null }]]) {
+    const r = job.decideLead(lixo);
+    assert.equal(r.resultado, job.CANDIDATE_RESULT.NAO_VERIFICADO);
   }
 });
 

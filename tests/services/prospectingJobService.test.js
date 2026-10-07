@@ -1,154 +1,33 @@
-// Prospecting Job Service (Fase 2 — "INICIAR PROSPECÇÃO"): src/services/prospectingJobService.js.
-//
-// Peças REAIS: contextos emitidos, a ponte real de PROPOSE:LEAD_APPROVAL, o Brief Service, o Prospecting Service (caminho oficial de ingestão:
-// exclusões -> deduplicação -> DNC -> Approval Queue), o CRM Service e o Researcher com a verificação por código — tudo em diretório temporário.
-// FAKES: só o motor externo (o `claude -p`) e a leitura de página (a rede). Nenhuma pesquisa real, nenhuma rede, nenhum `claude`.
+// Prospecting Job Service (Fase 2 — "INICIAR PROSPECÇÃO"; motor comercial na Implementação 2): src/services/prospectingJobService.js.
+// O ciclo de vida do job, a descoberta adaptativa, o cancelamento, a ingestão única e as fronteiras de segurança. As regras de LEAD (site oficial, presença
+// digital, páginas de terceiros) estão em prospectingJobLeads.test.js. Peças REAIS e FAKES: ver tests/helpers/jobFixtures.js (nenhuma rede, nenhum `claude`).
 
 const test = require('node:test');
 const assert = require('node:assert/strict');
 const fs = require('node:fs');
-const os = require('node:os');
 const path = require('node:path');
 
-const { authorizeProposerForLeadApproval, authorizeCrmOperation } = require('../../src/auth');
+const { authorizeProposerForLeadApproval } = require('../../src/auth');
 const { createProspectingJobService, ProspectingJobError } = require('../../src/services/prospectingJobService');
-const { createProspectingBriefService } = require('../../src/services/prospectingBriefService');
-const { createFileBackedProspectingService } = require('../../src/services/prospectingFileService');
-const { createFileBackedCrmService } = require('../../src/services/crmFileService');
-const { createInMemoryBriefRepository } = require('../../src/research-prospector/briefRepository');
 const { createInMemoryJobRepository } = require('../../src/research-prospector/jobRepository');
-const { JOB_STATUS, JOB_STEP, CANDIDATE_RESULT, CANDIDATE_REASON, ERROR_CODE } = require('../../src/research-prospector/prospectingJob');
+const { JOB_STATUS, JOB_STEP, CANDIDATE_RESULT, CANDIDATE_REASON, ERROR_CODE, STOP_REASON } = require('../../src/research-prospector/prospectingJob');
 const { admin, closer } = require('../helpers/promotionFixtures');
-
-const AGORA = new Date('2026-10-06T12:00:00.000Z');
-const MARCADOR = 'MARCADOR-DE-TEXTO-DA-PAGINA-NAO-PERSISTIR';
-
-const briefInput = (extra = {}) => ({ nicho: 'Clínicas de estética', nivelGeografico: 'CIDADE', cidades: 'Petrópolis/RJ', quantidade: 3, ...extra });
-const siteDe = (slug) => `https://${slug}.example.test/`;
-
-// A página de uma empresa que SE COMPROVA (nome, nicho e cidade no texto); `sem` tira uma das evidências.
-function paginaBoa(nome, slug, { sem = [] } = {}) {
-  const linhas = [nome, `${MARCADOR} ${slug}`];
-  if (!sem.includes('nicho')) linhas.push('Clínica de estética e harmonização facial');
-  if (!sem.includes('localizacao')) linhas.push('Rua das Flores, 10 - Petrópolis - RJ');
-  return { ok: true, urlFinal: siteDe(slug), links: [], temFormularioContato: false, texto: sem.includes('empresa') ? linhas.slice(1).join('\n') : linhas.join('\n') };
-}
-
-const candidato = (nome, slug) => ({ nome, url: siteDe(slug), fonteUrl: 'https://busca.example.test/r', cidadeUf: 'Petrópolis/RJ' });
-
-// Motor de descoberta FAKE: devolve as rodadas na ordem; registra cada pedido; `espera` segura a resposta até ser liberada ou abortada.
-function motorFake({ rodadas = [], falha, espera } = {}) {
-  const pedidos = [];
-  return {
-    pedidos,
-    discover: async (pedido) => {
-      pedidos.push(pedido);
-      if (espera) {
-        const abortado = await espera(pedido);
-        if (abortado) return { ok: false, code: 'ABORTED' };
-      }
-      if (falha) return { ok: false, code: falha };
-      const rodada = rodadas[pedidos.length - 1] || { candidatos: [] };
-      return { ok: true, candidatos: rodada.candidatos.slice(0, pedido.limit), invalidos: 0, ...(rodada.telemetria || {}) };
-    },
-  };
-}
-
-// Espera que só termina quando o pedido é ABORTADO (devolve true) ou liberada (devolve false).
-function esperaAteAbortar() {
-  let liberar;
-  const liberada = new Promise((resolve) => {
-    liberar = resolve;
-  });
-  const espera = (pedido) =>
-    new Promise((resolve) => {
-      if (pedido.signal.aborted) return resolve(true);
-      pedido.signal.addEventListener('abort', () => resolve(true), { once: true });
-      liberada.then(() => resolve(false));
-      return undefined;
-    });
-  return { espera, liberar };
-}
-
-function ambiente(t, { motor, paginas = {}, fetchPage: fetchPageProprio, exclusao, limits, briefService: briefServiceProprio, repository, now, crmSetup } = {}) {
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'job-svc-'));
-  t.after(() => fs.rmSync(dir, { recursive: true, force: true }));
-  const crmService = createFileBackedCrmService({ authorizeOperation: authorizeCrmOperation, filePath: path.join(dir, 'crm.json') });
-  const prospectingService = createFileBackedProspectingService({
-    authorizeProposer: authorizeProposerForLeadApproval,
-    authorizeOperation: authorizeCrmOperation,
-    queuePath: path.join(dir, 'approval-queue.json'),
-    crmService,
-    batchPath: path.join(dir, 'prospecting-batches.json'),
-    dossierPath: path.join(dir, 'prospecting-dossiers.json'),
-  });
-  const briefRepo = createInMemoryBriefRepository();
-  const briefService = createProspectingBriefService({ authorizeProposer: authorizeProposerForLeadApproval, prospectingService, repository: briefRepo, now: () => AGORA, checkPermanentExclusion: exclusao });
-  const paginasChamadas = [];
-  const fetchPage = fetchPageProprio || (async (url) => {
-    paginasChamadas.push(url);
-    return paginas[url] || { ok: false, falha: 'FORA_DO_AR', causa: 'DNS' };
-  });
-  const jobs = repository || createInMemoryJobRepository();
-  // o Brief Service real é congelado: o espião é um invólucro que registra o tamanho de CADA ingestão e repassa ao real
-  const ingestoes = [];
-  const espiao = {
-    getBrief: briefService.getBrief,
-    generateResearchPackage: briefService.generateResearchPackage,
-    ingestFindings: async (...args) => {
-      ingestoes.push(args[2].length);
-      return briefService.ingestFindings(...args);
-    },
-  };
-  const servico = createProspectingJobService({
-    authorizeProposer: authorizeProposerForLeadApproval,
-    briefService: briefServiceProprio ? briefServiceProprio(briefService) : espiao,
-    repository: jobs,
-    discoveryEngine: motor || motorFake(),
-    createFetchPage: () => fetchPage,
-    checkPermanentExclusion: exclusao,
-    now: now || (() => new Date()),
-    limits,
-  });
-  return { dir, crmService, prospectingService, briefService, briefRepo, jobs, servico, paginasChamadas, fetchPage, ingestoes };
-}
-
-async function briefPronto(env, input = {}) {
-  const brief = await env.briefService.createBrief(admin(), briefInput(input));
-  await env.briefService.markReadyForResearch(admin(), brief.id);
-  return brief;
-}
-
-async function iniciar(env, input) {
-  const brief = await briefPronto(env, input);
-  const job = await env.servico.startJob(admin(), { briefId: brief.id });
-  return { brief, job };
-}
-
-async function erroDe(fn) {
-  try {
-    await fn();
-  } catch (erro) {
-    return erro;
-  }
-  throw new Error('esperava que lançasse, e não lançou');
-}
-
-const tresBons = () => [candidato('Clínica Alfa', 'alfa'), candidato('Clínica Beta', 'beta'), candidato('Clínica Gama', 'gama')];
-const paginasBoas = () => ({ [siteDe('alfa')]: paginaBoa('Clínica Alfa', 'alfa'), [siteDe('beta')]: paginaBoa('Clínica Beta', 'beta'), [siteDe('gama')]: paginaBoa('Clínica Gama', 'gama'), [siteDe('delta')]: paginaBoa('Clínica Delta', 'delta') });
+const { AGORA, MARCADOR, siteDe, paginaBoa, candidato, motorFake, esperaAteAbortar, ambiente, briefPronto, iniciar, erroDe, tresBons, paginasBoas } = require('../helpers/jobFixtures');
 
 // ---------------------------------------------------------------------------------------------------------------------------------
 
-test('[JOB-1] criação e início: o job nasce EXECUTANDO e devolve o id NA HORA; o brief vai a PESQUISANDO; o status é consultável e o job termina CONCLUIDO', async (t) => {
+test('[JOB-1] criação e início: o job nasce EXECUTANDO e devolve o id NA HORA; o brief vai a PESQUISANDO SEM pacote de pesquisa; o status é consultável e o job termina CONCLUIDO', async (t) => {
   const { espera, liberar } = esperaAteAbortar();
-  const motor = motorFake({ rodadas: [{ candidatos: tresBons() }], espera });
-  const env = ambiente(t, { motor, paginas: paginasBoas() });
+  const env = ambiente(t, { motor: motorFake({ rodadas: [{ candidatos: tresBons() }], espera }), paginas: paginasBoas() });
   const { brief, job } = await iniciar(env);
 
   assert.match(job.id, /^JOB-\d{8}-\d{3}$/);
   assert.deepEqual([job.briefId, job.status, job.requestedQuantity, job.cancelRequested, job.ingestionStarted, job.error], [brief.id, JOB_STATUS.EXECUTANDO, 3, false, false, null]);
   assert.ok(job.createdAt && job.startedAt && job.finishedAt === null);
-  assert.equal((await env.briefService.getBrief(admin(), brief.id)).status, 'PESQUISANDO');
+  const depois = await env.briefService.getBrief(admin(), brief.id);
+  assert.equal(depois.status, 'PESQUISANDO');
+  assert.deepEqual([depois.pacotePesquisa, depois.pacoteGeradoEm], [null, null], 'o job automático NÃO gera nem depende do pacote de pesquisa manual');
+  assert.deepEqual(env.pacotes, [], 'generateResearchPackage nunca é chamado pelo job');
   const andando = env.servico.getJob(admin(), job.id);
   assert.equal(andando.status, JOB_STATUS.EXECUTANDO);
   assert.equal(typeof andando.elapsedMs, 'number');
@@ -163,12 +42,12 @@ test('[JOB-1] criação e início: o job nasce EXECUTANDO e devolve o id NA HORA
   assert.equal(env.servico.listJobs(admin(), { briefId: brief.id }).length, 1);
 });
 
-test('[JOB-2] validações da entrada: só { briefId }; brief inexistente; brief em RASCUNHO recusado; quem não tem PROPOSE:LEAD_APPROVAL não inicia', async (t) => {
+test('[JOB-2] validações da entrada: só { briefId }; brief inexistente; brief em RASCUNHO e em PESQUISANDO recusados; quem não tem PROPOSE:LEAD_APPROVAL não inicia', async (t) => {
   const env = ambiente(t);
   assert.equal((await erroDe(() => env.servico.startJob(admin(), {}))).code, 'JOB_INVALID_INPUT');
   assert.equal((await erroDe(() => env.servico.startJob(admin(), { briefId: 'PROS-20261006-001', extra: 1 }))).code, 'JOB_INVALID_INPUT');
   assert.equal((await erroDe(() => env.servico.startJob(admin(), { briefId: 'PROS-20261006-009' }))).code, 'BRIEF_NOT_FOUND');
-  const rascunho = await env.briefService.createBrief(admin(), briefInput());
+  const rascunho = await env.briefService.createBrief(admin(), { nicho: 'Clínicas de estética', nivelGeografico: 'CIDADE', cidades: 'Petrópolis/RJ', quantidade: 3 });
   const erro = await erroDe(() => env.servico.startJob(admin(), { briefId: rascunho.id }));
   assert.equal(erro.code, 'JOB_INVALID_STATE');
   assert.match(erro.message, /PRONTO_PARA_PESQUISA/);
@@ -176,34 +55,42 @@ test('[JOB-2] validações da entrada: só { briefId }; brief inexistente; brief
   await erroDe(() => env.servico.startJob(closer(), { briefId: pronto.id })); // COMMERCIAL_CLOSER não tem PROPOSE:LEAD_APPROVAL
   assert.equal(env.jobs.list().length, 0, 'nenhum job foi criado nos casos recusados');
   assert.equal((await env.briefService.getBrief(admin(), pronto.id)).status, 'PRONTO_PARA_PESQUISA', 'e o brief continua intacto');
+
+  // máquina de estados explícita: PRONTO_PARA_PESQUISA -> job. PESQUISANDO NUNCA inicia um novo job
+  await env.briefService.markResearching(admin(), pronto.id);
+  const emPesquisa = await erroDe(() => env.servico.startJob(admin(), { briefId: pronto.id }));
+  assert.equal(emPesquisa.code, 'JOB_INVALID_STATE');
+  assert.match(emPesquisa.message, /PRONTO_PARA_PESQUISA \(está em PESQUISANDO\)/);
+  assert.equal(env.jobs.list().length, 0);
 });
 
-test('[JOB-3] limite de candidatos = quantidade x 2, no máximo ABSOLUTO de 40 — o motor nunca é pedido além disso, mesmo com limite sobrescrito', async (t) => {
-  for (const [quantidade, esperado] of [[1, 2], [3, 6], [10, 20], [20, 40], [25, 40], [300, 40]]) {
+test('[JOB-3] DESCOBERTA ADAPTATIVA — o 1º ciclo pede clamp(faltam x 3, 6, 12) candidatos (3 -> 9; 10 -> 12), e o teto de candidatos é 40 qualquer que seja a quantidade pedida', async (t) => {
+  for (const [quantidade, primeiroCiclo] of [[1, 6], [2, 6], [3, 9], [4, 12], [10, 12], [50, 12], [300, 12]]) {
     const motor = motorFake({ rodadas: [{ candidatos: [] }] });
     const env = ambiente(t, { motor });
     const { job } = await iniciar(env, { quantidade });
     await env.servico.waitFor(job.id);
-    assert.equal(motor.pedidos[0].limit, esperado, `quantidade ${quantidade}`);
-    assert.equal(env.jobs.getById(job.id).limits.maxCandidates, esperado);
+    assert.equal(motor.pedidos[0].limit, primeiroCiclo, `quantidade ${quantidade}`);
+    assert.equal(env.jobs.getById(job.id).limits.maxCandidates, 40, 'a quantidade pedida NÃO define o teto: é sempre 40');
+    assert.equal(env.jobs.getById(job.id).limits.maxCycles, 6);
   }
   // um limite sobrescrito acima de 40 é cortado em 40
   const motor = motorFake({ rodadas: [{ candidatos: [] }] });
   const env = ambiente(t, { motor, limits: { candidatesAbsoluteMax: 500 } });
   const { job } = await iniciar(env, { quantidade: 300 });
   await env.servico.waitFor(job.id);
-  assert.equal(motor.pedidos[0].limit, 40);
+  assert.equal(env.jobs.getById(job.id).limits.maxCandidates, 40);
 });
 
-test('[JOB-4] um motor que devolve candidatos DEMAIS é cortado no limite: nunca se examina mais do que quantidade x 2', async (t) => {
+test('[JOB-4] um motor que devolve candidatos DEMAIS é cortado no tamanho do ciclo pedido: nunca se examina mais do que o ciclo pediu', async (t) => {
   const muitos = Array.from({ length: 30 }, (_, i) => candidato(`Clínica N${i}`, `n${i}`));
-  const motor = motorFake({ rodadas: [{ candidatos: muitos }] });
-  const motorGuloso = { pedidos: motor.pedidos, discover: async (pedido) => ({ ok: true, candidatos: muitos, invalidos: 0 }) };
-  const env = ambiente(t, { motor: motorGuloso });
-  const { job } = await iniciar(env, { quantidade: 2 });
+  const guloso = { pedidos: [], discover: async (pedido) => { guloso.pedidos.push(pedido); return { ok: true, candidatos: guloso.pedidos.length === 1 ? muitos : [], invalidos: 0 }; } };
+  const env = ambiente(t, { motor: guloso });
+  const { job } = await iniciar(env, { quantidade: 1 });
   const fim = await env.servico.waitFor(job.id);
-  assert.equal(fim.candidatesDiscovered, 4);
-  assert.equal(env.paginasChamadas.length, 4);
+  assert.equal(guloso.pedidos[0].limit, 6);
+  assert.equal(fim.candidatesDiscovered, 6);
+  assert.equal(env.paginasChamadas.filter((url) => url.endsWith('.com.br/')).length, 6, 'só os 6 pedidos foram lidos');
   assert.equal(fim.status, JOB_STATUS.PARCIAL, 'nenhum validou (as páginas não existem): nada é completado artificialmente');
 });
 
@@ -220,8 +107,8 @@ test('[JOB-5] CONCLUIDO: a quantidade pedida validada; para de examinar quando a
   assert.equal(fim.candidatos.filter((c) => c.resultado === CANDIDATE_RESULT.VALIDADO).length, 3);
   assert.equal(fim.telemetria.custoUsd, 0.31);
   assert.equal(fim.telemetria.webSearchRequests, 3);
+  assert.equal(fim.telemetria.limitReached, null, 'atingiu a quantidade: nenhum limite foi o motivo da parada');
 
-  // caminho oficial: o brief foi a AGUARDANDO_REVISAO com o lote real; os itens estão na fila para um HUMANO decidir; o CRM está vazio
   const depois = await env.briefService.getBrief(admin(), brief.id);
   assert.equal(depois.status, 'AGUARDANDO_REVISAO');
   const lote = env.prospectingService.getBatch(admin(), depois.loteRealId);
@@ -230,7 +117,7 @@ test('[JOB-5] CONCLUIDO: a quantidade pedida validada; para de examinar quando a
   assert.equal((await env.crmService.listRecords(admin(), {})).length, 0, 'NENHUMA promoção automática ao CRM');
 });
 
-test('[JOB-6] PARCIAL: só 2 de 3 comprovados -> ingere SÓ os 2, nunca completa com candidato fraco; os não validados ficam NAO_VERIFICADO com o motivo e a causa técnica', async (t) => {
+test('[JOB-6] PARCIAL: só 2 de 3 comprovados -> ingere SÓ os 2, nunca completa com candidato fraco; os não validados ficam NAO_VERIFICADO com o motivo, a causa técnica e o que faltou', async (t) => {
   const candidatos = [candidato('Clínica Alfa', 'alfa'), candidato('Clínica Fora', 'fora'), candidato('Clínica Beta', 'beta'), candidato('Clínica Sem Nicho', 'semnicho'), candidato('Clínica Sem Cidade', 'semcidade')];
   const paginas = {
     [siteDe('alfa')]: paginaBoa('Clínica Alfa', 'alfa'),
@@ -244,12 +131,14 @@ test('[JOB-6] PARCIAL: só 2 de 3 comprovados -> ingere SÓ os 2, nunca completa
   const fim = await env.servico.waitFor(job.id);
 
   assert.equal(fim.status, JOB_STATUS.PARCIAL);
+  assert.equal(fim.telemetria.limitReached, STOP_REASON.SEM_CANDIDATOS_NOVOS, 'o motor não trouxe mais ninguém: PARCIAL, nunca candidatos artificiais');
   assert.deepEqual([fim.candidatesDiscovered, fim.candidatesValidated, fim.candidatesRejected, fim.candidatesUnverified, fim.candidatesDiscarded], [5, 2, 3, 3, 0]);
   const porNome = Object.fromEntries(fim.candidatos.map((c) => [c.nome, c]));
   assert.equal(porNome['Clínica Fora'].resultado, CANDIDATE_RESULT.NAO_VERIFICADO);
   assert.equal(porNome['Clínica Fora'].motivo, CANDIDATE_REASON.PAGINA_INACESSIVEL);
   assert.equal(porNome['Clínica Fora'].causa, 'DNS', 'a causa técnica é preservada (nunca "empresa inexistente")');
   assert.deepEqual([porNome['Clínica Sem Nicho'].motivo, porNome['Clínica Sem Nicho'].faltando], [CANDIDATE_REASON.EVIDENCIA_INCOMPLETA, ['nicho']]);
+  assert.deepEqual([porNome['Clínica Sem Nicho'].empresa, porNome['Clínica Sem Nicho'].nicho, porNome['Clínica Sem Nicho'].localizacao], ['VALIDADO', 'NAO_VERIFICADO', 'VALIDADO']);
   assert.deepEqual(porNome['Clínica Sem Cidade'].faltando, ['localizacao']);
   const lote = env.prospectingService.getBatch(admin(), (await env.briefService.getBrief(admin(), brief.id)).loteRealId);
   assert.equal(lote.resultados.length, 2, 'só os comprovados chegaram ao caminho oficial');
@@ -265,9 +154,7 @@ test('[JOB-7] PARCIAL sem nenhum válido: nada é ingerido, o brief continua PES
   assert.equal((await env.briefService.getBrief(admin(), brief.id)).status, 'PESQUISANDO');
   const recusa = await erroDe(() => env.servico.startJob(admin(), { briefId: brief.id }));
   assert.equal(recusa.code, 'JOB_INVALID_STATE');
-  assert.match(recusa.message, /PRONTO_PARA_PESQUISA \(está em PESQUISANDO\)/);
   assert.equal(env.jobs.list().length, 1, 'nenhum segundo job foi criado');
-  assert.deepEqual(env.ingestoes, [], 'e nada foi ingerido');
 });
 
 test('[JOB-8] ERRO: a descoberta que falha no primeiro ciclo termina ERRO com o código e sem ingestão; a falha da ingestão também é ERRO (nada promovido)', async (t) => {
@@ -281,7 +168,7 @@ test('[JOB-8] ERRO: a descoberta que falha no primeiro ciclo termina ERRO com o 
   const quebrado = ambiente(t, {
     motor: motorFake({ rodadas: [{ candidatos: tresBons() }] }),
     paginas: paginasBoas(),
-    briefService: (real) => ({ getBrief: real.getBrief, generateResearchPackage: real.generateResearchPackage, ingestFindings: async () => { throw new Error('C:\\segredo\\x falhou'); } }),
+    briefService: (real) => ({ getBrief: real.getBrief, markResearching: real.markResearching, ingestFindings: async () => { throw new Error('C:\\segredo\\x falhou'); } }),
   });
   const { job: segundo } = await iniciar(quebrado);
   const fim2 = await quebrado.servico.waitFor(segundo.id);
@@ -342,7 +229,7 @@ test('[JOB-11] a ingestão já começou: o cancelamento é RECUSADO e a ingestã
     paginas: paginasBoas(),
     briefService: (real) => ({
       getBrief: real.getBrief,
-      generateResearchPackage: real.generateResearchPackage,
+      markResearching: real.markResearching,
       ingestFindings: async (...args) => {
         chamadas += 1;
         entrouNaIngestao();
@@ -395,25 +282,86 @@ test('[JOB-14] só brief de UMA cidade (a localização é comprovada pela pági
   assert.equal(env.jobs.list().length, 0);
 });
 
-test('[JOB-15] ciclos: faltando válidos, um 2º ciclo pede mais candidatos (com os nomes já vistos); o máximo de ciclos é respeitado e a ingestão é UMA só', async (t) => {
-  const rodadas = [{ candidatos: [candidato('Clínica Alfa', 'alfa'), candidato('Clínica Fora', 'fora')] }, { candidatos: [candidato('Clínica Alfa', 'alfa'), candidato('Clínica Beta', 'beta'), candidato('Clínica Gama', 'gama')] }];
+// ---------------------------------------------------------------------------------------------------------------------------------
+// Descoberta adaptativa: ciclos, 40 candidatos, 6 ciclos, tempo, parada por sucesso/falta de candidatos
+
+const unicos = (prefixo, quantidade) => Array.from({ length: quantidade }, (_, i) => candidato(`Clínica ${prefixo}${i}`, `${prefixo.toLowerCase()}${i}`));
+
+test('[JOB-15] ciclos ADAPTATIVOS: o tamanho de cada ciclo é recalculado pelo que ainda falta (clamp(faltam x 3, 6, 12)); a lista de nomes já vistos vai junto; para ao atingir a quantidade; a ingestão é UMA só', async (t) => {
+  const rodadas = [
+    { candidatos: [candidato('Clínica Alfa', 'alfa'), candidato('Clínica Fora', 'fora'), candidato('Clínica Fora2', 'fora2'), candidato('Clínica Fora3', 'fora3')] }, // 1 válido de 4
+    { candidatos: [candidato('Clínica Alfa', 'alfa'), candidato('Clínica Beta', 'beta'), candidato('Clínica Fora4', 'fora4')] }, // +1 válido (o repetido não conta)
+    { candidatos: [candidato('Clínica Gama', 'gama')] }, // o 3º válido
+    { candidatos: [candidato('Clínica Delta', 'delta')] }, // nunca pedido: já atingiu
+  ];
   const motor = motorFake({ rodadas });
   const env = ambiente(t, { motor, paginas: paginasBoas() });
   const { job } = await iniciar(env, { quantidade: 3 });
   const fim = await env.servico.waitFor(job.id);
-  assert.equal(motor.pedidos.length, 2);
-  assert.deepEqual(motor.pedidos[1].excluir, ['Clínica Alfa', 'Clínica Fora'], 'o 2º ciclo recebe só os NOMES já vistos');
-  assert.equal(fim.cycles, 2);
-  assert.equal(fim.candidatesDiscovered, 4, 'o repetido (mesmo nome e site) não conta duas vezes');
-  assert.equal(fim.status, JOB_STATUS.CONCLUIDO);
-  assert.deepEqual(env.ingestoes, [3], 'a ingestão é UMA só, mesmo com dois ciclos');
 
-  const um = motorFake({ rodadas });
-  const limitado = ambiente(t, { motor: um, paginas: paginasBoas(), limits: { maxCycles: 1 } });
-  const { job: curto } = await iniciar(limitado, { quantidade: 3 });
-  const fim2 = await limitado.servico.waitFor(curto.id);
-  assert.equal(um.pedidos.length, 1, 'o limite de ciclos é respeitado');
-  assert.equal(fim2.status, JOB_STATUS.PARCIAL);
+  assert.deepEqual(motor.pedidos.map((p) => p.limit), [9, 6, 6], 'faltam 3 -> 9; faltam 2 -> 6; faltam 1 -> 6 (o mínimo)');
+  assert.deepEqual(motor.pedidos[1].excluir, ['Clínica Alfa', 'Clínica Fora', 'Clínica Fora2', 'Clínica Fora3'], 'o ciclo seguinte recebe só os NOMES já vistos');
+  assert.equal(fim.cycles, 3);
+  assert.equal(fim.candidatesDiscovered, 7, 'o repetido (mesmo nome e site) não conta duas vezes');
+  assert.equal(fim.status, JOB_STATUS.CONCLUIDO);
+  assert.equal(motor.pedidos.length, 3, 'parou ao atingir a quantidade: o 4º ciclo nunca foi pedido');
+  assert.deepEqual(env.ingestoes, [3], 'a ingestão é UMA só, mesmo com vários ciclos');
+});
+
+test('[JOB-15b] o teto absoluto de 40 candidatos: o último ciclo só pede o que ainda cabe; a quantidade pedida NÃO define o teto; termina PARCIAL (CANDIDATOS) sem inventar ninguém', async (t) => {
+  let n = 0;
+  const motor = motorFake({ porPedido: (_, pedido) => ({ candidatos: unicos('Z', 80).slice(n, (n += pedido.limit)) }) });
+  const env = ambiente(t, { motor });
+  const { job } = await iniciar(env, { quantidade: 3 });
+  const fim = await env.servico.waitFor(job.id);
+  assert.deepEqual(motor.pedidos.map((p) => p.limit), [9, 9, 9, 9, 4], '9 x 4 = 36; sobram 4 de 40');
+  assert.equal(fim.candidatesDiscovered, 40);
+  assert.equal(fim.status, JOB_STATUS.PARCIAL);
+  assert.equal(fim.telemetria.limitReached, STOP_REASON.CANDIDATOS);
+  assert.equal(fim.cycles, 5);
+
+  let m = 0;
+  const motor10 = motorFake({ porPedido: (_, pedido) => ({ candidatos: unicos('Y', 80).slice(m, (m += pedido.limit)) }) });
+  const env10 = ambiente(t, { motor: motor10 });
+  const { job: job10 } = await iniciar(env10, { quantidade: 10 });
+  const fim10 = await env10.servico.waitFor(job10.id);
+  assert.deepEqual(motor10.pedidos.map((p) => p.limit), [12, 12, 12, 4], '10 pedidos: clamp(30, 6, 12) = 12 por ciclo; o último cabe 4');
+  assert.equal(fim10.candidatesDiscovered, 40);
+});
+
+test('[JOB-15c] no máximo 6 ciclos de descoberta (PARCIAL, CICLOS), mesmo que ainda caibam candidatos', async (t) => {
+  let n = 0;
+  const motor = motorFake({ porPedido: (_, pedido) => ({ candidatos: unicos('W', 80).slice(n, (n += pedido.limit)) }) });
+  const env = ambiente(t, { motor, limits: { batchMin: 3, batchMax: 3 } });
+  const { job } = await iniciar(env, { quantidade: 3 });
+  const fim = await env.servico.waitFor(job.id);
+  assert.equal(motor.pedidos.length, 6);
+  assert.equal(fim.cycles, 6);
+  assert.equal(fim.candidatesDiscovered, 18);
+  assert.equal(fim.status, JOB_STATUS.PARCIAL);
+  assert.equal(fim.telemetria.limitReached, STOP_REASON.CICLOS);
+});
+
+test('[JOB-15d] parada por falta de candidatos: um ciclo sem NENHUM candidato novo (só repetidos) encerra a descoberta — PARCIAL, e nada é inventado', async (t) => {
+  const motor = motorFake({ rodadas: [{ candidatos: [candidato('Clínica Alfa', 'alfa')] }, { candidatos: [candidato('Clínica Alfa', 'alfa')] }, { candidatos: unicos('V', 5) }] });
+  const env = ambiente(t, { motor, paginas: paginasBoas() });
+  const { job } = await iniciar(env, { quantidade: 3 });
+  const fim = await env.servico.waitFor(job.id);
+  assert.equal(motor.pedidos.length, 2, 'o 3º ciclo nunca é pedido: o 2º não trouxe ninguém novo');
+  assert.equal(fim.candidatesDiscovered, 1);
+  assert.equal(fim.status, JOB_STATUS.PARCIAL);
+  assert.equal(fim.telemetria.limitReached, STOP_REASON.SEM_CANDIDATOS_NOVOS);
+  assert.deepEqual(env.ingestoes, [1], 'o único comprovado foi ingerido (UMA vez)');
+});
+
+test('[JOB-15e] a falha da descoberta DEPOIS do 1º ciclo não derruba o job: segue com o que já tem (PARCIAL, DESCOBERTA)', async (t) => {
+  const motor = { pedidos: [], discover: async (pedido) => { motor.pedidos.push(pedido); return motor.pedidos.length === 1 ? { ok: true, candidatos: [candidato('Clínica Alfa', 'alfa')], invalidos: 0 } : { ok: false, code: 'TIMEOUT' }; } };
+  const env = ambiente(t, { motor, paginas: paginasBoas() });
+  const { job } = await iniciar(env, { quantidade: 3 });
+  const fim = await env.servico.waitFor(job.id);
+  assert.equal(fim.status, JOB_STATUS.PARCIAL);
+  assert.equal(fim.telemetria.limitReached, STOP_REASON.DESCOBERTA);
+  assert.equal(fim.candidatesValidated, 1);
 });
 
 test('[JOB-16] limite de TEMPO: passado o tempo máximo a execução para, ingere só o que já está validado e termina PARCIAL (nunca continua indefinidamente)', async (t) => {
@@ -432,7 +380,7 @@ test('[JOB-16] limite de TEMPO: passado o tempo máximo a execução para, inger
   const { job } = await iniciar(env, { quantidade: 3 });
   const fim = await env.servico.waitFor(job.id);
   assert.equal(fim.status, JOB_STATUS.PARCIAL);
-  assert.equal(fim.telemetria.limitReached, 'TEMPO');
+  assert.equal(fim.telemetria.limitReached, STOP_REASON.TEMPO);
   assert.equal(lidas.length, 2, 'a 3ª leitura não começou: o tempo acabou');
   assert.equal(fim.candidatesValidated, 2);
   assert.match(fim.lote.loteId, /^lote:/, 'o que já estava validado foi ingerido (uma vez)');
@@ -457,7 +405,7 @@ test('[JOB-17] exclusão permanente ANTES da validação: o candidato excluído 
   assert.equal(fim.candidatesDiscarded, 1);
   assert.equal(fim.status, JOB_STATUS.CONCLUIDO);
 
-  const falha = ambiente(t, { motor: motorFake({ rodadas: [{ candidatos: [candidato('Clínica Alfa', 'alfa')] }] }), paginas: paginasBoas(), exclusao: async () => { throw new Error('banco fora'); } });
+  const falha = ambiente(t, { motor: motorFake({ rodadas: [{ candidatos: [candidato('Clínica Alfa', 'alfa')] }, { candidatos: [] }] }), paginas: paginasBoas(), exclusao: async () => { throw new Error('banco fora'); } });
   const { job: segundo } = await iniciar(falha, { quantidade: 1 });
   const fim2 = await falha.servico.waitFor(segundo.id);
   assert.equal(fim2.candidatos[0].resultado, CANDIDATE_RESULT.NAO_VERIFICADO);
@@ -466,10 +414,7 @@ test('[JOB-17] exclusão permanente ANTES da validação: o candidato excluído 
 });
 
 test('[JOB-18] DNC, duplicidade e exclusão no CAMINHO OFICIAL: o DNC e o duplicado do CRM não entram na fila, e nada é promovido', async (t) => {
-  const env = ambiente(t, {
-    motor: motorFake({ rodadas: [{ candidatos: [candidato('Clínica Alfa', 'alfa'), candidato('Clínica Beta', 'beta'), candidato('Clínica Gama', 'gama')] }] }),
-    paginas: paginasBoas(),
-  });
+  const env = ambiente(t, { motor: motorFake({ rodadas: [{ candidatos: tresBons() }] }), paginas: paginasBoas() });
   // o CRM real já tem a Alfa em DO_NOT_CONTACT e a Beta como PROSPECT (mesmo site)
   const alfa = (await env.crmService.createRecord(admin(), { empresa: 'Alfa Antiga', cidade: 'Petrópolis', estado: 'RJ', nicho: 'Estética', site: siteDe('alfa') })).record;
   await env.crmService.markDoNotContact(admin(), alfa.id, { reason: 'pediu para não ser contatado' });
@@ -477,7 +422,8 @@ test('[JOB-18] DNC, duplicidade e exclusão no CAMINHO OFICIAL: o DNC e o duplic
 
   const { brief, job } = await iniciar(env, { quantidade: 3 });
   const fim = await env.servico.waitFor(job.id);
-  assert.equal(fim.status, JOB_STATUS.CONCLUIDO, 'as 3 foram validadas pela página; o pipeline oficial decide o resto');
+  assert.equal(fim.status, JOB_STATUS.PARCIAL, 'as 3 foram validadas pela página, mas o pipeline oficial reteve 2 (DNC e duplicado): só 1 chegou à fila, e a meta é de leads NA FILA');
+  assert.deepEqual([fim.lote.validadosPeloMotor, fim.lote.naFila, fim.lote.foraDaFila], [3, 1, 2]);
   const lote = env.prospectingService.getBatch(admin(), (await env.briefService.getBrief(admin(), brief.id)).loteRealId);
   const estado = Object.fromEntries(lote.resultados.map((r) => [r.empresa, r.estadoOperacional]));
   assert.equal(estado['Clínica Alfa'], 'DNC');
@@ -531,16 +477,18 @@ test('[JOB-19b] recuperação respeita o DONO: um job ativo de OUTRO processo ai
   assert.equal(env.jobs.getById(job.id).processId, process.pid, 'o job guarda o PID de quem o executa');
 });
 
-test('[JOB-20] persistência mínima: nenhum texto de página, prompt nem achado sobra no arquivo do job depois que ele termina; só contadores, resumos e a telemetria agregada', async (t) => {
+test('[JOB-20] persistência mínima: nenhum texto de página, prompt nem achado sobra no arquivo do job; só contadores, o resultado estruturado de cada candidato e a telemetria agregada', async (t) => {
   const env = ambiente(t, { motor: motorFake({ rodadas: [{ candidatos: tresBons(), telemetria: { custoUsd: 0.2, webSearchRequests: 2 } }] }), paginas: paginasBoas() });
   const { job } = await iniciar(env);
   await env.servico.waitFor(job.id);
-  const bruto = JSON.stringify(env.jobs.getById(job.id));
+  const salvo = env.jobs.getById(job.id);
+  const bruto = JSON.stringify(salvo);
   assert.equal(bruto.includes(MARCADOR), false, 'o texto da página nunca é persistido');
   assert.doesNotMatch(bruto, /prompt|Responda APENAS|achadosValidados":\[\{/i);
-  assert.deepEqual(env.jobs.getById(job.id).achadosValidados, []);
-  assert.deepEqual(Object.keys(env.jobs.getById(job.id).candidatos[0]).sort(), ['nome', 'resultado', 'url']);
-  assert.deepEqual(Object.keys(env.jobs.getById(job.id).telemetria).sort(), ['custoUsd', 'discoveryMs', 'discoveryRuns', 'limitReached', 'validationMs', 'webSearchRequests']);
+  assert.deepEqual(salvo.achadosValidados, []);
+  assert.deepEqual(Object.keys(salvo.candidatos[0]).sort(), ['empresa', 'entrega', 'evidencias', 'fonteDaValidacao', 'fontesDescoberta', 'localizacao', 'nicho', 'nome', 'outrasPresencas', 'presencaDigital', 'resultado', 'siteOficial', 'url']);
+  for (const aspecto of ['empresa', 'nicho', 'localizacao']) assert.ok(salvo.candidatos[0].evidencias[aspecto].trecho.length <= 80, 'evidência curta');
+  assert.deepEqual(Object.keys(salvo.telemetria).sort(), ['custoUsd', 'discoveryMs', 'discoveryRuns', 'limitReached', 'validationMs', 'webSearchRequests']);
 });
 
 test('[JOB-21] segurança do motor: o pedido leva só o que o brief diz (nunca texto de página, contexto de usuário nem CRM) e o Service não entrega ao motor nenhuma porta do CRM', async (t) => {
@@ -556,13 +504,15 @@ test('[JOB-21] segurança do motor: o pedido leva só o que o brief diz (nunca t
   assert.doesNotMatch(codigo, /crmService|createRecord|promoteProspect|approveProspect|crmIntegration/, 'o Service de job nunca toca o CRM nem a promoção');
 });
 
-test('[JOB-22] dependências obrigatórias: sem autorizador, brief service, repositório, motor ou leitor de página o Service não nasce; limites inválidos também', () => {
-  const base = { authorizeProposer: authorizeProposerForLeadApproval, briefService: { getBrief() {}, generateResearchPackage() {}, ingestFindings() {} }, repository: createInMemoryJobRepository(), discoveryEngine: { discover() {} }, createFetchPage: () => () => {} };
+test('[JOB-22] dependências obrigatórias: sem autorizador, brief service (com markResearching), repositório, motor ou leitor de página o Service não nasce; limites inválidos também', () => {
+  const base = { authorizeProposer: authorizeProposerForLeadApproval, briefService: { getBrief() {}, markResearching() {}, ingestFindings() {} }, repository: createInMemoryJobRepository(), discoveryEngine: { discover() {} }, createFetchPage: () => () => {} };
   assert.ok(createProspectingJobService(base));
   for (const faltando of ['authorizeProposer', 'briefService', 'repository', 'discoveryEngine', 'createFetchPage']) {
     assert.throws(() => createProspectingJobService({ ...base, [faltando]: undefined }), undefined, faltando);
   }
-  assert.throws(() => createProspectingJobService({ ...base, briefService: { getBrief() {} } }), /generateResearchPackage|ingestFindings/);
+  assert.throws(() => createProspectingJobService({ ...base, briefService: { getBrief() {}, ingestFindings() {} } }), /markResearching/);
+  assert.throws(() => createProspectingJobService({ ...base, briefService: { getBrief() {}, markResearching() {} } }), /ingestFindings/);
+  assert.throws(() => createProspectingJobService({ ...base, briefService: { getBrief() {}, generateResearchPackage() {}, ingestFindings() {} } }), /markResearching/, 'o pacote manual não substitui markResearching');
   assert.throws(() => createProspectingJobService({ ...base, checkPermanentExclusion: 'x' }), /checkPermanentExclusion/);
   assert.throws(() => createProspectingJobService({ ...base, limits: { maxCycles: 0 } }), /maxCycles/);
   assert.ok(Object.isFrozen(createProspectingJobService(base)));

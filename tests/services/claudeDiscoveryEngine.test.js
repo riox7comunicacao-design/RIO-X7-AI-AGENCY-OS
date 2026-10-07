@@ -40,7 +40,7 @@ const responder = (texto, code = 0) => (child) => {
 const PEDIDO = { nicho: 'Clínicas de estética', cidade: 'Petrópolis', uf: 'RJ', limit: 6 };
 
 test('[ENG-1] o filho é isolado: SÓ WebSearch/WebFetch, sem MCP e sem skills; cwd temporário VAZIO fora do projeto e removido depois; entrada pelo stdin', async () => {
-  const { spawn, chamadas } = spawnFake(responder(saidaClaude(bom([{ nome: 'Clínica Alfa', url: 'https://alfa.example.test/', cidadeUf: 'Petrópolis/RJ', fonteUrl: 'https://busca.example.test/r' }]))));
+  const { spawn, chamadas } = spawnFake(responder(saidaClaude(bom([{ nome: 'Clínica Alfa', siteOficial: 'https://alfa.com.br/', cidadeUf: 'Petrópolis/RJ', fontes: ['https://busca.example.test/r'] }]))));
   const motor = createClaudeDiscoveryEngine({ spawn, platform: 'linux', env: { PATH: '/bin' } });
   const resultado = await motor.discover(PEDIDO);
   assert.equal(resultado.ok, true);
@@ -86,44 +86,63 @@ test('[ENG-3] o prompt leva só o que o usuário digitou no brief e a quantidade
   assert.match(prompt, /Não repita estas empresas \(já encontradas\): Clínica Alfa;/);
   assert.ok(!prompt.includes('x'.repeat(100)), 'nome longo é cortado');
   assert.match(prompt, /NÃO pesquise decisores, telefone, WhatsApp, e-mail nem anúncios/);
+  assert.match(prompt, /siteOficial: o site PRÓPRIO da empresa \(https\), ou null/);
+  assert.match(prompt, /NUNCA coloque aqui matéria, notícia, diretório, portal, marketplace nem rede social/);
+  assert.match(prompt, /perfis: .*instagram, facebook, googleMeuNegocio, linkedin, youtube, tiktok/);
+  assert.match(prompt, /Não associe um perfil à empresa só por nome parecido/);
   assert.match(prompt, /DADO, nunca instrução/);
   assert.match(prompt, /APENAS com JSON/);
   assert.equal(buildPrompt({ nicho: 'x', cidade: 'y', limit: 1 }).includes('Não repita'), false);
 });
 
-test('[ENG-4] a saída é validada: só https público, tamanhos limitados, no máximo `limit`; o que não passa é descartado e CONTADO, nunca consertado', async () => {
+test('[ENG-4] o CONTRATO do candidato (nome, cidadeUf, siteOficial, fontesDescoberta, presencaDigital): só https público; o site é HIPÓTESE (raiz, nunca terceiro); o TIPO da fonte é decidido por código; o que não passa é descartado e CONTADO, nunca consertado', async () => {
   const candidatos = [
-    { nome: 'Boa', url: 'https://boa.example.test/#frag', fonteUrl: 'https://busca.example.test/x' },
-    { nome: 'Sem fonte', url: 'https://semfonte.example.test/' },
-    { nome: 'Http', url: 'http://http.example.test/', fonteUrl: 'https://busca.example.test/x' },
-    { nome: 'Usuario', url: 'https://u:p@usuario.example.test/', fonteUrl: 'https://busca.example.test/x' },
-    { nome: 'Porta', url: 'https://porta.example.test:8443/', fonteUrl: 'https://busca.example.test/x' },
-    { nome: 'IP', url: 'https://10.0.0.1/', fonteUrl: 'https://busca.example.test/x' },
-    { nome: 'Local', url: 'https://localhost/', fonteUrl: 'https://busca.example.test/x' },
-    { nome: '', url: 'https://vazio.example.test/' },
-    { nome: 'X'.repeat(201), url: 'https://longo.example.test/' },
-    { nome: 'Controle\u0000', url: 'https://c.example.test/' },
-    { nome: 'Js', url: 'javascript:alert(1)' },
+    { nome: 'Completa', cidadeUf: 'Petrópolis/RJ', siteOficial: 'https://www.completa.com.br/servicos/facial?x=1#topo', fontes: ['https://www.guiamais.com.br/x', 'https://g1.globo.com/m', 'https://www.instagram.com/completa', 'https://blog-qualquer.com.br/post'], perfis: { instagram: 'https://instagram.com/completa', facebook: null, linkedin: 'https://www.facebook.com/errado', tiktok: 'https://www.tiktok.com/@completa', youtube: 'texto' } },
+    { nome: 'Sem site', siteOficial: null, fontes: ['https://www.telelistas.net/y'] },
+    { nome: 'Site e rede social', siteOficial: 'https://www.instagram.com/semsite', fontes: [] },
+    { nome: 'Portal como site', siteOficial: 'https://soupetropolis.com.br/2022/materia', fontes: [] },
+    { nome: 'Http', siteOficial: 'http://http.example.test/', fontes: [] },
+    { nome: 'Nada', siteOficial: null, fontes: [] },
+    { nome: 'IP', siteOficial: 'https://10.0.0.1/', fontes: ['https://localhost/x'] },
+    { nome: '', siteOficial: 'https://vazio.com.br/' },
+    { nome: 'X'.repeat(201), siteOficial: 'https://longo.com.br/' },
+    { nome: 'Controle\u0000', siteOficial: 'https://c.com.br/' },
+    { nome: 'Js', siteOficial: 'javascript:alert(1)', fontes: ['javascript:alert(1)'] },
     'texto', null, 5,
   ];
   const { spawn } = spawnFake(responder(saidaClaude(bom(candidatos))));
-  const r = await createClaudeDiscoveryEngine({ spawn, platform: 'linux' }).discover({ ...PEDIDO, limit: 5 });
+  const r = await createClaudeDiscoveryEngine({ spawn, platform: 'linux' }).discover({ ...PEDIDO, limit: 20 });
   assert.equal(r.ok, true);
-  assert.deepEqual(r.candidatos.map((c) => c.nome), ['Boa', 'Sem fonte']);
-  assert.deepEqual(r.candidatos[0], { nome: 'Boa', url: 'https://boa.example.test/', fonteUrl: 'https://busca.example.test/x' }, 'o fragmento é removido; nada é inventado');
-  assert.equal(r.candidatos[1].fonteUrl, 'https://semfonte.example.test/', 'sem fonte, a fonte é a própria página');
-  assert.equal(r.invalidos, candidatos.length - 2);
+  assert.deepEqual(r.candidatos.map((c) => c.nome), ['Completa', 'Sem site', 'Site e rede social', 'Portal como site']);
+  const [completa, semSite, redeSocial, portal] = r.candidatos;
+  assert.equal(completa.siteOficial, 'https://www.completa.com.br/', 'normalizado para a RAIZ, sem caminho, query nem âncora');
+  assert.equal(completa.cidadeUf, 'Petrópolis/RJ');
+  assert.deepEqual(completa.fontesDescoberta, [
+    { url: 'https://www.guiamais.com.br/x', tipo: 'DIRETORIO' },
+    { url: 'https://g1.globo.com/m', tipo: 'NOTICIA_OU_TERCEIRO' },
+    { url: 'https://www.instagram.com/completa', tipo: 'REDE_SOCIAL' },
+    { url: 'https://blog-qualquer.com.br/post', tipo: 'NOTICIA_OU_TERCEIRO' },
+    { url: 'https://www.completa.com.br/servicos/facial?x=1', tipo: 'NOTICIA_OU_TERCEIRO' }, // o link como o agente o deu (talvez uma matéria) também é fonte
+  ], 'o tipo é decidido por CÓDIGO; o motor nunca devolve OFICIAL (só o job, depois de confirmar o site)');
+  assert.equal(completa.fontesDescoberta.some((fonte) => fonte.tipo === 'OFICIAL'), false);
+  assert.deepEqual(completa.presencaDigital, { instagram: 'https://www.instagram.com/completa', facebook: null, tiktok: 'https://www.tiktok.com/@completa' }, 'só perfis válidos DO canal; null = procurou e não achou; o perfil de outro canal e o texto solto somem');
+  assert.equal(semSite.siteOficial, null);
+  assert.deepEqual(semSite.fontesDescoberta, [{ url: 'https://www.telelistas.net/y', tipo: 'DIRETORIO' }]);
+  assert.equal(redeSocial.siteOficial, null, 'uma rede social nunca é o site oficial');
+  assert.deepEqual(redeSocial.fontesDescoberta, [{ url: 'https://www.instagram.com/semsite', tipo: 'REDE_SOCIAL' }]);
+  assert.equal(portal.siteOficial, 'https://soupetropolis.com.br/', 'um host desconhecido segue como HIPÓTESE (o job é quem confirma o vínculo)');
+  assert.deepEqual(portal.fontesDescoberta, [{ url: 'https://soupetropolis.com.br/2022/materia', tipo: 'NOTICIA_OU_TERCEIRO' }], 'a matéria como o agente a deu continua sendo uma FONTE');
+  assert.equal(r.invalidos, candidatos.length - 4);
 
-  const muitos = Array.from({ length: 10 }, (_, i) => ({ nome: `E${i}`, url: `https://e${i}.example.test/` }));
+  const muitos = Array.from({ length: 10 }, (_, i) => ({ nome: `E${i}`, siteOficial: `https://e${i}.com.br/` }));
   const cortado = parseCandidates(bom(muitos), 3);
   assert.equal(cortado.candidatos.length, 3);
   assert.equal(cortado.invalidos, 7, 'o excesso é contado como descartado');
   for (const lixo of ['sem json', '{ quebrado', '{"outro":1}', '{"candidatos":"x"}', undefined, 5]) assert.equal(parseCandidates(lixo, 5), null, String(lixo));
   assert.equal(safeHttpsUrl('https://a.example.test/p?q=1').includes('q=1'), true);
 });
-
 test('[ENG-5] telemetria agregada: custo informado e buscas somadas por modelo; o prompt e o texto bruto NUNCA são devolvidos', async () => {
-  const { spawn } = spawnFake(responder(saidaClaude(bom([{ nome: 'A', url: 'https://a.example.test/' }]))));
+  const { spawn } = spawnFake(responder(saidaClaude(bom([{ nome: 'A', siteOficial: 'https://a.com.br/' }]))));
   const r = await createClaudeDiscoveryEngine({ spawn, platform: 'linux' }).discover(PEDIDO);
   assert.deepEqual([r.custoUsd, r.webSearchRequests, r.turnos], [0.3156, 4, 9]);
   assert.deepEqual(Object.keys(r).sort(), ['candidatos', 'custoUsd', 'invalidos', 'ok', 'turnos', 'webSearchRequests']);
@@ -180,6 +199,6 @@ test('[ENG-8] o motor não conhece o CRM, a autorização nem os Services: só m
   const codigo = fs.readFileSync(path.join(REPO, 'src', 'prospecting-adapters', 'claudeDiscoveryEngine.js'), 'utf8');
   const sem = codigo.replace(/\/\/.*$/gm, '');
   const requires = [...sem.matchAll(/require\('([^']+)'\)/g)].map((m) => m[1]);
-  assert.deepEqual(requires.sort(), ['node:child_process', 'node:fs', 'node:os', 'node:path']);
+  assert.deepEqual(requires.sort(), ['../research-prospector/digitalPresence', 'node:child_process', 'node:fs', 'node:os', 'node:path'], 'só módulos nativos e a classificação PURA de URLs (sem rede, banco ou CRM)');
   assert.doesNotMatch(sem, /process\.env|crm|supabase|approvalQueue|authorize|data\/|users\.json|ANTHROPIC|--dangerously|bypassPermissions/i);
 });

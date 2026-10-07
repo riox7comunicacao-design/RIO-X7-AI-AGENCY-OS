@@ -214,7 +214,7 @@ function createPublicWeb(options) {
     if (page.desafioForte || (page.marcadorCaptcha && page.totalLinks <= 3)) return failure(FAILURE.CAPTCHA, 'DESAFIO_NA_PAGINA', got.host);
     if (page.temSenha && page.totalLinks <= 3) return failure(FAILURE.LOGIN, 'MURO_DE_LOGIN', got.host);
     if (page.linksTruncados > 0) event('LINKS_TRUNCADOS', got.host);
-    return { ok: true, urlFinal: got.urlFinal, links: page.links, temFormularioContato: page.temFormularioContato, texto: page.texto };
+    return { ok: true, urlFinal: got.urlFinal, links: page.links, temFormularioContato: page.temFormularioContato, texto: page.texto, identidade: page.identidade };
   }
 
   async function getJson(url) {

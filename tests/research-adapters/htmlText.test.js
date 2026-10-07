@@ -12,7 +12,7 @@ test('[TXT-1] o texto traz título, meta description, h1, h2, corpo e rodapé; o
   for (const trecho of ['Clínica Alfa & Cia', 'Estética em Petrópolis', 'OG descrição', 'Alfa', 'Serviços', 'Rua A, 10', '© Alfa · Petrópolis']) assert.ok(p.texto.includes(trecho), trecho);
   assert.deepEqual(p.links, [{ href: 'https://alfa.example.test/agendar', texto: 'Agende' }]);
   assert.equal(p.temFormularioContato, true);
-  assert.deepEqual(Object.keys(p).sort(), ['desafioForte', 'links', 'linksTruncados', 'marcadorCaptcha', 'temFormularioContato', 'temSenha', 'texto', 'totalLinks']);
+  assert.deepEqual(Object.keys(p).sort(), ['desafioForte', 'identidade', 'links', 'linksTruncados', 'marcadorCaptcha', 'temFormularioContato', 'temSenha', 'texto', 'totalLinks']);
 });
 
 test('[TXT-2] NÃO entram: script, style, noscript, template, comentários, svg, iframe, controles, bidi, atributos e HTML bruto', () => {
@@ -34,4 +34,11 @@ test('[TXT-4] entradas degeneradas e hostis nunca lançam e sempre devolvem `tex
     assert.ok(p.texto.length <= MAX_PAGE_TEXT);
   }
   assert.equal(extractPage('só texto, sem tags', BASE).texto, 'só texto, sem tags');
+});
+
+test('[TXT-5] `identidade` é o título + o H1 (onde a empresa se apresenta), curta e sem HTML; vazia quando não há nenhum dos dois', () => {
+  const p = extractPage('<html><head><title>Espaço Facial | Clínica &amp; Estética</title></head><body><h1>Bem-vindo ao <b>Espaço Facial</b></h1><h2>Outro</h2><p>corpo</p></body></html>', BASE);
+  assert.equal(p.identidade, 'Espaço Facial | Clínica & Estética\nBem-vindo ao Espaço Facial');
+  assert.equal(extractPage('<p>só corpo</p>', BASE).identidade, '');
+  assert.ok(extractPage(`<title>${'t'.repeat(5000)}</title><h1>${'h'.repeat(5000)}</h1>`, BASE).identidade.length <= 1000);
 });

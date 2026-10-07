@@ -125,12 +125,12 @@ test('[PV-14] parseRegion: "Cidade: Petrópolis/RJ", "Petrópolis - RJ" e "Petr�
   for (const vago of [undefined, null, 5, '', '   ', 'Estado: RJ', 'Região Serrana', 'x'.repeat(200) + '/RJ']) assert.equal(parseRegion(vago), null, String(vago));
 });
 
-test('[PV-15] a função é PURA: nenhuma rede, banco, LLM, disco, processo ou relógio — só importa ./normalize', () => {
+test('[PV-15] a função é PURA: nenhuma rede, banco, LLM, disco, processo ou relógio — só importa ./normalize e ./digitalPresence (também pura)', () => {
   const arquivo = path.join(__dirname, '..', '..', 'src', 'research-prospector', 'pageVerification.js');
   const codigo = fs.readFileSync(arquivo, 'utf8');
   const estatica = analyzeSource(codigo, toPosix(path.relative(path.join(__dirname, '..', '..'), arquivo)));
   assert.deepEqual(estatica.issues, []);
-  assert.deepEqual(estatica.refs.map((ref) => ref.specifier), ['./normalize']);
+  assert.deepEqual(estatica.refs.map((ref) => ref.specifier).sort(), ['./digitalPresence', './normalize']);
   const identificadores = new Set();
   for (const token of estatica.tokens.flat ? estatica.tokens.flat(Infinity) : []) if (token && token.type === 'id') identificadores.add(token.value);
   for (const proibido of ['fetch', 'process', 'require_', 'Date', 'setTimeout', 'XMLHttpRequest', 'fs']) assert.equal(identificadores.has(proibido), false, proibido);

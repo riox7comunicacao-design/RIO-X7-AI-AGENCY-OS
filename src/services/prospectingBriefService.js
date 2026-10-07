@@ -201,6 +201,18 @@ function createProspectingBriefService(dependencies) {
     return copy(brief);
   }
 
+  // PRONTO_PARA_PESQUISA -> PESQUISANDO, SEM gerar pacote de pesquisa: é o que a prospecção automática (job) usa. O fluxo manual continua usando
+  // generateResearchPackage (que também leva o brief a PESQUISANDO, mas gera o pacote que um humano leva ao Claude/Web).
+  function markResearching(context, id) {
+    authorize(context);
+    const brief = requireBrief(id);
+    requireStatus(brief, [BRIEF_STATUS.PRONTO_PARA_PESQUISA]);
+    brief.status = BRIEF_STATUS.PESQUISANDO;
+    brief.atualizadoEm = now().toISOString();
+    saveBrief(brief);
+    return copy(brief);
+  }
+
   // Gera (ou REGENERA — é idempotente: o mesmo brief pode pedir o pacote de novo) o pacote de pesquisa. Nunca
   // executa nenhuma pesquisa: só monta o pedido estruturado (ver researchProvider.js).
   async function generateResearchPackage(context, id) {
@@ -275,7 +287,7 @@ function createProspectingBriefService(dependencies) {
     return copy(brief);
   }
 
-  return Object.freeze({ createBrief, listBriefs, getBrief, markReadyForResearch, generateResearchPackage, ingestFindings, cancelBrief, markConcluded });
+  return Object.freeze({ createBrief, listBriefs, getBrief, markReadyForResearch, markResearching, generateResearchPackage, ingestFindings, cancelBrief, markConcluded });
 }
 
 module.exports = { createProspectingBriefService, ProspectingBriefError, ERROR };

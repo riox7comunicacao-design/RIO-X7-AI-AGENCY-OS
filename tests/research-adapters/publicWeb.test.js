@@ -56,7 +56,7 @@ const eventos = (w) => w.estatisticas().eventos.map((e) => e.codigo);
 test('[ADP-1] SUCESSO: robots.txt lido primeiro, depois a página; devolve exatamente o contrato do Researcher { ok, urlFinal, links, temFormularioContato }', async () => {
   const { w, t } = web({ [SITE]: html(PAGINA_COM_LINKS) });
   const r = await w.fetchPage(SITE);
-  assert.deepEqual(Object.keys(r).sort(), ['links', 'ok', 'temFormularioContato', 'texto', 'urlFinal'], 'os 4 campos do contrato + `texto` (aditivo)');
+  assert.deepEqual(Object.keys(r).sort(), ['identidade', 'links', 'ok', 'temFormularioContato', 'texto', 'urlFinal'], 'os 4 campos do contrato + `texto` e `identidade` (aditivos)');
   assert.equal(typeof r.texto, 'string');
   assert.deepEqual([r.ok, r.urlFinal, r.temFormularioContato], [true, SITE, true]);
   assert.ok(r.links.some((l) => l.href === 'https://www.instagram.com/alfa_teste' && l.texto === 'Instagram'));
@@ -293,7 +293,7 @@ test('[ADP-14] DATA: quem carimba a data da pesquisa é o RELÓGIO INJETADO do R
   const t = transporteFake({ [SITE]: html(PAGINA_COM_LINKS) });
   const ports = createResearchPorts({ transport: t, userAgent: UA, now: () => new Date('2001-01-01T00:00:00Z'), sleep: async () => {}, minIntervalMs: 0 });
   const pagina = await ports.fetchPage(SITE);
-  assert.deepEqual(Object.keys(pagina).sort(), ['links', 'ok', 'temFormularioContato', 'texto', 'urlFinal']);
+  assert.deepEqual(Object.keys(pagina).sort(), ['identidade', 'links', 'ok', 'temFormularioContato', 'texto', 'urlFinal']);
   const busca = { ok: true, resultados: [{ nome: 'Clínica Alfa Teste', url: SITE, tipoResultado: 'SITE', fonteUrl: 'https://busca.example.test/r' }] };
   const saida = await createResearcher({ search: async () => busca, fetchPage: ports.fetchPage }, { now: () => AGORA }).research({ nicho: 'Psicologia', quantidadeDesejada: 1 });
   const datas = new Set();
