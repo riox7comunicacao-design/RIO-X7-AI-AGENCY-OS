@@ -165,6 +165,11 @@ export function createApiClient({ getAccessToken, refreshAccessToken, onSessionL
     markProspectingBriefReady: (id) => request('POST', `/api/prospecting/briefs/${encodeURIComponent(id)}/ready`, {}),
     generateProspectingPackage: (id) => request('POST', `/api/prospecting/briefs/${encodeURIComponent(id)}/package`, {}),
     ingestProspectingFindings: (id, rawFindings) => request('POST', `/api/prospecting/briefs/${encodeURIComponent(id)}/findings`, { rawFindings }),
+    // Prospecção automática (Fase 2 — "INICIAR PROSPECÇÃO"): inicia um job (devolve 202 e o job na hora), consulta o status e cancela (só antes da ingestão).
+    listProspectingJobs: (briefId) => request('GET', typeof briefId === 'string' && briefId !== '' ? `/api/prospecting/jobs?briefId=${encodeURIComponent(briefId)}` : '/api/prospecting/jobs'),
+    startProspectingJob: (briefId) => request('POST', '/api/prospecting/jobs', { briefId }),
+    getProspectingJobStatus: (id) => request('GET', `/api/prospecting/jobs/${encodeURIComponent(id)}/status`),
+    cancelProspectingJob: (id) => request('POST', `/api/prospecting/jobs/${encodeURIComponent(id)}/cancel`, {}),
     cancelProspectingBrief: (id) => request('POST', `/api/prospecting/briefs/${encodeURIComponent(id)}/cancel`, {}),
     concludeProspectingBrief: (id) => request('POST', `/api/prospecting/briefs/${encodeURIComponent(id)}/conclude`, {}),
 

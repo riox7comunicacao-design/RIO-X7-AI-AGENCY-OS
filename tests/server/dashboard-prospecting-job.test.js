@@ -1,0 +1,253 @@
+// A tela de Prospecção (dashboard/views/prospecting.mjs) com o botão "INICIAR PROSPECÇÃO" (Fase 2): iniciar, acompanhar o status, cancelar e ver o
+// resultado — sem JSON técnico para o usuário. A API é um FAKE em memória (nenhuma rede); o agendador da consulta de status é manual.
+
+const test = require('node:test');
+const assert = require('node:assert/strict');
+
+const { createBrowser } = require('../helpers/fakeDom');
+
+const loadView = () => import('../../dashboard/views/prospecting.mjs');
+
+const BRIEF = { id: 'PROS-20261006-001', status: 'PRONTO_PARA_PESQUISA', nicho: 'Clínicas de estética', nivelGeografico: 'CIDADE', cidades: ['Petrópolis/RJ'], quantidade: 3, observacoes: null, pacotePesquisa: null, loteRealId: null, contagens: null, criadoEm: '2026-10-06T12:00:00.000Z' };
+const job = (extras = {}) => ({ id: 'JOB-20261006-001', briefId: BRIEF.id, status: 'EXECUTANDO', currentStep: 'DESCOBRINDO', progress: 15, requestedQuantity: 3, candidatesDiscovered: 0, candidatesValidated: 0, candidatesRejected: 0, elapsedMs: 0, error: null, ...extras });
+
+function criar({ briefs = [BRIEF], jobs = [], respostas = [], canPropose = true } = {}) {
+  const chamadas = [];
+  const fila = [...respostas];
+  let briefAtual = briefs;
+  let jobsNoServidor = [...jobs]; // o "servidor": o que a listagem devolve acompanha o que o status já informou
+  const api = {
+    listProspectingBriefs: async () => ({ items: briefAtual }),
+    getProspectingBrief: async (id) => ({ item: briefAtual.find((b) => b.id === id) }),
+    listProspectingJobs: async (briefId) => {
+      chamadas.push(['listJobs', briefId]);
+      return { items: jobsNoServidor.filter((j) => briefId === undefined || j.briefId === briefId) };
+    },
+    startProspectingJob: async (briefId) => {
+      chamadas.push(['start', briefId]);
+      const criado = job();
+      jobsNoServidor = [criado, ...jobsNoServidor];
+      return { item: criado };
+    },
+    getProspectingJobStatus: async (id) => {
+      chamadas.push(['status', id]);
+      const item = fila.length > 1 ? fila.shift() : fila[0];
+      jobsNoServidor = [item, ...jobsNoServidor.filter((j) => j.id !== item.id)];
+      return { item };
+    },
+    cancelProspectingJob: async (id) => {
+      chamadas.push(['cancel', id]);
+      return { item: job({ status: 'CANCELAMENTO_SOLICITADO', cancelRequested: true }) };
+    },
+    getProspectingBatch: async () => ({ item: { resultados: [] } }),
+  };
+  const agendadas = [];
+  const schedule = (fn, ms) => {
+    const tarefa = { fn, ms, cancelada: false };
+    agendadas.push(tarefa);
+    return () => {
+      tarefa.cancelada = true;
+    };
+  };
+  const proximaAgendada = () => agendadas.filter((a) => !a.cancelada && !a.executada).at(-1);
+  return { api, chamadas, agendadas, schedule, proximaAgendada, trocarBriefs: (novos) => { briefAtual = novos; } };
+}
+
+async function montar(opcoes = {}) {
+  const { createProspectingView } = await loadView();
+  const ambiente = criar(opcoes);
+  const browser = createBrowser();
+  const view = createProspectingView({ document: browser.document, root: browser.root, api: ambiente.api, permissions: { canProposeLead: opcoes.canPropose !== false }, schedule: ambiente.schedule });
+  await view.load();
+  await browser.flush();
+  const rodarAgendada = async () => {
+    const tarefa = ambiente.proximaAgendada();
+    assert.ok(tarefa, 'há uma consulta de status agendada');
+    tarefa.executada = true;
+    await tarefa.fn();
+    await browser.flush();
+  };
+  return { ...ambiente, browser, view, rodarAgendada, tela: () => browser.root.textContent.replace(/\s+/g, ' ') };
+}
+
+async function selecionar(t) {
+  const link = t.browser.by.text(t.browser.root, BRIEF.id, 'button');
+  t.browser.click(link);
+  await t.browser.flush(8);
+}
+
+test('[DASH-JOB-1] com o brief PRONTO aparece o botão "INICIAR PROSPECÇÃO"; clicar cria o job (UMA chamada com só o briefId) e a tela passa a mostrar o andamento', async () => {
+  const t = await montar();
+  await selecionar(t);
+  const botao = t.browser.by.id(t.browser.root, 'pros-start-job');
+  assert.ok(botao);
+  assert.equal(botao.textContent, 'INICIAR PROSPECÇÃO');
+  t.browser.click(botao);
+  await t.browser.flush(8);
+
+  assert.deepEqual(t.chamadas.filter(([nome]) => nome === 'start'), [['start', BRIEF.id]]);
+  assert.equal(t.browser.by.id(t.browser.root, 'pros-start-job'), null, 'o botão some enquanto há uma prospecção ativa');
+  assert.match(t.tela(), /Em execução/);
+  assert.match(t.tela(), /Descobrindo empresas na web/);
+  assert.match(t.tela(), /Empresas descobertas: 0 · Validadas pela página: 0 · Não validadas: 0 · Solicitadas: 3/);
+  assert.match(t.tela(), /Tempo decorrido: 00:00/);
+  assert.ok(t.browser.by.tag(t.browser.root, 'progress')[0], 'há uma barra de progresso');
+  assert.equal(t.browser.by.tag(t.browser.root, 'progress')[0].getAttribute('value'), '15');
+  assert.ok(t.browser.by.id(t.browser.root, 'pros-cancel-job'), 'e o botão de cancelar');
+  assert.equal(t.proximaAgendada().ms, 2500, 'a consulta de status é agendada');
+});
+
+test('[DASH-JOB-2] a tela consulta /status periodicamente: mostra etapa, contagens, progresso e tempo; ao CONCLUIR mostra "PROSPECÇÃO CONCLUÍDA", o resumo e o link para as Aprovações, e PARA de consultar', async () => {
+  const t = await montar({
+    respostas: [
+      job({ currentStep: 'VALIDANDO', progress: 55, candidatesDiscovered: 6, candidatesValidated: 2, candidatesRejected: 1, elapsedMs: 75000 }),
+      job({ status: 'CONCLUIDO', currentStep: 'FINALIZADO', progress: 100, candidatesDiscovered: 6, candidatesValidated: 3, candidatesRejected: 2, elapsedMs: 98000, lote: { loteId: 'lote:x' } }),
+    ],
+  });
+  await selecionar(t);
+  t.browser.click(t.browser.by.id(t.browser.root, 'pros-start-job'));
+  await t.browser.flush(8);
+
+  await t.rodarAgendada();
+  assert.match(t.tela(), /Validando as páginas das empresas/);
+  assert.match(t.tela(), /Empresas descobertas: 6 · Validadas pela página: 2 · Não validadas: 1/);
+  assert.match(t.tela(), /Tempo decorrido: 01:15/);
+  assert.equal(t.browser.by.tag(t.browser.root, 'progress')[0].getAttribute('value'), '55');
+
+  await t.rodarAgendada();
+  assert.match(t.tela(), /PROSPECÇÃO CONCLUÍDA/);
+  assert.match(t.tela(), /3 de 3 empresa\(s\) solicitada\(s\) foram comprovadas e enviadas para a aprovação/);
+  assert.equal(t.browser.by.id(t.browser.root, 'pros-cancel-job'), null, 'sem cancelar depois de terminar');
+  const link = t.browser.by.id(t.browser.root, 'pros-open-approvals');
+  assert.equal(link.getAttribute('href'), '#/aprovacoes');
+  assert.equal(link.textContent, 'Abrir Aprovações');
+  assert.equal(t.proximaAgendada(), undefined, 'terminou: nenhuma nova consulta agendada');
+});
+
+test('[DASH-JOB-3] PARCIAL: "PROSPECÇÃO PARCIAL" diz que a quantidade não foi atingida e que nada foi incluído para completar; sem nenhum válido, não há link para a aprovação', async () => {
+  const parcial = await montar({ respostas: [job({ status: 'PARCIAL', currentStep: 'FINALIZADO', progress: 100, candidatesDiscovered: 6, candidatesValidated: 2, candidatesRejected: 4 })] });
+  await selecionar(parcial);
+  parcial.browser.click(parcial.browser.by.id(parcial.browser.root, 'pros-start-job'));
+  await parcial.browser.flush(8);
+  await parcial.rodarAgendada();
+  assert.match(parcial.tela(), /PROSPECÇÃO PARCIAL/);
+  assert.match(parcial.tela(), /2 de 3 empresa\(s\) solicitada\(s\) foram comprovadas/);
+  assert.match(parcial.tela(), /nenhuma empresa fraca foi incluída para completar/);
+  assert.ok(parcial.browser.by.id(parcial.browser.root, 'pros-open-approvals'));
+
+  const vazia = await montar({ respostas: [job({ status: 'PARCIAL', currentStep: 'FINALIZADO', progress: 100, candidatesDiscovered: 4, candidatesValidated: 0, candidatesRejected: 4 })] });
+  await selecionar(vazia);
+  vazia.browser.click(vazia.browser.by.id(vazia.browser.root, 'pros-start-job'));
+  await vazia.browser.flush(8);
+  await vazia.rodarAgendada();
+  assert.match(vazia.tela(), /Nenhuma empresa pôde ser comprovada pela página; nada foi enviado para a aprovação/);
+  assert.equal(vazia.browser.by.id(vazia.browser.root, 'pros-open-approvals'), null);
+});
+
+test('[DASH-JOB-4] ERRO e CANCELADO: mensagens em português, nunca o código técnico nem JSON; ERRO por interrupção do servidor também', async () => {
+  for (const [extras, texto] of [
+    [{ status: 'ERRO', currentStep: 'FINALIZADO', error: { code: 'DISCOVERY_FAILED', message: 'x', cause: 'TIMEOUT' } }, /A PROSPECÇÃO FALHOU.*Não foi possível descobrir empresas agora/],
+    [{ status: 'ERRO', currentStep: 'FINALIZADO', error: { code: 'JOB_INTERRUPTED', message: 'x' } }, /o servidor foi reiniciado/],
+    [{ status: 'ERRO', currentStep: 'FINALIZADO', error: { code: 'INGESTION_FAILED', message: 'x' } }, /Nada foi promovido ao CRM/],
+    [{ status: 'CANCELADO', currentStep: 'FINALIZADO' }, /PROSPECÇÃO CANCELADA/],
+  ]) {
+    const t = await montar({ respostas: [job(extras)] });
+    await selecionar(t);
+    t.browser.click(t.browser.by.id(t.browser.root, 'pros-start-job'));
+    await t.browser.flush(8);
+    await t.rodarAgendada();
+    assert.match(t.tela(), texto);
+    assert.doesNotMatch(t.tela(), /DISCOVERY_FAILED|JOB_INTERRUPTED|INGESTION_FAILED|TIMEOUT|\{|"code"/);
+  }
+});
+
+test('[DASH-JOB-5] CANCELAR PROSPECÇÃO: chama a API do job (só o id), mostra "Cancelando…" e continua acompanhando até CANCELADO; durante a ingestão o botão NÃO existe', async () => {
+  const t = await montar({ respostas: [job({ status: 'CANCELAMENTO_SOLICITADO' }), job({ status: 'CANCELADO', currentStep: 'FINALIZADO' })] });
+  await selecionar(t);
+  t.browser.click(t.browser.by.id(t.browser.root, 'pros-start-job'));
+  await t.browser.flush(8);
+  t.browser.click(t.browser.by.id(t.browser.root, 'pros-cancel-job'));
+  await t.browser.flush(8);
+  assert.deepEqual(t.chamadas.filter(([nome]) => nome === 'cancel'), [['cancel', 'JOB-20261006-001']]);
+  assert.match(t.tela(), /Cancelando…/);
+  assert.equal(t.browser.by.id(t.browser.root, 'pros-cancel-job').disabled, true, 'não dá para pedir duas vezes');
+  await t.rodarAgendada();
+  await t.rodarAgendada();
+  assert.match(t.tela(), /PROSPECÇÃO CANCELADA/);
+
+  const ingerindo = await montar({ jobs: [job({ currentStep: 'INGERINDO', progress: 95 })] });
+  await selecionar(ingerindo);
+  assert.match(ingerindo.tela(), /Enviando para a aprovação/);
+  assert.equal(ingerindo.browser.by.id(ingerindo.browser.root, 'pros-cancel-job'), null, 'depois que a ingestão começa, não se cancela');
+});
+
+test('[DASH-JOB-6] recuperação após refresh: ao abrir a tela com uma prospecção ativa no servidor, ela é selecionada sozinha e o acompanhamento volta (sem clicar em nada)', async () => {
+  const t = await montar({ jobs: [job({ currentStep: 'VALIDANDO', progress: 40, candidatesDiscovered: 5, candidatesValidated: 1 })], respostas: [job({ status: 'CONCLUIDO', currentStep: 'FINALIZADO', progress: 100, candidatesValidated: 3 })] });
+  await t.browser.flush(8);
+  assert.match(t.tela(), /Em execução/);
+  assert.match(t.tela(), /Validadas pela página: 1/);
+  assert.equal(t.browser.by.id(t.browser.root, 'pros-start-job'), null);
+  await t.rodarAgendada();
+  assert.match(t.tela(), /PROSPECÇÃO CONCLUÍDA/);
+
+  const parado = await montar({ jobs: [] });
+  await parado.browser.flush(8);
+  assert.equal(parado.proximaAgendada(), undefined, 'sem job ativo nada é agendado');
+});
+
+test('[DASH-JOB-7] brief em RASCUNHO não tem o botão; com um job ativo o colar-JSON manual some (um caminho só de cada vez); sem permissão a tela nem mostra o botão', async () => {
+  const rascunho = await montar({ briefs: [{ ...BRIEF, status: 'RASCUNHO' }] });
+  await selecionar(rascunho);
+  assert.equal(rascunho.browser.by.id(rascunho.browser.root, 'pros-start-job'), null);
+
+  const pesquisando = await montar({ briefs: [{ ...BRIEF, status: 'PESQUISANDO' }], jobs: [job()] });
+  await selecionar(pesquisando);
+  assert.equal(pesquisando.browser.by.id(pesquisando.browser.root, 'pros-findings'), null, 'com a prospecção ativa o caminho manual de colar JSON fica escondido');
+  const semJob = await montar({ briefs: [{ ...BRIEF, status: 'PESQUISANDO' }] });
+  await selecionar(semJob);
+  assert.ok(semJob.browser.by.id(semJob.browser.root, 'pros-findings'), 'sem job, o caminho manual continua existindo');
+  assert.equal(semJob.browser.by.id(semJob.browser.root, 'pros-start-job'), null, 'e o brief PESQUISANDO NÃO oferece iniciar uma nova prospecção');
+
+  const sem = await montar({ canPropose: false });
+  assert.match(sem.tela(), /não pode usar o Workbench/);
+  assert.equal(sem.browser.by.id(sem.browser.root, 'pros-start-job'), null);
+});
+
+test('[DASH-JOB-8] destroy() para o acompanhamento (trocar de tela não deixa consulta pendurada) e falhas passageiras de rede não derrubam a tela', async () => {
+  const t = await montar({ respostas: [job()] });
+  await selecionar(t);
+  t.browser.click(t.browser.by.id(t.browser.root, 'pros-start-job'));
+  await t.browser.flush(8);
+  const pendente = t.proximaAgendada();
+  assert.ok(pendente);
+  t.view.destroy();
+  assert.equal(pendente.cancelada, true);
+
+  const instavel = await montar({ respostas: [job()] });
+  await selecionar(instavel);
+  instavel.browser.click(instavel.browser.by.id(instavel.browser.root, 'pros-start-job'));
+  await instavel.browser.flush(8);
+  const original = instavel.api.getProspectingJobStatus;
+  let falhas = 0;
+  instavel.api.getProspectingJobStatus = async (id) => {
+    falhas += 1;
+    if (falhas <= 2) throw Object.assign(new Error('rede'), { status: 503 });
+    return original(id);
+  };
+  await instavel.rodarAgendada();
+  await instavel.rodarAgendada();
+  assert.ok(instavel.proximaAgendada(), 'duas falhas seguidas ainda não desistem');
+  await instavel.rodarAgendada();
+  assert.match(instavel.tela(), /Em execução/);
+});
+
+test('[DASH-JOB-9] nenhum dado externo vira HTML: nomes e erros entram só como texto (a tela do job não usa innerHTML) e nenhum elemento tem estilo inline', async () => {
+  const t = await montar({ respostas: [job({ status: 'ERRO', currentStep: 'FINALIZADO', error: { code: '<img src=x onerror=alert(1)>', message: '<script>alert(1)</script>' } })] });
+  await selecionar(t);
+  t.browser.click(t.browser.by.id(t.browser.root, 'pros-start-job'));
+  await t.browser.flush(8);
+  await t.rodarAgendada();
+  assert.equal(t.browser.by.tag(t.browser.root, 'script').length + t.browser.by.tag(t.browser.root, 'img').length, 0);
+  assert.doesNotMatch(t.tela(), /<img|<script|alert\(1\)/);
+  assert.match(t.tela(), /A prospecção falhou por um erro interno/);
+});

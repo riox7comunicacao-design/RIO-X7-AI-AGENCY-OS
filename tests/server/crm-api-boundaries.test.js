@@ -82,6 +82,7 @@ test('[CRM-API-ARCH-3] a raiz de composição só chama a fábrica de src/servic
       '../services/prospectingBriefFileService',
       '../services/prospectingExclusionRepositoryFactory',
       '../services/prospectingFileService',
+      '../services/prospectingJobFileService',
       './app',
       'node:fs',
       'node:http',

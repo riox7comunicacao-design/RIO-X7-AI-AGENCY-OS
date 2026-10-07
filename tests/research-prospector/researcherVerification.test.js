@@ -80,6 +80,17 @@ test('[RV-7] falha de página: os três fatos viram NAO_VERIFICADO com o motivo 
   assert.doesNotMatch(JSON.stringify(saida), /n[ãa]o existe|inexistente|fechou/i);
 });
 
+test('[RV-7b] o veredito por candidato também sai no RELATÓRIO, só com estados (nenhum trecho), para quem consome o resultado sem abrir o achado', async () => {
+  const completo = await pesquisar({ pagina: pagina('Espaço Bela Vida\nHarmonização facial\nAvenida Koeler, 50 - Petrópolis - RJ') });
+  assert.deepEqual(completo.relatorio.verificacoes, [{ paginaOficial: true, empresa: 'VALIDADO', nicho: 'VALIDADO', localizacao: 'VALIDADO' }]);
+  const parcial = await pesquisar({ pagina: pagina('Espaço Bela Vida em lugar nenhum') });
+  assert.deepEqual(parcial.relatorio.verificacoes, [{ paginaOficial: true, empresa: 'VALIDADO', nicho: 'NAO_VERIFICADO', localizacao: 'NAO_VERIFICADO' }]);
+  const fora = await pesquisar({ pagina: { ok: false, falha: 'FORA_DO_AR', causa: 'DNS' } });
+  assert.deepEqual(fora.relatorio.verificacoes, [{ paginaOficial: false }]);
+  const semTexto = await pesquisar({ pagina: { ok: true, urlFinal: SITE, links: [], temFormularioContato: false } });
+  assert.deepEqual(semTexto.relatorio.verificacoes, [], 'porta sem texto: nenhum veredito (e nenhuma validação possível)');
+});
+
 test('[RV-8] a CAUSA técnica da falha chega ao relatório sem mascarar: DNS, TLS, NETWORK, ROBOTS_BLOQUEIA e ROBOTS_NAO_VERIFICADO são contadas separadas (a falha externa continua a mesma)', async () => {
   const casos = [['FORA_DO_AR', 'DNS'], ['ERRO', 'TLS'], ['FORA_DO_AR', 'NETWORK'], ['ROBOTS', 'ROBOTS_BLOQUEIA'], ['ROBOTS', 'ROBOTS_NAO_VERIFICADO'], ['ROBOTS', 'DNS'], ['ROBOTS', 'TLS']];
   for (const [falha, causa] of casos) {

@@ -132,6 +132,8 @@ function montarAmbiente(
     prospectingBrief = false,
     prospectingBriefFilePath,
     prospectingBriefService: prospectingBriefInjetado,
+    prospectingJobService: prospectingJobInjetado,
+    prospectingJob: prospectingJobFactory,
     prospectingExclusion = false,
     prospectingExclusionService: prospectingExclusionInjetado,
     funnels = false,
@@ -202,6 +204,9 @@ function montarAmbiente(
           checkPermanentExclusion: prospectingExclusionService ? (finding) => prospectingExclusionService.isExcluded(finding) : undefined,
         })
       : undefined);
+  // Prospecting Job Service (Fase 2): `prospectingJobService` injeta um pronto; `prospectingJob` é uma FÁBRICA que recebe as peças reais desta
+  // composição (o Brief Service, o Prospecting Service, o CRM e as exclusões) — o Service de job precisa do Brief Service, que só existe aqui.
+  const prospectingJobService = prospectingJobInjetado || (prospectingJobFactory ? prospectingJobFactory({ prospectingBriefService, prospectingService, crmService, prospectingExclusionService, dir: path.dirname(filePath) }) : undefined);
   const funnelService =
     funnelServiceInjetado ||
     (funnels
@@ -224,6 +229,7 @@ function montarAmbiente(
     crmIntegrationService,
     prospectingService,
     prospectingBriefService,
+    prospectingJobService,
     prospectingExclusionService,
     funnelService,
     publicConfig,
@@ -244,6 +250,7 @@ function montarAmbiente(
     crmIntegrationService,
     prospectingService,
     prospectingBriefService,
+    prospectingJobService,
     prospectingExclusionService,
     batchPath,
     crmFilePath: arquivoCrm,

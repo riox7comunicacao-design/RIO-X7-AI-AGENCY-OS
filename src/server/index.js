@@ -71,6 +71,9 @@ const { createConfiguredProspectingExclusionService } = require('../services/pro
 // Prospecting Brief Service (Etapa "Prospecção 1" — Workbench): a camada ANTES da submissão — nunca reconstrói o
 // Prospecting Service, só o recebe pronto (ver o cabeçalho de prospectingBriefFileService.js).
 const { createFileBackedProspectingBriefService } = require('../services/prospectingBriefFileService');
+// Prospecting Job Service (Fase 2 — "INICIAR PROSPECÇÃO"): a execução automática por cima do Brief Service (descoberta + validação + UMA ingestão
+// pelo caminho oficial). Arquivo próprio (data/prospecting-jobs.json, fora do Git); nenhuma tabela, nenhuma API paga.
+const { createFileBackedProspectingJobService } = require('../services/prospectingJobFileService');
 const { createApp } = require('./app');
 
 const ROOT = path.join(__dirname, '..', '..');
@@ -226,6 +229,19 @@ function createServer(env = process.env, options = {}) {
     checkPermanentExclusion: prospectingExclusionService ? (finding) => prospectingExclusionService.isExcluded(finding) : undefined,
   });
 
+  // Prospecting Job Service (Fase 2): o MESMO `prospectingBriefService` acima (o caminho oficial de ingestão), as MESMAS exclusões permanentes
+  // e o ambiente só para o motor de descoberta, que repassa ao processo filho apenas uma lista mínima de variáveis. Um job que estava rodando
+  // quando o servidor caiu é marcado como INTERROMPIDO na subida (nunca finge ter concluído). Arquivo: RIO_X7_PROSPECTING_JOBS_PATH
+  // (padrão data/prospecting-jobs.json, fora do Git).
+  const prospectingJobService = createFileBackedProspectingJobService({
+    authorizeProposer: authorizeProposerForLeadApproval,
+    briefService: prospectingBriefService,
+    filePath: resolveFile(env.RIO_X7_PROSPECTING_JOBS_PATH, undefined),
+    checkPermanentExclusion: prospectingExclusionService ? (finding) => prospectingExclusionService.isExcluded(finding) : undefined,
+    env,
+  });
+  prospectingJobService.recoverInterruptedJobs();
+
   // Funnel Service (Etapa "Funis 1": funil/etapa, arquivo próprio, RIO_X7_FUNNELS_PATH; Etapa "Funis 2": card,
   // sobre o MESMO crmRepository/crmService que REPOSITORY_MODE decidiu para o CRM acima — nunca uma segunda
   // instância, mesmo princípio já aplicado à promoção e à prospecção).
@@ -245,6 +261,7 @@ function createServer(env = process.env, options = {}) {
     crmIntegrationService,
     prospectingService,
     prospectingBriefService,
+    prospectingJobService,
     prospectingExclusionService,
     funnelService,
     publicConfig: { supabaseUrl, supabaseAnonKey },

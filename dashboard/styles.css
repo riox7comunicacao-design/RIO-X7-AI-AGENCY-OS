@@ -410,3 +410,8 @@ table.crm-table td.empty { color: var(--muted); }
 @media (max-width: 760px) {
   .funnel-column { flex-basis: 240px; }
 }
+
+/* Prospecção automática (Fase 2): o bloco do job — título do resultado e espaçamento */
+.job-box { margin-top: 10px; }
+.job-box .job-title { margin: 0 0 6px; }
+.job-box .btn { margin-right: 8px; margin-top: 6px; }

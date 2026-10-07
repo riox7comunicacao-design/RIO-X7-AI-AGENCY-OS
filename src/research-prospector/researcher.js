@@ -149,7 +149,7 @@ function createResearcher(ports, options = {}) {
     const hoje = started.toISOString().slice(0, 10);
     const alvo = Math.min(LIMITS.MAX_ACHADOS, briefing.quantidadeDesejada + Math.ceil(briefing.quantidadeDesejada / 2));
     const consulta = [briefing.nicho, briefing.tipo, briefing.regiao].filter(Boolean).join(' ');
-    const report = { consulta, alvo, resultadosRecebidos: 0, resultadosInvalidos: 0, candidatos: 0, achadosGerados: 0, achadosDescartados: [], paginasConsultadas: 0, consultasDeAnuncios: 0, falhas: {}, causas: {}, omissoes: [], interrompidaPorTempo: false };
+    const report = { consulta, alvo, resultadosRecebidos: 0, resultadosInvalidos: 0, candidatos: 0, achadosGerados: 0, achadosDescartados: [], paginasConsultadas: 0, consultasDeAnuncios: 0, falhas: {}, causas: {}, verificacoes: [], omissoes: [], interrompidaPorTempo: false };
     const omit = (campo, codigo, quantidade) => report.omissoes.push(quantidade === undefined ? { campo, codigo } : { campo, codigo, quantidade });
     // `causa` (opcional) é a causa técnica específica de uma falha de página; só o formato [A-Z0-9_] curto é aceito (dado de porta, não confiável).
     const fail = (falha, causa) => {
@@ -284,6 +284,7 @@ function createResearcher(ports, options = {}) {
           } else {
             addEvidence('site', sites[0].url, 'Busca pública', 'SECUNDARIA', sites[0].fonteUrl);
             for (const campo of ['site.ctaWhatsapp', 'site.ctaAgendamento', 'site.formularioContato', ...VERIFICATION_FIELDS.map(([campo]) => campo)]) addUnverified(campo, visited.falha, true);
+            report.verificacoes.push({ paginaOficial: false });
           }
         }
       }
@@ -332,6 +333,9 @@ function createResearcher(ports, options = {}) {
         const hint = (key) => (results.find((r) => r[key]) || {})[key];
         const hasText = page.texto.trim() !== '';
         const result = hasText ? verifyOnPage(page.texto, { nome: empresa, nicho: brief.nicho, cidade: hint('cidade') || (region && region.cidade), uf: hint('estado') || (region && region.uf) }) : null;
+        // o veredito por candidato também sai no RELATÓRIO (só estados, nenhum trecho): quem consome o resultado (o job de prospecção) não precisa
+        // abrir a estrutura do achado para saber o que foi comprovado
+        report.verificacoes.push({ paginaOficial: true, ...Object.fromEntries(VERIFICATION_FIELDS.map(([, chave]) => [chave, result && result[chave] && result[chave].status === 'VALIDADO' ? 'VALIDADO' : 'NAO_VERIFICADO'])) });
         for (const [campo, chave] of VERIFICATION_FIELDS) {
           const item = result && result[chave];
           if (item && item.status === 'VALIDADO') addFact(campo, item.evidencia, siteUrl, 'OFICIAL', 'Site oficial');
