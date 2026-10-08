@@ -106,16 +106,16 @@ test('[REPLENISH-5] a meta é atingida antes do próximo ciclo: nenhuma nova des
   assert.deepEqual(codigos(fim), ['META_ATINGIDA']);
 });
 
-test('[REPLENISH-6] o job chega a 40 candidatos sem atingir a meta: PARCIAL, e nenhum candidato 41 é processado (o último ciclo só pede o que cabe)', async (t) => {
+test('[REPLENISH-6] o job chega a 50 candidatos sem atingir a meta: PARCIAL, e nenhum candidato 51 é processado (o último ciclo só pede o que cabe)', async (t) => {
   let n = 0;
   const motor = motorFake({ porPedido: (indice, pedido) => (indice === 1 ? { candidatos: [candidato('Clínica Alfa', 'alfa'), candidato('Clínica Beta', 'beta'), ...unicos('Q', 10)] } : { candidatos: unicos('R', 80).slice(n, (n += pedido.limit)) }) });
   const env = ambiente(t, { motor, paginas: paginasBoas() });
   const { fim } = await rodar(env, 10);
   assert.equal(fim.status, JOB_STATUS.PARCIAL);
-  assert.deepEqual(motor.pedidos.map((p) => p.limit), [12, 12, 12, 4], 'faltam 8 -> clamp(24, 6, 12) = 12; o último cabe 4');
-  assert.equal(fim.candidatesDiscovered, 40);
+  assert.deepEqual(motor.pedidos.map((p) => p.limit), [12, 12, 12, 12, 2], 'faltam 8 -> clamp(24, 6, 12) = 12; o último cabe 2');
+  assert.equal(fim.candidatesDiscovered, 50);
   assert.equal(fim.telemetria.limitReached, STOP_REASON.CANDIDATOS);
-  assert.equal(env.paginasChamadas.filter((url) => /^https:\/\/[a-z0-9]+\.com\.br\/$/.test(url)).length, 40, 'exatamente 40 sites lidos: o 41º nunca existiu');
+  assert.equal(env.paginasChamadas.filter((url) => /^https:\/\/[a-z0-9]+\.com\.br\/$/.test(url)).length, 50, 'exatamente 50 sites lidos: o 51º nunca existiu');
   assert.equal(fim.lote.naFila, 2);
 });
 
@@ -162,10 +162,9 @@ test('[REPLENISH-9] cancelamento DURANTE a reposição: não inicia nova rodada;
   assert.equal((await env.briefService.getBrief(admin(), brief.id)).status, 'AGUARDANDO_REVISAO');
 });
 
-test('[REPLENISH-10] DNC / DUPLICADO / DADOS_INSUFICIENTES numa rodada de reposição não contam; os candidatos novos que sobraram continuam sendo processados', async (t) => {
-  const eps = candidato('Clínica Eps', 'eps', { siteOficial: null, fontesDescoberta: [{ url: DIRETORIO, tipo: 'DIRETORIO' }] });
+test('[REPLENISH-10] DNC / DUPLICADO numa rodada de reposição não contam;  os candidatos novos que sobraram continuam sendo processados', async (t) => {
   const zeta = candidato('Clínica Zeta', 'zeta');
-  const motor = rodadasDe(tresBons(), [delta(), eps, zeta], []);
+  const motor = rodadasDe(tresBons(), [delta(), zeta], []);
   const paginas = { ...paginasBoas(), [siteDe('zeta')]: paginaBoa('Clínica Zeta', 'zeta'), [DIRETORIO]: paginaTerceiro(DIRETORIO, { texto: TEXTO_EPS }) };
   const env = ambiente(t, { motor, paginas });
   await marcarDnc(env, ['alfa']);
@@ -175,9 +174,8 @@ test('[REPLENISH-10] DNC / DUPLICADO / DADOS_INSUFICIENTES numa rodada de reposi
   assert.equal(fim.status, JOB_STATUS.CONCLUIDO);
   assert.equal(fim.lote.naFila, 3, 'só Beta, Gama e Zeta chegaram à fila');
   assert.deepEqual([porNome['Clínica Delta'].entrega.naFila, porNome['Clínica Delta'].entrega.estadoOperacional], [false, 'DUPLICADO']);
-  assert.deepEqual([porNome['Clínica Eps'].entrega.naFila, porNome['Clínica Eps'].entrega.estadoOperacional], [false, 'DADOS_INSUFICIENTES']);
   assert.equal(porNome['Clínica Zeta'].entrega.naFila, true);
-  assert.deepEqual(env.ingestoes, [3, 1, 1, 1], 'cada rodada comprova só o que ainda falta; os que sobraram ficam no backlog e são processados em seguida');
+  assert.deepEqual(env.ingestoes, [3, 1, 1], 'cada rodada comprova só o que ainda falta; os que sobraram ficam no backlog e são processados em seguida');
   assert.equal(motor.pedidos.length, 2, 'o backlog foi esgotado ANTES de uma nova descoberta, e a meta fechou sem uma 3ª');
   assert.deepEqual(porNome['Clínica Alfa'].entrega, { naFila: false, estadoOperacional: 'DNC', motivo: 'DNC' });
 });

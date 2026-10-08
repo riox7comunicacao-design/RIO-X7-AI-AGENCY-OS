@@ -23,10 +23,11 @@ async function rodar(t, candidatos, paginas, extras = {}) {
 test('[LEAD-1] empresa + nicho + localização COMPROVADOS e site oficial NÃO ENCONTRADO = lead VALIDADO (a oportunidade pode ser a criação de um site); a evidência vem de um diretório e nunca vira "site oficial"', async (t) => {
   const semSite = candidato('Clínica Alfa', 'alfa', { siteOficial: null, fontesDescoberta: [{ url: DIRETORIO, tipo: 'DIRETORIO' }] });
   const { env, fim, c } = await rodar(t, [semSite], { [DIRETORIO]: paginaTerceiro(DIRETORIO, { texto: TEXTO_BOM }) });
-  // VALIDADO pelo motor, mas sem site nem canal o pipeline oficial o retém (DADOS_INSUFICIENTES): não conta para a meta -> PARCIAL (e o lead segue nos resultados)
-  assert.equal(fim.status, JOB_STATUS.PARCIAL);
-  assert.deepEqual([fim.lote.validadosPeloMotor, fim.lote.naFila, fim.lote.foraDaFila], [1, 0, 1]);
-  assert.deepEqual(c.entrega, { naFila: false, estadoOperacional: 'DADOS_INSUFICIENTES', motivo: 'DADOS_INSUFICIENTES' });
+  // REGRA DE PRODUTO (definitiva): empresa + nicho + localização comprovados = VALIDADO e ENTREGUE à Approval Queue, mesmo sem site, rede social ou telefone
+  assert.equal(fim.status, JOB_STATUS.CONCLUIDO);
+  assert.deepEqual([fim.lote.validadosPeloMotor, fim.lote.naFila, fim.lote.foraDaFila], [1, 1, 0]);
+  assert.equal(c.entrega.naFila, true);
+  assert.notEqual(c.entrega.estadoOperacional, 'DADOS_INSUFICIENTES');
   assert.deepEqual([c.resultado, c.empresa, c.nicho, c.localizacao], [CANDIDATE_RESULT.VALIDADO, 'VALIDADO', 'VALIDADO', 'VALIDADO']);
   assert.deepEqual(c.siteOficial, { status: 'NAO_ENCONTRADO', url: null, motivo: 'NAO_INFORMADO' });
   assert.deepEqual(c.fonteDaValidacao, { url: DIRETORIO, tipo: 'DIRETORIO' });
@@ -39,6 +40,7 @@ test('[LEAD-1] empresa + nicho + localização COMPROVADOS e site oficial NÃO E
   assert.equal(achado.empresa, 'Clínica Alfa');
   assert.equal(achado.campos, undefined, 'nenhuma evidência de canal foi inventada');
   assert.deepEqual(achado.fontes, [DIRETORIO]);
+  assert.equal(achado.comprovadoPorCodigo, true, 'a marca vem do job, depois de comprovar empresa + nicho + localização');
 });
 
 test('[LEAD-2] com site oficial CONFIRMADO (domínio + nome + conteúdo): VALIDADO, siteOficial ENCONTRADO na RAIZ do domínio, e a fonte do site vira OFICIAL por código', async (t) => {
@@ -73,8 +75,8 @@ test('[LEAD-4] uma MATÉRIA descobre a empresa (Instituto Granja Brasil): fonte 
     [materia]: paginaTerceiro(materia, { texto: 'O Spa Granja Brasil inaugura instituto de saúde e estética avançada em Petrópolis, na Rua Teresa, 100.' }),
   };
   const { env, fim, c } = await rodar(t, [hipotese], paginas);
-  assert.equal(fim.status, JOB_STATUS.PARCIAL, 'validada pela matéria, mas sem site nem canal: o pipeline a retém e ela não conta para a meta');
-  assert.equal(c.entrega.naFila, false);
+  assert.equal(fim.status, JOB_STATUS.CONCLUIDO, 'validada pela matéria, sem site nem canal: entra na Approval Queue');
+  assert.equal(c.entrega.naFila, true);
   assert.deepEqual([c.resultado, c.empresa, c.nicho, c.localizacao], [CANDIDATE_RESULT.VALIDADO, 'VALIDADO', 'VALIDADO', 'VALIDADO']);
   assert.equal(c.evidencias.empresa.regra, 'nome_nucleo');
   assert.equal(c.evidencias.empresa.trecho, 'Granja Brasil');

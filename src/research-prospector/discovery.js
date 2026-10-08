@@ -14,6 +14,7 @@ const { checkDuplicate } = require('./duplicateCheck');
 const { checkDoNotContact } = require('./doNotContact');
 const { identityViews, toProspectorRecords } = require('./crmAdapter');
 const { INFO_STATUS, DUPLICATE_STATUS } = require('./constants');
+const { LEAD_TYPE, classifyLeadType } = require('./leadTypeClassification');
 
 const OPERATIONAL_STATE = Object.freeze({
   AGUARDANDO_REVISAO: 'AGUARDANDO_REVISAO',
@@ -234,7 +235,9 @@ function computeIdentityStatus(identifiedFinding) {
   }
 
   const validadas = IDENTITY_ANCHOR_FIELDS.filter((campo) => c[campo].status === INFO_STATUS.VALIDADO);
-  if (validadas.length > 0) {
+  // empresa + nicho + localização já comprovados por código (job automático): a identidade está confirmada mesmo sem site/rede/telefone — a ausência de site NÃO reprova.
+  // Ambiguidade e conflito (acima) continuam barrando.
+  if (validadas.length > 0 || identifiedFinding.comprovadoPorCodigo === true) {
     return { status: IDENTITY_STATUS.VALIDADA, motivo: IDENTITY_REASON.CONFIRMADA };
   }
 
@@ -296,9 +299,16 @@ function buildOutputRecord(identifiedFinding, duplicidade, dnc, dataDaPesquisa, 
     estadoOperacional = OPERATIONAL_STATE.AGUARDANDO_REVISAO;
   }
 
+  // tipoLead (RULES: distinguir EMPRESA/PROFISSIONAL/UNIDADE_FRANQUIA): só o job automático comprova por página pública e embute no achado
+  // (comprovadoPorCodigo:true leva a mesma classificação); achados colados à mão nunca trazem este campo — aqui ele é classificado SÓ pelo
+  // nome (nenhuma página foi lida neste pipeline). Nunca derruba a validação: é puramente informativo (statusIdentidade/estadoOperacional
+  // continuam decididos exatamente como antes).
+  const tipoLead = identifiedFinding.tipoLead || classifyLeadType({ nome: identifiedFinding.empresa }).tipo;
+
   const record = {
     prospectId,
     empresa: identifiedFinding.empresa,
+    tipoLead,
     tipo: identifiedFinding.tipo || null,
     cidade: identifiedFinding.cidade || null,
     estadoUf: identifiedFinding.estado || null,
@@ -358,6 +368,7 @@ function runDiscoveryPipeline({ briefing, rawFindings, crmRecords = [], crmDispo
 module.exports = {
   OPERATIONAL_STATE,
   SOURCE_TYPE,
+  LEAD_TYPE,
   DNC_STATUS,
   IDENTITY_STATUS,
   IDENTITY_REASON,

@@ -84,6 +84,31 @@ test('[A] novo prospect (sem duplicidade/DNC) entra como AGUARDANDO_REVISAO', ()
   assert.equal(item.estado, QUEUE_STATE.AGUARDANDO_REVISAO);
 });
 
+// tipoLead (Implementação 3.0 — RULES seção 5): a Approval Queue mostra o tipo do lead decidido pelo discovery; nunca
+// bloqueia ou altera o fluxo de aprovação por causa dele.
+test('[TIPOLEAD] o snapshot do prospect carrega tipoLead (vindo do discovery), e PROFISSIONAL aprova normalmente', () => {
+  const queue = createEmptyQueue();
+  const empresa = addProspect(queue, discoveryFor([novoAchado({ empresa: 'Clínica Exemplo' })]));
+  assert.equal(empresa.discoverySnapshot.tipoLead, 'EMPRESA');
+
+  const profissional = addProspect(
+    queue,
+    discoveryFor([
+      novoAchado({
+        empresa: 'Dra. Maria Silva',
+        cidade: 'Teresópolis',
+        campos: {
+          site: [{ valor: 'dramariasilva.com.br', fonte: 'Site oficial', tipoFonte: SOURCE_TYPE.OFICIAL }],
+          instagram: [{ valor: 'dramariasilva', fonte: 'Instagram', tipoFonte: SOURCE_TYPE.OFICIAL }],
+        },
+      }),
+    ])
+  );
+  assert.equal(profissional.discoverySnapshot.tipoLead, 'PROFISSIONAL');
+  const aprovado = approveProspect(queue, profissional.prospectId, reviewerContext(), 'ok');
+  assert.equal(aprovado.estado, QUEUE_STATE.APROVADO_PARA_CRM, 'PROFISSIONAL não é bloqueado nem rejeitado automaticamente');
+});
+
 // B, C, D — aprovação exige um contexto de autorização válido, registra reviewedBy + timestamp
 test('[B][C][D] aprovação exige contexto de autorização válido, e registra reviewedBy + timestamp', () => {
   const queue = createEmptyQueue();

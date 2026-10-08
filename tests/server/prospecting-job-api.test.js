@@ -188,3 +188,32 @@ test('[JOB-API-6] o corpo da resposta do job nunca carrega achados, texto de pá
   for (const candidato of fim.candidatos) for (const evidencia of Object.values(candidato.evidencias || {})) assert.ok(evidencia.trecho.length <= 80);
   assert.deepEqual(Object.keys(fim.criadoPor).sort(), ['name', 'role', 'userId']);
 });
+
+test('[JOB-API-REDO] maxCandidates na criação (1 a 100), contadores de decisão no status e POST /redo: 202, job novo ligado ao anterior; ativo/inexistente recusados', async (t) => {
+  const env = ambiente(t);
+  const brief = await briefPronto(env);
+  const invalido = await chamar(env, BRENO, { method: 'POST', url: '/api/prospecting/jobs', body: { briefId: brief.id, maxCandidates: 101 } });
+  assert.equal(invalido.status, 400);
+  const inicio = await chamar(env, BRENO, { method: 'POST', url: '/api/prospecting/jobs', body: { briefId: brief.id, maxCandidates: 80 } });
+  assert.equal(inicio.status, 202);
+  assert.equal(inicio.json().item.limits.maxCandidates, 80);
+  const fim = await esperarJob(env, inicio.json().item.id);
+  assert.equal(fim.status, 'CONCLUIDO');
+  assert.deepEqual([fim.resumo.solicitados, fim.resumo.naApprovalQueue, fim.resumo.aprovados, fim.resumo.rejeitados, fim.resumo.promovidos], [3, 3, 0, 0, 0]);
+
+  // aprovar e rejeitar pela API muda os contadores do MESMO job, sem dupla contagem
+  const [um, dois] = fim.lote.prospectIds;
+  await chamar(env, BRENO, { method: 'POST', url: `/api/approvals/${encodeURIComponent(um)}/approve`, body: { reason: 'ok' } });
+  await chamar(env, BRENO, { method: 'POST', url: `/api/approvals/${encodeURIComponent(dois)}/reject`, body: { reason: 'não' } });
+  const depois = (await chamar(env, BRENO, { url: `/api/prospecting/jobs/${encodeURIComponent(fim.id)}/status` })).json().item;
+  assert.deepEqual([depois.resumo.aprovados, depois.resumo.rejeitados, depois.resumo.promovidos], [1, 1, 0]);
+
+  const refeito = await chamar(env, BRENO, { method: 'POST', url: `/api/prospecting/jobs/${encodeURIComponent(fim.id)}/redo`, body: {} });
+  assert.equal(refeito.status, 202);
+  assert.equal(refeito.json().item.refeitoDe, fim.id);
+  assert.notEqual(refeito.json().item.briefId, brief.id);
+  assert.equal((await chamar(env, BRENO, { method: 'POST', url: `/api/prospecting/jobs/${encodeURIComponent(fim.id)}/redo`, body: { extra: 1 } })).status, 400);
+  await esperarJob(env, refeito.json().item.id);
+  assert.equal((await chamar(env, BRENO, { method: 'POST', url: '/api/prospecting/jobs/JOB-20261007-099/redo', body: {} })).status, 404);
+  assert.equal((await chamar(env, BRENO, { method: 'GET', url: `/api/prospecting/jobs/${encodeURIComponent(fim.id)}/redo` })).status, 405);
+});

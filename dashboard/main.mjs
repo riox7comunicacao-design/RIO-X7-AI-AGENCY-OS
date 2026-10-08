@@ -26,6 +26,8 @@ import { createCrmView } from './views/crm.mjs';
 import { createFunnelsView } from './views/funnels.mjs';
 import { createProspectingView } from './views/prospecting.mjs';
 import { createProspectingExclusionsView } from './views/prospectingExclusions.mjs';
+import { createProspectingHistoryView } from './views/prospectingHistory.mjs';
+import { createRejectedLeadsView } from './views/rejectedLeads.mjs';
 import { createOverviewView } from './views/overview.mjs';
 
 const NO_ACCESS = 'Esta conta não possui acesso a esta área.';
@@ -38,7 +40,9 @@ const PAGE_TITLES = Object.freeze({
   approvals: 'Aprovações',
   agents: 'Agentes IA',
   funnels: 'Funis',
-  prospecting: 'Prospecção',
+  prospecting: 'Nova Prospecção',
+  'prospecting-history': 'Histórico de prospecções',
+  'rejected-leads': 'Leads Reprovados',
   'prospecting-exclusions': 'Exclusões Permanentes',
   'not-found': 'Página não encontrada',
 });
@@ -55,14 +59,22 @@ const NAV_GROUPS = Object.freeze([
     items: [
       { section: 'overview', label: 'Visão Geral', route: { name: 'overview' } },
       { section: 'crm', label: 'CRM', route: { name: 'crm-list' }, needs: 'canReadCrm' },
-      { section: 'approvals', label: 'Aprovações', route: { name: 'approvals' } },
       { label: 'Agenda' },
+    ],
+  },
+  {
+    // O submenu PROSPECÇÃO (Implementação 3.0): criar, acompanhar o histórico, revisar na Approval Queue e consultar/reaprovar os reprovados.
+    title: 'Prospecção',
+    items: [
+      { section: 'prospecting', label: 'Nova Prospecção', route: { name: 'prospecting' }, needs: 'canProposeLead' },
+      { section: 'prospecting-history', label: 'Histórico', route: { name: 'prospecting-history' }, needs: 'canProposeLead' },
+      { section: 'approvals', label: 'Approval Queue', route: { name: 'approvals' } },
+      { section: 'rejected-leads', label: 'Leads Reprovados', route: { name: 'rejected-leads' }, needs: 'canReview' },
     ],
   },
   {
     title: 'Comercial',
     items: [
-      { section: 'prospecting', label: 'Prospecção', route: { name: 'prospecting' }, needs: 'canProposeLead' },
       { label: 'Leads' },
       { section: 'funnels', label: 'Funis', route: { name: 'funnels' }, needs: 'canReadCrm' },
       { label: 'Conversas' },
@@ -355,6 +367,24 @@ export function startDashboard({ document, root, fetchImpl, sdk, navigation }) {
           const target = container();
           main.replaceChildren(target);
           transient = createProspectingView({ document, root: target, api, permissions });
+          transient.load();
+        } else if (section === 'prospecting-history') {
+          if (!permissions.canProposeLead) {
+            main.replaceChildren(h(document, 'p', { className: 'message error', role: 'alert', text: NO_ACCESS }));
+            return;
+          }
+          const target = container();
+          main.replaceChildren(target);
+          transient = createProspectingHistoryView({ document, root: target, api, navigate });
+          transient.load();
+        } else if (section === 'rejected-leads') {
+          if (!permissions.canReview) {
+            main.replaceChildren(h(document, 'p', { className: 'message error', role: 'alert', text: NO_ACCESS }));
+            return;
+          }
+          const target = container();
+          main.replaceChildren(target);
+          transient = createRejectedLeadsView({ document, root: target, api, permissions });
           transient.load();
         } else if (section === 'prospecting-exclusions') {
           if (!permissions.canManageProspectingExclusions) {

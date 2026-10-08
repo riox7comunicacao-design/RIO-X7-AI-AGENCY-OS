@@ -326,3 +326,16 @@ test('[RAW-18] um lote: cada achado é validado por si só (um ruim não derruba
   lacunas[1] = achado();
   assert.equal(validateRawFindings(lacunas, { now: NOW }).items[0].ok, false, 'posição vazia de uma lista esparsa não vira achado válido');
 });
+
+test('[RAW-19] tipoLead (Implementação 3.0 — classificação EMPRESA/PROFISSIONAL/UNIDADE_FRANQUIA/NAO_VERIFICADO): opcional, só os quatro valores do vocabulário fechado', () => {
+  for (const tipoLead of ['EMPRESA', 'PROFISSIONAL', 'UNIDADE_FRANQUIA', 'NAO_VERIFICADO']) {
+    assert.equal(validar(achado({ tipoLead })).value.tipoLead, tipoLead);
+  }
+  assert.equal(validar(achado({ tipoLead: null })).value.tipoLead, undefined, 'null é tratado como ausente, como os demais campos opcionais');
+  assert.equal(validar({ empresa: 'X' }).value.tipoLead, undefined, 'sem o campo, nada é inventado');
+  for (const invalido of ['empresa', 'profissional', 'EMPRESA ', '', 1, true, {}, []]) {
+    const resultado = validar(achado({ tipoLead: invalido }));
+    assert.equal(resultado.ok, false, JSON.stringify(invalido));
+    assert.deepEqual(codigos(resultado), ['tipoLead:VALOR_INVALIDO']);
+  }
+});

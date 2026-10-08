@@ -20,6 +20,7 @@
 // O erro nunca repete o valor recusado (nem o trunca): só o caminho (formado por chaves conhecidas e índices) e um código.
 
 const { SOURCE_TYPE, EVIDENCE_FIELDS } = require('./discovery');
+const { LEAD_TYPE } = require('./leadTypeClassification');
 
 const LIMITS = Object.freeze({
   MAX_DEPTH: 5, // achado -> campos -> lista -> evidência -> valor = 4; uma margem
@@ -82,10 +83,11 @@ const MESSAGES = Object.freeze({
   LOTE_EXCESSIVO: 'achados demais no lote',
 });
 
-const FINDING_KEYS = Object.freeze(['empresa', 'tipo', 'cidade', 'estado', 'nicho', 'campos', 'fontes', 'identidadeAmbigua', 'observacoesBrutas', 'hipoteseDeOportunidade', 'dataDaPesquisa']);
+const FINDING_KEYS = Object.freeze(['empresa', 'tipo', 'cidade', 'estado', 'nicho', 'campos', 'fontes', 'identidadeAmbigua', 'comprovadoPorCodigo', 'tipoLead', 'observacoesBrutas', 'hipoteseDeOportunidade', 'dataDaPesquisa']);
 const EVIDENCE_KEYS = Object.freeze(['valor', 'fonte', 'tipoFonte', 'url', 'dataConsulta', 'observacao']);
 const SOURCE_KEYS = Object.freeze(['fonte', 'url', 'dataConsulta', 'campo', 'tipoFonte', 'observacao']);
 const SOURCE_TYPES = Object.freeze(Object.values(SOURCE_TYPE));
+const LEAD_TYPES = Object.freeze(Object.values(LEAD_TYPE));
 
 // O formato do valor por campo. Os "de link" aceitam um domínio ou @usuario sem esquema, ou uma URL https completa.
 const LINK_FIELDS = Object.freeze(['site', 'instagram', 'facebook', 'linkedin', 'youtube', 'googlePerfil']);
@@ -304,6 +306,20 @@ function validateRawFinding(raw, { now = new Date() } = {}) {
     if (typeof optional('identidadeAmbigua') !== 'boolean') fail('identidadeAmbigua', ERROR.TIPO_INVALIDO);
     else value.identidadeAmbigua = optional('identidadeAmbigua');
   }
+  // `comprovadoPorCodigo`: SÓ o job automático o define (empresa + nicho + localização comprovados por código numa página pública). Um lead assim é VALIDADO mesmo sem site,
+  // rede social ou telefone. As rotas HTTP de colagem manual RECUSAM este campo (app.js): ninguém marca à mão um lead como "comprovado por código".
+  if (optional('comprovadoPorCodigo') !== undefined) {
+    if (typeof optional('comprovadoPorCodigo') !== 'boolean') fail('comprovadoPorCodigo', ERROR.TIPO_INVALIDO);
+    else value.comprovadoPorCodigo = optional('comprovadoPorCodigo');
+  }
+  // `tipoLead`: a classificação de tipo (EMPRESA | PROFISSIONAL | UNIDADE_FRANQUIA | NAO_VERIFICADO), decidida por código a partir de evidências
+  // (nome, título/H1 e texto da página oficial) — SÓ o job automático a define (leadTypeClassification.classifyLeadType); as rotas HTTP de colagem
+  // manual RECUSAM este campo (app.js), pela mesma razão de `comprovadoPorCodigo`. Sem ela, discovery.js classifica pelo nome como alternativa.
+  if (optional('tipoLead') !== undefined) {
+    const tipoLead = optional('tipoLead');
+    if (typeof tipoLead !== 'string' || !LEAD_TYPES.includes(tipoLead)) fail('tipoLead', ERROR.VALOR_INVALIDO);
+    else value.tipoLead = tipoLead;
+  }
   if (optional('dataDaPesquisa') !== undefined) {
     const date = checkDate(optional('dataDaPesquisa'), now);
     if (date.error) fail('dataDaPesquisa', date.error);
@@ -506,4 +522,4 @@ function validateRawFindings(list, { now = new Date() } = {}) {
 // uma segunda implementação de "texto seguro".
 // Os primitivos de validação também são usados pelo esquema do DOSSIÊ (signalSchema.js / dossier.js): a mesma definição de "texto
 // seguro", "URL pública https", "data ISO real" e "estrutura de dado puro" — nenhuma segunda implementação.
-module.exports = { LIMITS, ERROR, MESSAGES, SOURCE_TYPES, isPlainObject, ownEntries, ownItems, measure, checkText, checkUrl, checkDate, validateRawFinding, validateRawFindings };
+module.exports = { LIMITS, ERROR, MESSAGES, SOURCE_TYPES, LEAD_TYPES, isPlainObject, ownEntries, ownItems, measure, checkText, checkUrl, checkDate, validateRawFinding, validateRawFindings };

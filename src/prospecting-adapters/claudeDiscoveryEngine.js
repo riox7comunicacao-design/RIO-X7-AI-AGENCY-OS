@@ -28,32 +28,13 @@
 // A saída é validada: só `https` público, no máximo `limit` candidatos, tamanhos limitados; o que não passa é descartado e contado, nunca
 // "consertado". O custo agregado e a contagem de buscas que o Claude Code informa são devolvidos; o prompt e o texto bruto NUNCA são guardados.
 
-const { spawn: nodeSpawn } = require('node:child_process');
-const fs = require('node:fs');
-const os = require('node:os');
-const path = require('node:path');
+const { createClaudeRunner, childEnvironment, telemetryOf, TOOLS, ENV_ALLOWLIST, DEFAULT_TIMEOUT_MS, DEFAULT_MAX_OUTPUT_BYTES } = require('./claudeRunner');
 
 const digital = require('../research-prospector/digitalPresence');
 
-const TOOLS = 'WebSearch,WebFetch';
-const DEFAULT_TIMEOUT_MS = 5 * 60 * 1000;
-const DEFAULT_MAX_OUTPUT_BYTES = 256 * 1024;
 const MAX_NAME = 200;
 const MAX_URL = 2048;
 const MAX_CITY_UF = 120;
-
-// As ÚNICAS variáveis do ambiente que o processo filho recebe (o que o sistema operacional e o login do Claude Code precisam).
-const ENV_ALLOWLIST = Object.freeze([
-  'PATH', 'Path', 'PATHEXT', 'SystemRoot', 'SYSTEMROOT', 'windir', 'ComSpec', 'COMSPEC', 'HOME', 'USERPROFILE', 'HOMEDRIVE', 'HOMEPATH', 'APPDATA', 'LOCALAPPDATA',
-  'USERNAME', 'USER', 'LOGNAME', 'TEMP', 'TMP', 'TMPDIR', 'LANG', 'LC_ALL', 'ProgramData', 'ProgramFiles', 'ProgramFiles(x86)', 'XDG_CONFIG_HOME', 'XDG_DATA_HOME', 'XDG_CACHE_HOME',
-]);
-
-function childEnvironment(env) {
-  const out = {};
-  if (!env || typeof env !== 'object') return out;
-  for (const name of ENV_ALLOWLIST) if (typeof env[name] === 'string') out[name] = env[name];
-  return out;
-}
 
 // Texto digitado pelo usuário (brief) ou nome de uma rodada anterior, saneado para entrar no prompt: sem quebra de linha, sem aspas nem
 // símbolos de marcação, tamanho curto.
@@ -160,43 +141,12 @@ function parseCandidates(text, limit) {
   }
   return { candidatos, invalidos };
 }
-function telemetryOf(output) {
-  const out = {};
-  if (typeof output.total_cost_usd === 'number' && Number.isFinite(output.total_cost_usd) && output.total_cost_usd >= 0) out.custoUsd = output.total_cost_usd;
-  if (Number.isInteger(output.num_turns) && output.num_turns >= 0) out.turnos = output.num_turns;
-  if (isPlainObject(output.modelUsage)) {
-    let searches = 0;
-    for (const usage of Object.values(output.modelUsage)) if (isPlainObject(usage) && Number.isInteger(usage.webSearchRequests)) searches += usage.webSearchRequests;
-    out.webSearchRequests = searches;
-  }
-  return out;
-}
-
 // options:
 //   env       o ambiente de onde sai a lista MÍNIMA para o filho (quem compõe passa process.env; aqui nada o lê)
 //   command   o executável (padrão "claude")
 //   spawn, platform, tmpRoot — injetáveis (os testes não usam o programa real)
 function createClaudeDiscoveryEngine(options = {}) {
-  const { env = {}, command = 'claude', spawn = nodeSpawn, platform = process.platform, tmpRoot = os.tmpdir(), maxOutputBytes = DEFAULT_MAX_OUTPUT_BYTES } = options;
-  if (typeof command !== 'string' || command.trim() === '') throw new Error('createClaudeDiscoveryEngine: command deve ser um texto não vazio');
-  if (typeof spawn !== 'function') throw new Error('createClaudeDiscoveryEngine: spawn deve ser uma função');
-  if (!Number.isInteger(maxOutputBytes) || maxOutputBytes < 1024) throw new Error('createClaudeDiscoveryEngine: maxOutputBytes inválido');
-
-  function kill(child) {
-    try {
-      child.kill('SIGKILL');
-    } catch {
-      // o processo pode já ter terminado
-    }
-    // no Windows o programa roda atrás de um shell: encerrar a ÁRVORE inteira
-    if (platform === 'win32' && Number.isInteger(child.pid)) {
-      try {
-        spawn('taskkill', ['/pid', String(child.pid), '/T', '/F'], { windowsHide: true, stdio: 'ignore' });
-      } catch {
-        // melhor esforço
-      }
-    }
-  }
+  const runner = createClaudeRunner({ ...options, prefix: 'rio-x7-discovery-' });
 
   async function discover(request) {
     const { nicho, subnicho, cidade, uf, limit, excluir, signal, timeoutMs = DEFAULT_TIMEOUT_MS } = request || {};
@@ -204,77 +154,13 @@ function createClaudeDiscoveryEngine(options = {}) {
       throw new Error('discover: exige { nicho, cidade, limit (1 a 40) }');
     }
     if (signal && signal.aborted) return { ok: false, code: 'ABORTED' };
-
-    const workDir = fs.mkdtempSync(path.join(tmpRoot, 'rio-x7-discovery-'));
-    try {
-      const prompt = buildPrompt({ nicho, subnicho, cidade, uf, limit, excluir });
-      const args = ['-p', '--tools', TOOLS, '--allowedTools', TOOLS, '--no-session-persistence', '--output-format', 'json', '--max-turns', String(Math.min(40, 10 + limit)), '--strict-mcp-config', '--disable-slash-commands'];
-      return await new Promise((resolve) => {
-        let child;
-        let settled = false;
-        let timer = null;
-        const chunks = [];
-        let size = 0;
-        const onAbort = () => finish({ ok: false, code: 'ABORTED' }, true);
-        function finish(result, killChild = false) {
-          if (settled) return;
-          settled = true;
-          if (timer) clearTimeout(timer);
-          if (signal) signal.removeEventListener('abort', onAbort);
-          if (killChild && child) kill(child);
-          resolve(result);
-        }
-        try {
-          // shell só no Windows (o programa é um atalho .cmd); os argumentos são CONSTANTES e o texto do usuário vai pelo stdin
-          // (com shell, uma linha de comando só — todos os argumentos são constantes sem espaço —, para o Node não avisar sobre args + shell)
-          const useShell = platform === 'win32';
-          child = useShell
-            ? spawn([command, ...args].join(' '), [], { cwd: workDir, env: childEnvironment(env), shell: true, windowsHide: true, stdio: ['pipe', 'pipe', 'ignore'] })
-            : spawn(command, args, { cwd: workDir, env: childEnvironment(env), shell: false, windowsHide: true, stdio: ['pipe', 'pipe', 'ignore'] });
-        } catch {
-          return finish({ ok: false, code: 'SPAWN_FAILED' });
-        }
-        timer = setTimeout(() => finish({ ok: false, code: 'TIMEOUT' }, true), timeoutMs);
-        if (typeof timer.unref === 'function') timer.unref();
-        if (signal) signal.addEventListener('abort', onAbort, { once: true });
-
-        child.on('error', () => finish({ ok: false, code: 'SPAWN_FAILED' }));
-        child.stdout.on('data', (chunk) => {
-          size += chunk.length;
-          if (size > maxOutputBytes) return finish({ ok: false, code: 'OUTPUT_TOO_LARGE' }, true);
-          chunks.push(chunk);
-          return undefined;
-        });
-        child.on('close', (code) => {
-          if (settled) return;
-          if (code !== 0) return finish({ ok: false, code: 'EXIT_NONZERO' });
-          let output;
-          try {
-            output = JSON.parse(Buffer.concat(chunks).toString('utf8'));
-          } catch {
-            return finish({ ok: false, code: 'OUTPUT_INVALID' });
-          }
-          if (!isPlainObject(output)) return finish({ ok: false, code: 'OUTPUT_INVALID' });
-          if (output.is_error === true) return finish({ ok: false, code: 'AGENT_ERROR' });
-          const parsed = parseCandidates(output.result, limit);
-          if (parsed === null) return finish({ ok: false, code: 'OUTPUT_INVALID' });
-          return finish({ ok: true, candidatos: parsed.candidatos, invalidos: parsed.invalidos, ...telemetryOf(output) });
-        });
-        try {
-          child.stdin.on('error', () => {});
-          child.stdin.end(prompt);
-        } catch {
-          finish({ ok: false, code: 'SPAWN_FAILED' }, true);
-        }
-        return undefined;
-      });
-    } finally {
-      try {
-        fs.rmSync(workDir, { recursive: true, force: true });
-      } catch {
-        // melhor esforço: é um diretório temporário vazio
-      }
-    }
+    return runner.run({
+      prompt: buildPrompt({ nicho, subnicho, cidade, uf, limit, excluir }),
+      maxTurns: Math.min(40, 10 + limit),
+      signal,
+      timeoutMs,
+      parse: (text) => parseCandidates(text, limit),
+    });
   }
 
   return Object.freeze({ discover });

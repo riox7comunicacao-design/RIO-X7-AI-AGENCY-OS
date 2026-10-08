@@ -64,22 +64,22 @@ test('[JOB-2] validações da entrada: só { briefId }; brief inexistente; brief
   assert.equal(env.jobs.list().length, 0);
 });
 
-test('[JOB-3] DESCOBERTA ADAPTATIVA — o 1º ciclo pede clamp(faltam x 3, 6, 12) candidatos (3 -> 9; 10 -> 12), e o teto de candidatos é 40 qualquer que seja a quantidade pedida', async (t) => {
+test('[JOB-3] DESCOBERTA ADAPTATIVA — o 1º ciclo pede clamp(faltam x 3, 6, 12) candidatos (3 -> 9; 10 -> 12), e o teto de candidatos é 50 (padrão) qualquer que seja a quantidade pedida', async (t) => {
   for (const [quantidade, primeiroCiclo] of [[1, 6], [2, 6], [3, 9], [4, 12], [10, 12], [50, 12], [300, 12]]) {
     const motor = motorFake({ rodadas: [{ candidatos: [] }] });
     const env = ambiente(t, { motor });
     const { job } = await iniciar(env, { quantidade });
     await env.servico.waitFor(job.id);
     assert.equal(motor.pedidos[0].limit, primeiroCiclo, `quantidade ${quantidade}`);
-    assert.equal(env.jobs.getById(job.id).limits.maxCandidates, 40, 'a quantidade pedida NÃO define o teto: é sempre 40');
+    assert.equal(env.jobs.getById(job.id).limits.maxCandidates, 50, 'a quantidade pedida NÃO define o teto: o padrão é sempre 50');
     assert.equal(env.jobs.getById(job.id).limits.maxCycles, 6);
   }
-  // um limite sobrescrito acima de 40 é cortado em 40
+  // um limite sobrescrito acima de 100 é cortado em 100
   const motor = motorFake({ rodadas: [{ candidatos: [] }] });
   const env = ambiente(t, { motor, limits: { candidatesAbsoluteMax: 500 } });
   const { job } = await iniciar(env, { quantidade: 300 });
   await env.servico.waitFor(job.id);
-  assert.equal(env.jobs.getById(job.id).limits.maxCandidates, 40);
+  assert.equal(env.jobs.getById(job.id).limits.maxCandidates, 100);
 });
 
 test('[JOB-4] um motor que devolve candidatos DEMAIS é cortado no tamanho do ciclo pedido: nunca se examina mais do que o ciclo pediu', async (t) => {
@@ -310,25 +310,25 @@ test('[JOB-15] ciclos ADAPTATIVOS: o tamanho de cada ciclo é recalculado pelo q
   assert.equal(fim.lote.naFila, 3);
 });
 
-test('[JOB-15b] o teto absoluto de 40 candidatos: o último ciclo só pede o que ainda cabe; a quantidade pedida NÃO define o teto; termina PARCIAL (CANDIDATOS) sem inventar ninguém', async (t) => {
+test('[JOB-15b] o teto absoluto de 50 candidatos (padrão): o último ciclo só pede o que ainda cabe; a quantidade pedida NÃO define o teto; termina PARCIAL (CANDIDATOS) sem inventar ninguém', async (t) => {
   let n = 0;
   const motor = motorFake({ porPedido: (_, pedido) => ({ candidatos: unicos('Z', 80).slice(n, (n += pedido.limit)) }) });
   const env = ambiente(t, { motor });
   const { job } = await iniciar(env, { quantidade: 3 });
   const fim = await env.servico.waitFor(job.id);
-  assert.deepEqual(motor.pedidos.map((p) => p.limit), [9, 9, 9, 9, 4], '9 x 4 = 36; sobram 4 de 40');
-  assert.equal(fim.candidatesDiscovered, 40);
+  assert.deepEqual(motor.pedidos.map((p) => p.limit), [9, 9, 9, 9, 9, 5], '9 x 5 = 45; sobram 5 de 50');
+  assert.equal(fim.candidatesDiscovered, 50);
   assert.equal(fim.status, JOB_STATUS.PARCIAL);
   assert.equal(fim.telemetria.limitReached, STOP_REASON.CANDIDATOS);
-  assert.equal(fim.cycles, 5);
+  assert.equal(fim.cycles, 6);
 
   let m = 0;
   const motor10 = motorFake({ porPedido: (_, pedido) => ({ candidatos: unicos('Y', 80).slice(m, (m += pedido.limit)) }) });
   const env10 = ambiente(t, { motor: motor10 });
   const { job: job10 } = await iniciar(env10, { quantidade: 10 });
   const fim10 = await env10.servico.waitFor(job10.id);
-  assert.deepEqual(motor10.pedidos.map((p) => p.limit), [12, 12, 12, 4], '10 pedidos: clamp(30, 6, 12) = 12 por ciclo; o último cabe 4');
-  assert.equal(fim10.candidatesDiscovered, 40);
+  assert.deepEqual(motor10.pedidos.map((p) => p.limit), [12, 12, 12, 12, 2], '10 pedidos: clamp(30, 6, 12) = 12 por ciclo; o último cabe 2');
+  assert.equal(fim10.candidatesDiscovered, 50);
 });
 
 test('[JOB-15c] no máximo 6 ciclos de descoberta (PARCIAL, CICLOS), mesmo que ainda caibam candidatos', async (t) => {
@@ -488,9 +488,9 @@ test('[JOB-20] persistência mínima: nenhum texto de página, prompt nem achado
   assert.equal(bruto.includes(MARCADOR), false, 'o texto da página nunca é persistido');
   assert.doesNotMatch(bruto, /prompt|Responda APENAS|achadosValidados":\[\{/i);
   assert.deepEqual(salvo.achadosValidados, []);
-  assert.deepEqual(Object.keys(salvo.candidatos[0]).sort(), ['ciclo', 'empresa', 'entrega', 'evidencias', 'fonteDaValidacao', 'fontesDescoberta', 'localizacao', 'nicho', 'nome', 'outrasPresencas', 'presencaDigital', 'resultado', 'siteOficial', 'url']);
+  assert.deepEqual(Object.keys(salvo.candidatos[0]).sort(), ['ciclo', 'empresa', 'entrega', 'evidencias', 'fonteDaValidacao', 'fontesDescoberta', 'localizacao', 'nicho', 'nome', 'outrasPresencas', 'presencaDigital', 'resultado', 'siteOficial', 'tipoLead', 'url']);
   for (const aspecto of ['empresa', 'nicho', 'localizacao']) assert.ok(salvo.candidatos[0].evidencias[aspecto].trecho.length <= 80, 'evidência curta');
-  assert.deepEqual(Object.keys(salvo.telemetria).sort(), ['candidatosDescobertos', 'candidatosNovos', 'candidatosRepetidos', 'ciclosExecutados', 'ciclosReposicao', 'custoUsd', 'discoveryMs', 'discoveryRuns', 'eventos', 'foraDaFila', 'limitReached', 'naFila', 'reposicoesNecessarias', 'reposicoesRealizadas', 'validadosPeloMotor', 'validationMs', 'webSearchRequests']);
+  assert.deepEqual(Object.keys(salvo.telemetria).sort(), ['candidatosDescobertos', 'candidatosNovos', 'candidatosRepetidos', 'ciclosExecutados', 'ciclosReposicao', 'custoUsd', 'discoveryMs', 'discoveryRuns', 'enriquecimento', 'eventos', 'foraDaFila', 'limitReached', 'naFila', 'reposicoesNecessarias', 'reposicoesRealizadas', 'validadosPeloMotor', 'validationMs', 'webSearchRequests']);
 });
 
 test('[JOB-21] segurança do motor: o pedido leva só o que o brief diz (nunca texto de página, contexto de usuário nem CRM) e o Service não entrega ao motor nenhuma porta do CRM', async (t) => {
@@ -520,4 +520,38 @@ test('[JOB-22] dependências obrigatórias: sem autorizador, brief service (com 
   assert.throws(() => createProspectingJobService({ ...base, limits: { maxCycles: 0 } }), /maxCycles/);
   assert.ok(Object.isFrozen(createProspectingJobService(base)));
   assert.ok(new ProspectingJobError('JOB_NOT_FOUND', 'x') instanceof Error);
+});
+
+test('[JOB-30] maxCandidates por execução: padrão 50, configurável de 1 a 100; fora disso o job é recusado e nada é criado', async (t) => {
+  const env = ambiente(t, { motor: motorFake({ rodadas: [{ candidatos: [] }] }) });
+  const pronto = await briefPronto(env);
+  for (const invalido of [0, 101, 1.5, '50', null, -1]) {
+    assert.equal((await erroDe(() => env.servico.startJob(admin(), { briefId: pronto.id, maxCandidates: invalido }))).code, 'JOB_INVALID_INPUT', String(invalido));
+  }
+  assert.equal(env.jobs.list().length, 0);
+  assert.equal((await env.briefService.getBrief(admin(), pronto.id)).status, 'PRONTO_PARA_PESQUISA');
+  const job = await env.servico.startJob(admin(), { briefId: pronto.id, maxCandidates: 100 });
+  assert.equal(env.jobs.getById(job.id).limits.maxCandidates, 100);
+  await env.servico.waitFor(job.id);
+  const outro = ambiente(t, { motor: motorFake({ rodadas: [{ candidatos: [] }] }) });
+  const { job: padrao } = await iniciar(outro, { quantidade: 3 });
+  assert.equal(outro.jobs.getById(padrao.id).limits.maxCandidates, 50);
+  await outro.servico.waitFor(padrao.id);
+});
+
+test('[JOB-31] os ciclos acompanham o teto de candidatos: acima do padrão os ciclos crescem na mesma proporção (100 candidatos -> 12 ciclos) e o padrão de 50 continua com 6', async (t) => {
+  let n = 0;
+  const motor = motorFake({ porPedido: (_, pedido) => ({ candidatos: unicos('W', 200).slice(n, (n += pedido.limit)) }) });
+  const env = ambiente(t, { motor });
+  const pronto = await briefPronto(env, { quantidade: 10 });
+  const job = await env.servico.startJob(admin(), { briefId: pronto.id, maxCandidates: 100 });
+  assert.equal(env.jobs.getById(job.id).limits.maxCycles, 12);
+  const fim = await env.servico.waitFor(job.id);
+  assert.equal(fim.candidatesDiscovered, 100, 'os 100 candidatos são alcançados');
+  assert.equal(fim.telemetria.limitReached, STOP_REASON.CANDIDATOS);
+  assert.equal(fim.cycles, 9, 'e só os 9 ciclos de 12 que precisou');
+  const padrao = ambiente(t, { motor: motorFake({ rodadas: [{ candidatos: [] }] }) });
+  const { job: j50 } = await iniciar(padrao, { quantidade: 3 });
+  assert.equal(padrao.jobs.getById(j50.id).limits.maxCycles, 6);
+  await padrao.servico.waitFor(j50.id);
 });

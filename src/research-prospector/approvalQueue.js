@@ -276,6 +276,7 @@ function motivoParaEstadoSistema(estado, discoveryResult) {
 function sanitizeSnapshot(discoveryResult) {
   return {
     empresa: discoveryResult.empresa,
+    tipoLead: discoveryResult.tipoLead,
     tipo: discoveryResult.tipo,
     cidade: discoveryResult.cidade,
     estadoUf: discoveryResult.estadoUf,
@@ -414,6 +415,42 @@ function createApprovalReviewActions(options) {
   }
 
   return Object.freeze({ approveProspect: approve, rejectProspect: reject });
+}
+
+// REAPROVAÇÃO (Implementação 3.0 — "REAPROVAR LEAD"): devolve à fila de revisão um lead que um HUMANO rejeitou. É uma fábrica À PARTE (como a de promoção): quem
+// tem as ações de revisão (aprovar/rejeitar) não ganha, por isso, a de reaprovar. NÃO é uma transição do mapa ALLOWED_TRANSITIONS (esse mapa continua com saída só
+// para AGUARDANDO_REVISAO): se fosse, a redescoberta automática (addProspect) poderia reabrir uma decisão humana. Aqui só existe um caminho, controlado:
+//   REJEITADO -> AGUARDANDO_REVISAO, por um ato HUMANO autorizado (APPROVE:LEAD_APPROVAL), com motivo opcional, preservando TODO o histórico (nada é apagado; a
+//   rejeição original continua no histórico e a reaprovação é uma entrada nova, com quem fez e quando).
+// Nunca é possível reaprovar APROVADO_PARA_CRM, DNC (restrição de contato, não é uma rejeição comercial), DUPLICADO, DADOS_INSUFICIENTES nem EXPIRADO.
+// As BARREIRAS externas (já no CRM? duplicado? DNC? exclusão permanente?) são verificadas pela camada de Services ANTES de chamar esta ação; este módulo guarda só a
+// regra de estado. Esta ação não escreve no CRM e não aprova nada: o lead volta para AGUARDANDO_REVISAO e um humano ainda precisa decidir.
+const RECONSIDERATION_TRANSITIONS = Object.freeze({
+  [QUEUE_STATE.REJEITADO]: Object.freeze([QUEUE_STATE.AGUARDANDO_REVISAO]),
+});
+
+function createApprovalReconsiderationActions(options) {
+  const authorizeReviewer = options && options.authorizeReviewer;
+  if (typeof authorizeReviewer !== 'function') {
+    throw new Error('createApprovalReconsiderationActions exige { authorizeReviewer } (função): sem autorizador injetado não existe caminho de reaprovação');
+  }
+
+  function reconsider(queue, id, context, reason) {
+    const reviewedBy = assertReviewerIdentity(authorizeReviewer(context, PERMISSION.APPROVE_LEAD_APPROVAL));
+    const item = requireItem(queue, id);
+    const allowed = RECONSIDERATION_TRANSITIONS[item.estado] || [];
+    if (!allowed.includes(QUEUE_STATE.AGUARDANDO_REVISAO)) {
+      throw new Error(`reaprovação não permitida: o prospect está em ${item.estado} (só um lead REJEITADO por um humano pode voltar para a revisão)`);
+    }
+    const now = new Date().toISOString();
+    const from = item.estado;
+    item.estado = QUEUE_STATE.AGUARDANDO_REVISAO;
+    item.reaprovacoes = (Number.isInteger(item.reaprovacoes) ? item.reaprovacoes : 0) + 1;
+    item.historico.push({ timestamp: now, from, to: QUEUE_STATE.AGUARDANDO_REVISAO, actor: ACTOR.HUMAN, motivo: reason && String(reason).trim() ? String(reason).trim() : 'Reaprovação solicitada por um humano', reviewedBy, tipo: 'REAPROVACAO' });
+    return item;
+  }
+
+  return Object.freeze({ reconsiderProspect: reconsider });
 }
 
 // Ações de AUDITORIA da promoção para o CRM (etapa CRM-INTEGRATION, decisão 0016). Uma fábrica À PARTE da de revisão
@@ -627,6 +664,7 @@ module.exports = {
   PROMOTION_RESULT,
   PROMOTION_BLOCK,
   ALLOWED_TRANSITIONS,
+  RECONSIDERATION_TRANSITIONS,
   DEFAULT_QUEUE_PATH,
   createEmptyQueue,
   loadQueueFromDisk,
@@ -636,6 +674,7 @@ module.exports = {
   createApprovalReviewActions,
   createApprovalPromotionActions,
   createApprovalProposalActions,
+  createApprovalReconsiderationActions,
   approveProspect,
   rejectProspect,
   markDuplicado,

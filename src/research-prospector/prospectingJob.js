@@ -68,7 +68,8 @@ const STOP_REASON = Object.freeze({
 });
 
 const LIMITS = Object.freeze({
-  MAX_CANDIDATES: 40, // o teto ABSOLUTO de candidatos examinados: a quantidade pedida NÃO define o teto
+  MAX_CANDIDATES: 50, // o PADRÃO de candidatos examinados por execução: a quantidade pedida NÃO define o teto
+  MAX_CANDIDATES_CAP: 100, // o máximo que uma execução pode configurar
   MAX_CYCLES: 6, // ciclos de descoberta
   BATCH_MULTIPLIER: 3, // candidatos pedidos por lead que ainda falta (supõe ~1 válido a cada 3)
   BATCH_MIN: 6,

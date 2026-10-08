@@ -199,6 +199,9 @@ test('[ENG-8] o motor não conhece o CRM, a autorização nem os Services: só m
   const codigo = fs.readFileSync(path.join(REPO, 'src', 'prospecting-adapters', 'claudeDiscoveryEngine.js'), 'utf8');
   const sem = codigo.replace(/\/\/.*$/gm, '');
   const requires = [...sem.matchAll(/require\('([^']+)'\)/g)].map((m) => m[1]);
-  assert.deepEqual(requires.sort(), ['../research-prospector/digitalPresence', 'node:child_process', 'node:fs', 'node:os', 'node:path'], 'só módulos nativos e a classificação PURA de URLs (sem rede, banco ou CRM)');
+  assert.deepEqual(requires.sort(), ['../research-prospector/digitalPresence', './claudeRunner'], 'só o executor isolado e a classificação PURA de URLs (sem rede, banco ou CRM)');
+  const executor = fs.readFileSync(path.join(REPO, 'src', 'prospecting-adapters', 'claudeRunner.js'), 'utf8').replace(/\/\/.*$/gm, '');
+  assert.deepEqual([...executor.matchAll(/require\('([^']+)'\)/g)].map((m) => m[1]).sort(), ['node:child_process', 'node:fs', 'node:os', 'node:path'], 'o executor só usa módulos nativos');
+  assert.doesNotMatch(executor, /process\.env|crm|supabase|approvalQueue|authorize|data\/|users\.json|ANTHROPIC|--dangerously|bypassPermissions/i);
   assert.doesNotMatch(sem, /process\.env|crm|supabase|approvalQueue|authorize|data\/|users\.json|ANTHROPIC|--dangerously|bypassPermissions/i);
 });

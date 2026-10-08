@@ -69,15 +69,15 @@ test('[ENTREGA-c] 3 validados pelo motor -> 0 na Approval Queue -> PARCIAL (e n�
   assert.equal((await env.crmService.listRecords(admin(), {})).length, 3, 'só os 3 registros que já existiam (os DNC): nada promovido');
 });
 
-test('[ENTREGA-d] lead VALIDADO pelo motor que termina DADOS_INSUFICIENTES NÃO conta para a meta; duplicado também não', async (t) => {
-  // a Delta é comprovada por um diretório, mas sem site nem canal o pipeline a retém como DADOS_INSUFICIENTES
+test('[ENTREGA-d] lead VALIDADO sem site ENTRA na fila e conta para a meta; duplicado do CRM continua fora', async (t) => {
+  // a Delta é comprovada por um diretório e não tem site nem canal: a ausência de site NÃO a reprova
   const delta = candidato('Clínica Delta', 'delta', { siteOficial: null, fontesDescoberta: [{ url: DIRETORIO, tipo: 'DIRETORIO' }] });
   const env = novoEnv(t, [candidato('Clínica Alfa', 'alfa'), candidato('Clínica Beta', 'beta'), delta], { ...paginasBoas(), [DIRETORIO]: paginaTerceiro(DIRETORIO, { texto: TEXTO_DELTA }) });
   const { fim, porNome } = await rodar(env);
-  assert.equal(fim.status, JOB_STATUS.PARCIAL);
-  assert.deepEqual([fim.lote.validadosPeloMotor, fim.lote.naFila, fim.lote.foraDaFila], [3, 2, 1]);
+  assert.equal(fim.status, JOB_STATUS.CONCLUIDO);
+  assert.deepEqual([fim.lote.validadosPeloMotor, fim.lote.naFila, fim.lote.foraDaFila], [3, 3, 0]);
   assert.equal(porNome['Clínica Delta'].resultado, CANDIDATE_RESULT.VALIDADO);
-  assert.deepEqual(porNome['Clínica Delta'].entrega, { naFila: false, estadoOperacional: 'DADOS_INSUFICIENTES', motivo: 'DADOS_INSUFICIENTES' });
+  assert.equal(porNome['Clínica Delta'].entrega.naFila, true);
 
   // duplicado do CRM (mesmo site, PROSPECT): também fora da fila
   const dup = novoEnv(t, tresBons());

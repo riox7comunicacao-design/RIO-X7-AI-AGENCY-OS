@@ -19,6 +19,8 @@ const { createFileBackedProspectingService } = require('../../src/services/prosp
 const { createFileBackedProspectingBriefService } = require('../../src/services/prospectingBriefFileService');
 const { createProspectingExclusionService } = require('../../src/services/prospectingExclusionService');
 const { createInMemoryPermanentExclusionRepository } = require('../../src/research-prospector/permanentExclusionRepository');
+const { createLeadReconsiderationService } = require('../../src/services/leadReconsiderationService');
+const { createInMemoryLeadProfileRepository } = require('../../src/research-prospector/leadProfileRepository');
 const { createFileBackedFunnelService, createFileBackedActiveFunnelCardsChecker } = require('../../src/services/funnelFileService');
 const {
   defineUser,
@@ -136,6 +138,8 @@ function montarAmbiente(
     prospectingJob: prospectingJobFactory,
     prospectingExclusion = false,
     prospectingExclusionService: prospectingExclusionInjetado,
+    leadReconsideration = false,
+    leadProfiles,
     funnels = false,
     funnelFilePath,
     funnelService: funnelServiceInjetado,
@@ -218,6 +222,9 @@ function montarAmbiente(
           crmService,
         })
       : undefined);
+  // Lead Reconsideration Service (Implementação 3.0): `leadReconsideration: true` liga o Service REAL sobre a MESMA fila, o MESMO CRM e um repositório de perfis em memória.
+  const perfisDeLeads = leadProfiles || createInMemoryLeadProfileRepository();
+  const leadReconsiderationService = leadReconsideration ? createLeadReconsiderationService({ authorizeReviewer: authorizeReviewerForApprovalQueue, queuePath: filePath, crmService, profileRepository: perfisDeLeads }) : undefined;
   const logs = [];
   const publicConfig = { supabaseUrl: FAKE_ENV.SUPABASE_URL, supabaseAnonKey: FAKE_ENV.SUPABASE_ANON_KEY };
   const resolvedStaticFiles = staticFiles === undefined ? (fs.existsSync(SUPABASE_BUNDLE) ? { '/lib/supabase.js': SUPABASE_BUNDLE } : {}) : staticFiles;
@@ -231,6 +238,7 @@ function montarAmbiente(
     prospectingBriefService,
     prospectingJobService,
     prospectingExclusionService,
+    leadReconsiderationService,
     funnelService,
     publicConfig,
     staticRoot: DASHBOARD_ROOT,
@@ -252,6 +260,8 @@ function montarAmbiente(
     prospectingBriefService,
     prospectingJobService,
     prospectingExclusionService,
+    leadReconsiderationService,
+    perfisDeLeads,
     batchPath,
     crmFilePath: arquivoCrm,
     prospectingBriefFilePath: arquivoBriefs,

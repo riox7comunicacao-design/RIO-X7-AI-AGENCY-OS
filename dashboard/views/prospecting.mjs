@@ -26,6 +26,7 @@
 
 import { h, fill } from '../dom.mjs';
 import { textOf, safeHttpUrl, formatDateTime } from '../format.mjs';
+import { buildJobSummary } from './leadProfile.mjs';
 
 const GEO_LEVELS = [
   { value: 'CIDADE', label: 'Cidade' },
@@ -82,6 +83,11 @@ const JOB_ERROR_TEXT = Object.freeze({
 const CANDIDATE_RESULT_LABELS = Object.freeze({ VALIDADO: 'Validada', NAO_VERIFICADO: 'Não verificada', DESCARTADO: 'Descartada' });
 const CHANNEL_LABELS = Object.freeze({ instagram: 'Instagram', facebook: 'Facebook', googleMeuNegocio: 'Google Meu Negócio', linkedin: 'LinkedIn', youtube: 'YouTube', tiktok: 'TikTok', whatsapp: 'WhatsApp' });
 
+// tipoLead (RULES — Implementação 3.0): identifica EMPRESA/PROFISSIONAL/UNIDADE_FRANQUIA entre os candidatos examinados; nunca rejeita
+// automaticamente por isto, só informa e deixa filtrar a tabela de resultados.
+const LEAD_TYPE_LABELS = Object.freeze({ EMPRESA: 'Empresa', PROFISSIONAL: 'Profissional', UNIDADE_FRANQUIA: 'Unidade / Franquia', NAO_VERIFICADO: 'Não verificado' });
+const LEAD_TYPE_FILTERS = Object.freeze(['TODOS', 'EMPRESA', 'PROFISSIONAL', 'UNIDADE_FRANQUIA', 'NAO_VERIFICADO']);
+
 // Os canais públicos CONFIRMADOS da empresa, em texto ("Instagram, Facebook"); "—" se nenhum.
 function confirmedChannelsText(presence) {
   if (!presence || typeof presence !== 'object') return '—';
@@ -135,6 +141,8 @@ export function createProspectingView({ document, root, api, permissions, schedu
     message: null,
     job: null, // o job de prospecção automática do brief selecionado (o mais recente)
     manualOpen: false, // o "Modo manual" (fluxo antigo) está aberto?
+    maxCandidates: 50, // o máximo de candidatos examinados nesta execução (padrão 50, até 100)
+    candidateTypeFilter: 'TODOS', // filtro de tipoLead na tabela de candidatos examinados
   };
   let stopPolling = null;
   let pollFailures = 0;
@@ -222,10 +230,45 @@ export function createProspectingView({ document, root, api, permissions, schedu
     setMessage(null);
     render();
     try {
-      const data = await api.startProspectingJob(state.selectedId);
+      const limit = Math.trunc(Number(state.maxCandidates));
+      if (!Number.isInteger(limit) || limit < 1 || limit > 100) {
+        setMessage('error', 'Informe o máximo de candidatos entre 1 e 100.');
+        state.busy = false;
+        render();
+        return;
+      }
+      const data = await api.startProspectingJob(state.selectedId, limit);
       state.job = data.item;
       pollFailures = 0;
       startJobPolling();
+    } catch (error) {
+      setMessage('error', messageFor(error));
+    }
+    state.busy = false;
+    render();
+  }
+
+  // REFAZER PROSPECÇÃO: um job NOVO com o mesmo briefing (o anterior e o seu histórico ficam intactos); a tela passa a acompanhar o novo.
+  async function onRedoJob() {
+    if (state.busy || !state.job) return;
+    state.busy = true;
+    setMessage(null);
+    render();
+    try {
+      const data = await api.redoProspectingJob(state.job.id);
+      stopJobPolling();
+      state.job = data.item;
+      pollFailures = 0;
+      state.busy = false;
+      try {
+        const lista = await api.listProspectingBriefs();
+        state.briefs = Array.isArray(lista && lista.items) ? lista.items : state.briefs;
+      } catch {
+        // a lista se atualiza na próxima carga
+      }
+      await selectBrief(data.item.briefId);
+      startJobPolling();
+      return;
     } catch (error) {
       setMessage('error', messageFor(error));
     }
@@ -481,6 +524,10 @@ export function createProspectingView({ document, root, api, permissions, schedu
     if (startable && !active) {
       parts.push(
         el('p', { className: 'muted', text: 'A prospecção automática procura empresas na web, confere a página de cada uma e envia só as comprovadas para a aprovação.' }),
+        el('div', { className: 'field' },
+          el('label', { for: 'pros-max-candidates', text: 'Máximo de candidatos nesta execução (padrão 50, até 100)' }),
+          el('input', { id: 'pros-max-candidates', type: 'number', min: '1', max: '100', value: String(state.maxCandidates), oninput: (event) => { state.maxCandidates = event.target.value; } })
+        ),
         el('button', { type: 'button', className: 'btn primary', id: 'pros-start-job', disabled: state.busy, onclick: onStartJob, text: 'INICIAR PROSPECÇÃO' })
       );
     }
@@ -507,6 +554,11 @@ export function createProspectingView({ document, root, api, permissions, schedu
     );
     if (active && job.currentStep !== 'INGERINDO') nodes.push(el('button', { type: 'button', className: 'btn danger', id: 'pros-cancel-job', disabled: state.busy || job.status === 'CANCELAMENTO_SOLICITADO', onclick: onCancelJob, text: 'CANCELAR PROSPECÇÃO' }));
     if (job.status === 'ERRO') nodes.push(el('p', { className: 'notice bad', role: 'note', text: JOB_ERROR_TEXT[job.error && job.error.code] || JOB_ERROR_TEXT.JOB_INTERNAL }));
+    if (!active) {
+      const summary = buildJobSummary(document, job.resumo);
+      if (summary) nodes.push(summary);
+      nodes.push(el('button', { type: 'button', className: 'btn secondary', id: 'pros-redo-job', disabled: state.busy, onclick: onRedoJob, text: 'REFAZER PROSPECÇÃO' }));
+    }
     if (job.status === 'CONCLUIDO' || job.status === 'PARCIAL') {
       if (replenished > 0) nodes.push(el('p', { className: 'muted', id: 'pros-job-replenish', text: `Reposições realizadas: ${replenished}` }));
       // a meta conta só os leads que CHEGARAM à Approval Queue; validado pela pesquisa não é o mesmo que entregue à fila
@@ -519,13 +571,21 @@ export function createProspectingView({ document, root, api, permissions, schedu
         ...(naFila > 0 ? [el('a', { className: 'btn secondary', id: 'pros-open-approvals', href: '#/aprovacoes', text: 'Abrir Aprovações' })] : [])
       );
     }
-    // o resultado por empresa examinada (sem JSON): resultado, se o site oficial foi encontrado e quais canais públicos foram CONFIRMADOS
+    // o resultado por empresa examinada (sem JSON): resultado, tipo de lead, se o site oficial foi encontrado e quais canais públicos foram CONFIRMADOS
     const examined = Array.isArray(job.candidatos) ? job.candidatos.filter((c) => c && c.resultado) : [];
     if (!active && examined.length > 0) {
+      const filtered = state.candidateTypeFilter === 'TODOS' ? examined : examined.filter((c) => (c.tipoLead || 'NAO_VERIFICADO') === state.candidateTypeFilter);
       nodes.push(
+        el('div', { className: 'field', id: 'pros-job-candidates-filter' },
+          el('label', { for: 'pros-candidate-type-filter', text: 'Filtrar por tipo' }),
+          el('select', {
+            id: 'pros-candidate-type-filter',
+            onchange: (e) => { state.candidateTypeFilter = e.target.value; render(); },
+          }, ...LEAD_TYPE_FILTERS.map((value) => el('option', { value, selected: state.candidateTypeFilter === value ? 'selected' : undefined, text: value === 'TODOS' ? 'Todos' : LEAD_TYPE_LABELS[value] })))
+        ),
         el('table', { className: 'crm-table', id: 'pros-job-candidates' },
-          el('thead', {}, el('tr', {}, el('th', { text: 'Empresa' }), el('th', { text: 'Resultado' }), el('th', { text: 'Site oficial' }), el('th', { text: 'Presença digital confirmada' }), el('th', { text: 'Approval Queue' }))),
-          el('tbody', {}, ...examined.map((c) => el('tr', {}, el('td', { text: c.nome }), el('td', { text: CANDIDATE_RESULT_LABELS[c.resultado] || c.resultado }), el('td', { text: c.siteOficial && c.siteOficial.status === 'ENCONTRADO' ? 'Encontrado' : 'Não encontrado' }), el('td', { text: confirmedChannelsText(c.presencaDigital) }), el('td', { text: deliveryText(c) })))))
+          el('thead', {}, el('tr', {}, el('th', { text: 'Empresa' }), el('th', { text: 'Tipo' }), el('th', { text: 'Resultado' }), el('th', { text: 'Site oficial' }), el('th', { text: 'Presença digital confirmada' }), el('th', { text: 'Approval Queue' }))),
+          el('tbody', {}, ...filtered.map((c) => el('tr', {}, el('td', { text: c.nome }), el('td', { text: LEAD_TYPE_LABELS[c.tipoLead] || LEAD_TYPE_LABELS.NAO_VERIFICADO }), el('td', { text: CANDIDATE_RESULT_LABELS[c.resultado] || c.resultado }), el('td', { text: c.siteOficial && c.siteOficial.status === 'ENCONTRADO' ? 'Encontrado' : 'Não encontrado' }), el('td', { text: confirmedChannelsText(c.presencaDigital) }), el('td', { text: deliveryText(c) })))))
       );
     }
     return el('div', { className: 'job-box' }, ...nodes);

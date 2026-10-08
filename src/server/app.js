@@ -185,6 +185,11 @@ const CATALOG = Object.freeze({
   JOB_ALREADY_RUNNING: [409, 'Já existe uma prospecção em execução. Aguarde ela terminar ou cancele.'],
   JOB_BRIEF_UNSUPPORTED: [400, 'A prospecção automática exige um brief de uma única cidade.'],
   JOB_PERSISTENCE: [503, 'Não foi possível ler ou gravar as prospecções agora. Tente novamente em instantes.'],
+  // Reaprovação de leads (Implementação 3.0), por `code` estável do Lead Reconsideration Service — nunca por mensagem.
+  RECON_FILTRO_INVALIDO: [400, 'O filtro de leads reprovados é inválido.'],
+  RECON_NAO_REAPROVAVEL: [409, 'Só um lead rejeitado por um humano pode ser reaprovado.'],
+  RECON_JA_NO_CRM: [409, 'Reaprovação bloqueada: o lead já existe no CRM.'],
+  RECON_DUPLICADO_NA_FILA: [409, 'Reaprovação bloqueada: já existe outro item ativo na fila com a mesma identidade.'],
   // Exclusões Permanentes de Prospecção (Etapa 2), por `code` estável do Prospecting Permanent Exclusion Service
   // (prospectingExclusionService.js) — nunca por mensagem.
   EXCLUSION_INVALID_INPUT: [400, 'A exclusão é inválida.'],
@@ -312,6 +317,14 @@ const EXCLUSION_CODES = Object.freeze({
   EXCLUSION_PERSISTENCE: 'EXCLUSION_PERSISTENCE',
 });
 
+// O `code` do Lead Reconsideration Service (leadReconsiderationService.js) que a API reconhece (Implementação 3.0).
+const RECON_CODES = Object.freeze({
+  FILTRO_INVALIDO: 'RECON_FILTRO_INVALIDO',
+  NAO_REAPROVAVEL: 'RECON_NAO_REAPROVAVEL',
+  JA_NO_CRM: 'RECON_JA_NO_CRM',
+  DUPLICADO_NA_FILA: 'RECON_DUPLICADO_NA_FILA',
+});
+
 // O `code` do Prospecting Job Service (prospectingJobService.js) que a API reconhece — mesmo mapeamento identidade (Fase 2).
 const JOB_CODES = Object.freeze({
   JOB_INVALID_INPUT: 'JOB_INVALID_INPUT',
@@ -411,6 +424,8 @@ function mapErrorToHttp(error) {
     if (CATALOG[code][0] === 400) details = safeDetails(error.details);
   } else if (error && typeof error === 'object' && Object.prototype.hasOwnProperty.call(JOB_CODES, error.code)) {
     code = JOB_CODES[error.code];
+  } else if (error && typeof error === 'object' && error.name === 'LeadReconsiderationError' && Object.prototype.hasOwnProperty.call(RECON_CODES, error.code)) {
+    code = RECON_CODES[error.code];
   } else if (error && typeof error === 'object' && Object.prototype.hasOwnProperty.call(EXCLUSION_CODES, error.code)) {
     code = EXCLUSION_CODES[error.code];
     if (CATALOG[code][0] === 400) details = safeDetails(error.details);
@@ -566,6 +581,18 @@ function splitCreateBody(body) {
   return { fields, options };
 }
 
+// `comprovadoPorCodigo` e `tipoLead` só existem para o job automático (o segundo é a classificação EMPRESA/PROFISSIONAL/UNIDADE_FRANQUIA,
+// decidida por código a partir das páginas lidas): quem cola achados à mão NÃO pode marcar nenhum dos dois.
+const RESERVED_SYSTEM_FINDING_FIELDS = Object.freeze(['comprovadoPorCodigo', 'tipoLead']);
+function rejectCodeProofFlag(rawFindings) {
+  if (!Array.isArray(rawFindings)) return;
+  for (const field of RESERVED_SYSTEM_FINDING_FIELDS) {
+    if (rawFindings.some((finding) => finding && typeof finding === 'object' && Object.prototype.hasOwnProperty.call(finding, field))) {
+      throw new HttpError('INVALID_REQUEST', `O campo ${field} é reservado ao sistema.`);
+    }
+  }
+}
+
 function parseTarget(req) {
   const target = req.url;
   if (typeof target !== 'string' || !target.startsWith('/') || target.startsWith('//') || target.includes('\\') || target.length > MAX_TARGET_LENGTH) {
@@ -579,7 +606,7 @@ function parseTarget(req) {
 }
 
 // `crm`: as rotas do CRM só existem quando o CRM Service foi injetado; sem ele, /api/crm... é uma rota desconhecida (404).
-function matchRoute(pathname, { crm, promotion, prospecting, prospectingBatchReads, prospectingBrief, prospectingJobs, prospectingExclusions, funnels }) {
+function matchRoute(pathname, { crm, promotion, prospecting, prospectingBatchReads, prospectingBrief, prospectingJobs, prospectingExclusions, funnels, leadReview }) {
   if (pathname === '/api/me') return { name: 'me', label: '/api/me', methods: ['GET'] };
   if (pathname === '/api/approvals') return { name: 'list', label: '/api/approvals', methods: ['GET'] };
   if (prospecting && pathname === '/api/prospecting/submit') return { name: 'prospecting-submit', label: '/api/prospecting/submit', methods: ['POST'] };
@@ -602,8 +629,16 @@ function matchRoute(pathname, { crm, promotion, prospecting, prospectingBatchRea
   // Job de prospecção automática (Fase 2) — só existe quando o Prospecting Job Service foi injetado. Ações antes do :id genérico.
   if (prospectingJobs) {
     if (pathname === '/api/prospecting/jobs') return { family: 'prospecting-job', name: 'job-collection', label: '/api/prospecting/jobs', methods: ['GET', 'POST'] };
-    const jobAction = /^\/api\/prospecting\/jobs\/([^/]+)\/(status|cancel)$/.exec(pathname);
+    const jobAction = /^\/api\/prospecting\/jobs\/([^/]+)\/(status|cancel|redo)$/.exec(pathname);
     if (jobAction) return { family: 'prospecting-job', name: `job-${jobAction[2]}`, label: `/api/prospecting/jobs/:id/${jobAction[2]}`, methods: jobAction[2] === 'status' ? ['GET'] : ['POST'], rawId: jobAction[1] };
+  }
+  // Leads reprovados / reaprovação / perfil comercial (Implementação 3.0) — só existe quando o Lead Reconsideration Service foi injetado.
+  if (leadReview) {
+    if (pathname === '/api/leads/reprovados') return { family: 'lead-review', name: 'leads-reprovados', label: '/api/leads/reprovados', methods: ['GET'] };
+    const reapprove = /^\/api\/leads\/reprovados\/([^/]+)\/reaprovar$/.exec(pathname);
+    if (reapprove) return { family: 'lead-review', name: 'lead-reaprovar', label: '/api/leads/reprovados/:id/reaprovar', methods: ['POST'], rawId: reapprove[1] };
+    const profile = /^\/api\/leads\/([^/]+)\/perfil$/.exec(pathname);
+    if (profile) return { family: 'lead-review', name: 'lead-perfil', label: '/api/leads/:id/perfil', methods: ['GET'], rawId: profile[1] };
   }
   // Exclusões Permanentes de Prospecção (Workbench, Etapa 2) — administração, só existe quando o Service foi
   // injetado (REPOSITORY_MODE=supabase). Mesmo cuidado de ordem: ações (/activate, /deactivate) antes do :id genérico.
@@ -732,6 +767,7 @@ function createApp(dependencies) {
     prospectingBriefService,
     prospectingJobService,
     prospectingExclusionService,
+    leadReconsiderationService,
     funnelService,
     publicConfig,
     staticRoot,
@@ -771,6 +807,11 @@ function createApp(dependencies) {
       if (!prospectingJobService || typeof prospectingJobService[operation] !== 'function') {
         throw new Error(`createApp exige { prospectingJobService } com ${operation}()`);
       }
+    }
+  }
+  if (leadReconsiderationService !== undefined) {
+    for (const operation of ['listReprovados', 'reconsiderLead', 'getProfile']) {
+      if (!leadReconsiderationService || typeof leadReconsiderationService[operation] !== 'function') throw new Error(`createApp exige { leadReconsiderationService } com ${operation}()`);
     }
   }
   if (prospectingExclusionService !== undefined) {
@@ -965,6 +1006,7 @@ function createApp(dependencies) {
       if (!body || typeof body !== 'object' || Array.isArray(body) || Object.keys(body).some((key) => key !== 'rawFindings')) {
         throw new HttpError('INVALID_REQUEST', 'Envie exatamente { rawFindings }.');
       }
+      rejectCodeProofFlag(body.rawFindings);
       return respond(200, await prospectingBriefService.ingestFindings(context, id, body.rawFindings));
     }
     if (route.name === 'brief-cancel') {
@@ -978,6 +1020,50 @@ function createApp(dependencies) {
     throw new HttpError('ROUTE_NOT_FOUND');
   }
 
+  // O resultado do job com os contadores de DECISÃO HUMANA (aprovados, rejeitados, promovidos): vêm da Approval Queue, pelos prospectIds que o PRÓPRIO job entregou
+  // (cada um uma vez). Quem não pode ler a fila fica sem esses três números (null) — nunca um número inventado.
+  function withDecisionCounters(context, item) {
+    const ids = item && item.lote && Array.isArray(item.lote.prospectIds) ? item.lote.prospectIds : [];
+    let counters = { aprovados: null, rejeitados: null, promovidos: null };
+    if (ids.length > 0 || (item && item.resumo)) {
+      try {
+        let aprovados = 0;
+        let rejeitados = 0;
+        let promovidos = 0;
+        for (const prospectId of ids) {
+          const entry = approvalQueueService.getProspect ? approvalQueueService.getProspect(context, prospectId) : null;
+          if (!entry) continue;
+          if (entry.estado === 'APROVADO_PARA_CRM') aprovados += 1;
+          if (entry.estado === 'REJEITADO') rejeitados += 1;
+          if (entry.promocao) promovidos += 1;
+        }
+        counters = { aprovados, rejeitados, promovidos };
+      } catch {
+        counters = { aprovados: null, rejeitados: null, promovidos: null };
+      }
+    }
+    return item && item.resumo ? { ...item, resumo: { ...item.resumo, ...counters } } : item;
+  }
+
+  // Leads reprovados e reaprovação (Implementação 3.0): cada rota só traduz HTTP <-> uma chamada ao Lead Reconsideration Service — a autorização
+  // (APPROVE:LEAD_APPROVAL), as barreiras (CRM, DNC, duplicidade, exclusão permanente) e o estado são do Service. Nada é apagado; reaprovar não aprova nem promove.
+  async function dispatchLeadReview(req, url, route, context) {
+    if (route.name === 'leads-reprovados') {
+      readQuery(url, ['filtro']);
+      const filtro = url.searchParams.get('filtro');
+      return respond(200, { items: await leadReconsiderationService.listReprovados(context, filtro === null ? {} : { filtro }) });
+    }
+    readQuery(url, []);
+    const id = decodeId(route.rawId);
+    if (route.name === 'lead-perfil') return respond(200, { item: await leadReconsiderationService.getProfile(context, id) });
+    if (route.name === 'lead-reaprovar') {
+      const body = await readJsonBody(req);
+      if (!body || typeof body !== 'object' || Array.isArray(body) || Object.keys(body).some((key) => key !== 'reason')) throw new HttpError('INVALID_REQUEST', 'Envie somente { reason } (opcional).');
+      return respond(200, { item: await leadReconsiderationService.reconsiderLead(context, id, body) });
+    }
+    throw new HttpError('ROUTE_NOT_FOUND');
+  }
+
   // Job de prospecção automática (Fase 2): cada rota só traduz HTTP <-> uma chamada ao Prospecting Job Service — a autorização
   // (PROPOSE:LEAD_APPROVAL), o estado do brief e todas as regras são do Service. `POST /jobs` devolve 202 e o job na hora; a tela consulta
   // /status. Nenhum campo do corpo decide algo além do `briefId`.
@@ -986,16 +1072,21 @@ function createApp(dependencies) {
       if (req.method === 'GET') {
         readQuery(url, ['briefId']);
         const briefId = url.searchParams.get('briefId');
-        return respond(200, { items: await prospectingJobService.listJobs(context, briefId === null ? {} : { briefId }) });
+        return respond(200, { items: (await prospectingJobService.listJobs(context, briefId === null ? {} : { briefId })).map((item) => withDecisionCounters(context, item)) });
       }
       readQuery(url, []);
       const body = await readJsonBody(req);
-      if (!body || typeof body !== 'object' || Array.isArray(body) || Object.keys(body).some((key) => key !== 'briefId')) throw new HttpError('INVALID_REQUEST', 'Envie exatamente { briefId }.');
+      if (!body || typeof body !== 'object' || Array.isArray(body) || Object.keys(body).some((key) => key !== 'briefId' && key !== 'maxCandidates')) throw new HttpError('INVALID_REQUEST', 'Envie { briefId } e, opcionalmente, { maxCandidates }.');
       return respond(202, { item: await prospectingJobService.startJob(context, body) });
     }
     readQuery(url, []);
     const id = decodeId(route.rawId);
-    if (route.name === 'job-status') return respond(200, { item: await prospectingJobService.getJob(context, id) });
+    if (route.name === 'job-status') return respond(200, { item: withDecisionCounters(context, await prospectingJobService.getJob(context, id)) });
+    if (route.name === 'job-redo') {
+      if (typeof prospectingJobService.redoJob !== 'function') throw new HttpError('ROUTE_NOT_FOUND');
+      if (Object.keys(await readJsonBody(req)).length > 0) throw new HttpError('INVALID_REQUEST', 'Campos não permitidos na requisição.');
+      return respond(202, { item: await prospectingJobService.redoJob(context, id) });
+    }
     if (route.name === 'job-cancel') {
       if (Object.keys(await readJsonBody(req)).length > 0) throw new HttpError('INVALID_REQUEST', 'Campos não permitidos na requisição.');
       return respond(200, { item: await prospectingJobService.cancelJob(context, id) });
@@ -1034,6 +1125,7 @@ function createApp(dependencies) {
       prospectingJobs: prospectingJobService !== undefined,
       prospectingExclusions: prospectingExclusionService !== undefined,
       funnels: funnelService !== undefined,
+      leadReview: leadReconsiderationService !== undefined,
     });
     if (route === null) {
       trace.label = 'static';
@@ -1050,6 +1142,7 @@ function createApp(dependencies) {
     if (route.family === 'prospecting-brief') return dispatchProspectingBrief(req, url, route, context);
     if (route.family === 'prospecting-job') return dispatchProspectingJob(req, url, route, context);
     if (route.family === 'prospecting-exclusion') return dispatchProspectingExclusion(req, url, route, context);
+    if (route.family === 'lead-review') return dispatchLeadReview(req, url, route, context);
 
     if (route.name === 'prospecting-submit') {
       // Só transporte: sem query, corpo JSON (objeto) de até 4 MiB, e o objeto INTEIRO vai ao serviço — que decide (autoriza
@@ -1057,6 +1150,7 @@ function createApp(dependencies) {
       // `context` desta requisição (a identidade verificada), nunca algo do corpo. O relatório do serviço sai como está.
       readQuery(url, []);
       const submission = await readJsonBody(req, MAX_PROSPECTING_BODY_BYTES);
+      rejectCodeProofFlag(submission && submission.rawFindings);
       return respond(201, await prospectingService.submitProspecting(context, submission));
     }
     if (route.name === 'prospecting-batches') {

@@ -167,7 +167,12 @@ export function createApiClient({ getAccessToken, refreshAccessToken, onSessionL
     ingestProspectingFindings: (id, rawFindings) => request('POST', `/api/prospecting/briefs/${encodeURIComponent(id)}/findings`, { rawFindings }),
     // Prospecção automática (Fase 2 — "INICIAR PROSPECÇÃO"): inicia um job (devolve 202 e o job na hora), consulta o status e cancela (só antes da ingestão).
     listProspectingJobs: (briefId) => request('GET', typeof briefId === 'string' && briefId !== '' ? `/api/prospecting/jobs?briefId=${encodeURIComponent(briefId)}` : '/api/prospecting/jobs'),
-    startProspectingJob: (briefId) => request('POST', '/api/prospecting/jobs', { briefId }),
+    startProspectingJob: (briefId, maxCandidates) => request('POST', '/api/prospecting/jobs', Number.isInteger(maxCandidates) ? { briefId, maxCandidates } : { briefId }),
+    redoProspectingJob: (id) => request('POST', `/api/prospecting/jobs/${encodeURIComponent(id)}/redo`, {}),
+    // Leads reprovados e reaprovação (Implementação 3.0): o corpo da reaprovação é só { reason } — a identidade vem do token.
+    listRejectedLeads: (filtro) => request('GET', typeof filtro === 'string' && filtro !== '' ? `/api/leads/reprovados?filtro=${encodeURIComponent(filtro)}` : '/api/leads/reprovados'),
+    reapproveLead: (prospectId, reason) => request('POST', `/api/leads/reprovados/${encodeURIComponent(prospectId)}/reaprovar`, typeof reason === 'string' && reason !== '' ? { reason } : {}),
+    getLeadProfile: (prospectId) => request('GET', `/api/leads/${encodeURIComponent(prospectId)}/perfil`),
     getProspectingJobStatus: (id) => request('GET', `/api/prospecting/jobs/${encodeURIComponent(id)}/status`),
     cancelProspectingJob: (id) => request('POST', `/api/prospecting/jobs/${encodeURIComponent(id)}/cancel`, {}),
     cancelProspectingBrief: (id) => request('POST', `/api/prospecting/briefs/${encodeURIComponent(id)}/cancel`, {}),

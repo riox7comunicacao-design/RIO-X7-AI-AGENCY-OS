@@ -393,3 +393,34 @@ test('[2.1-G] status por campo continua restrito a VALIDADO/HIPOTESE/NAO_VERIFIC
     assert.ok(statusPermitidos.has(info.status));
   }
 });
+
+// tipoLead (Implementação 3.0 — classificação EMPRESA/PROFISSIONAL/UNIDADE_FRANQUIA/NAO_VERIFICADO): o achado colado à mão nunca traz
+// este campo (rawFindingSchema + app.js recusam), então o discovery classifica SÓ pelo nome; o achado do job automático já traz a
+// classificação (com a evidência de página que o discovery não tem) e ela passa INTACTA, sem ser recalculada.
+test('[TIPOLEAD-1] sem tipoLead no achado, o discovery classifica pelo próprio nome (empresa) como alternativa', () => {
+  const finding = findingBase({ empresa: 'Clínica Completa', campos: { site: [{ valor: 'exemplo.com.br', fonte: 'Site oficial', tipoFonte: SOURCE_TYPE.OFICIAL }] } });
+  const { resultados } = runDiscoveryPipeline({ briefing: briefingBase, rawFindings: [finding], crmRecords: [] });
+  assert.equal(resultados[0].tipoLead, 'EMPRESA');
+});
+
+test('[TIPOLEAD-2] com tipoLead no achado (o job automático já classificou pela página), o discovery preserva o valor em vez de recalcular pelo nome', () => {
+  const finding = findingBase({ empresa: 'Dra. Maria Silva', tipoLead: 'EMPRESA' }); // o nome sozinho seria PROFISSIONAL; a página já comprovou o contrário
+  const { resultados } = runDiscoveryPipeline({ briefing: briefingBase, rawFindings: [finding], crmRecords: [] });
+  assert.equal(resultados[0].tipoLead, 'EMPRESA');
+});
+
+// RULES (seção 4): tipoLead é só IDENTIFICAÇÃO — PROFISSIONAL nunca é rejeitado automaticamente, nem a própria validação
+// (identidade/dados/estadoOperacional) muda por causa dele.
+test('[TIPOLEAD-3] PROFISSIONAL não é automaticamente rejeitado: com identidade e dados suficientes, chega a VALIDADO_PARA_REVISAO como qualquer outro tipo', () => {
+  const finding = findingBase({
+    empresa: 'Dra. Maria Silva',
+    campos: {
+      site: [{ valor: 'dramariasilva.com.br', fonte: 'Site oficial', tipoFonte: SOURCE_TYPE.OFICIAL }],
+      telefone: [{ valor: '24999998888', fonte: 'Site oficial', tipoFonte: SOURCE_TYPE.OFICIAL }],
+    },
+  });
+  const { resultados } = runDiscoveryPipeline({ briefing: briefingBase, rawFindings: [finding], crmRecords: [] });
+  assert.equal(resultados[0].tipoLead, 'PROFISSIONAL');
+  assert.equal(resultados[0].statusIdentidade.status, 'VALIDADA');
+  assert.equal(resultados[0].estadoOperacional, OPERATIONAL_STATE.VALIDADO_PARA_REVISAO, 'PROFISSIONAL segue a mesma regra de validação de qualquer outro lead');
+});

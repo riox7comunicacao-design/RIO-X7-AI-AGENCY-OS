@@ -141,22 +141,22 @@ test('[DELIVERY-JOB-7] prospectIds agregado sem duplicatas: o conjunto do job te
   assert.equal(fim.lote.naFila, idsDoPipeline.length - 1, 'o job conta as entregas dele: o antigo sai da conta');
 });
 
-test('[DELIVERY-JOB-8] regressão da 2.1: lead NOVO conta; DADOS_INSUFICIENTES, DNC e DUPLICADO não contam; foraDaFila segue auditável', async (t) => {
+test('[DELIVERY-JOB-8] regressão da 2.1: lead NOVO conta (inclusive sem site); DNC e DUPLICADO não contam; foraDaFila segue auditável', async (t) => {
   const motor = motorTrocavel();
   const paginas = { ...paginasBoas(), [DIRETORIO]: paginaTerceiro(DIRETORIO, { texto: TEXTO_EPS }), [siteDe('zeta')]: paginaBoa('Clínica Zeta', 'zeta') };
   const env = novoEnv(t, motor, paginas);
   const registro = (await env.crmService.createRecord(admin(), { empresa: 'Beta antiga', cidade: 'Petrópolis', estado: 'RJ', nicho: 'Estética', site: siteDe('beta') })).record;
   await env.crmService.markDoNotContact(admin(), registro.id, { reason: 'pediu para não ser contatado' }); // Beta = DNC
   await env.crmService.createRecord(admin(), { empresa: 'Delta antiga', cidade: 'Petrópolis', estado: 'RJ', nicho: 'Estética', site: siteDe('delta') }); // Delta = DUPLICADO
-  const eps = candidato('Clínica Eps', 'eps', { siteOficial: null, fontesDescoberta: [{ url: DIRETORIO, tipo: 'DIRETORIO' }] }); // Eps = DADOS_INSUFICIENTES
+  const eps = candidato('Clínica Eps', 'eps', { siteOficial: null, fontesDescoberta: [{ url: DIRETORIO, tipo: 'DIRETORIO' }] }); // Eps = sem site: entra normalmente
   const { fim, porNome } = await rodarJob(env, motor, rodadas([gama(), beta(), candidato('Clínica Delta', 'delta'), eps], []), 4);
 
   assert.equal(fim.status, JOB_STATUS.PARCIAL);
-  assert.deepEqual([fim.lote.validadosPeloMotor, fim.lote.naFila, fim.lote.foraDaFila], [4, 1, 3]);
+  assert.deepEqual([fim.lote.validadosPeloMotor, fim.lote.naFila, fim.lote.foraDaFila], [4, 2, 2]);
   assert.equal(porNome['Clínica Gama'].entrega.naFila, true);
   assert.deepEqual([porNome['Clínica Beta'].entrega.naFila, porNome['Clínica Beta'].entrega.estadoOperacional], [false, 'DNC']);
   assert.deepEqual([porNome['Clínica Delta'].entrega.naFila, porNome['Clínica Delta'].entrega.estadoOperacional], [false, 'DUPLICADO']);
-  assert.deepEqual([porNome['Clínica Eps'].entrega.naFila, porNome['Clínica Eps'].entrega.estadoOperacional], [false, 'DADOS_INSUFICIENTES']);
-  for (const nome of ['Clínica Beta', 'Clínica Delta', 'Clínica Eps']) assert.equal('jaExistiaNaFila' in porNome[nome].entrega, false, `${nome} não "já estava na fila": foi retido pelo pipeline`);
+  assert.equal(porNome['Clínica Eps'].entrega.naFila, true, 'a ausência de site não retém o lead');
+  for (const nome of ['Clínica Beta', 'Clínica Delta']) assert.equal('jaExistiaNaFila' in porNome[nome].entrega, false, `${nome} não "já estava na fila": foi retido pelo pipeline`);
   assert.equal(fim.lote.jaEstavamNaFila, 0);
 });

@@ -17,6 +17,7 @@
 import { h } from '../dom.mjs';
 import { textOf, safeHttpUrl, formatDate, formatDateTime } from '../format.mjs';
 import { buildHash } from '../router.mjs';
+import { buildLeadProfile, LEAD_TYPE_LABELS } from './leadProfile.mjs';
 
 // Estas quatro funções puras vivem em ../format.mjs (compartilhadas com as demais telas); continuam exportadas daqui.
 export { textOf, safeHttpUrl, formatDate, formatDateTime };
@@ -61,7 +62,11 @@ const TONES = Object.freeze({
   data: { SUFICIENTES: 'ok', PARCIAIS: 'warn', INSUFICIENTES: 'bad' },
   duplicity: { NOVO: 'ok', POSSIVEL_DUPLICADO: 'warn', DUPLICADO: 'bad', NAO_VERIFICADO: 'neutral' },
   dnc: { NAO_ENCONTRADO: 'ok', NAO_VERIFICADO: 'warn', BLOQUEADO: 'bad' },
+  // tipoLead é só IDENTIFICAÇÃO (RULES: PROFISSIONAL não é um lead ruim) — nenhum tom aqui é "bad".
+  tipoLead: { EMPRESA: 'ok', UNIDADE_FRANQUIA: 'ok', PROFISSIONAL: 'neutral', NAO_VERIFICADO: 'neutral' },
 });
+
+export const leadTypeText = (tipoLead) => LEAD_TYPE_LABELS[textOf(tipoLead)] || LEAD_TYPE_LABELS.NAO_VERIFICADO;
 
 const GENERIC_ERROR = 'Não foi possível concluir a operação agora. Tente novamente em instantes.';
 const MAX_SOURCES_SHOWN = 50;
@@ -158,7 +163,7 @@ const cityUf = (snapshot) => [textOf(snapshot.cidade), textOf(snapshot.estadoUf)
 // botões de aprovar/rejeitar. canPromote: mostra "Promover para CRM" nos aprovados. canReadCrm: mostra "Ver no CRM".
 // As três são conveniência de interface (vêm de /api/me); quem autoriza é o servidor.
 export function createApprovalsView({ document, root, api, canReview, canPromote = false, canReadCrm = false }) {
-  const state = { loading: true, items: [], selectedId: null, mode: null, busy: false, message: null, formError: null, filter: PENDING_ESTADO, promoted: {} };
+  const state = { loading: true, items: [], selectedId: null, mode: null, busy: false, message: null, formError: null, filter: PENDING_ESTADO, promoted: {}, profiles: {} };
   let reasonInput = null;
 
   const badge = (text, tone) => h(document, 'span', { className: `badge ${tone || 'neutral'}`, text });
@@ -196,12 +201,27 @@ export function createApprovalsView({ document, root, api, canReview, canPromote
     return load();
   }
 
+  // O perfil comercial do lead (Implementação 3.0): buscado uma vez por lead, só por quem pode revisar; `null` = o lead não tem análise detalhada.
+  async function loadProfile(prospectId) {
+    if (!canReview || typeof api.getLeadProfile !== 'function' || Object.prototype.hasOwnProperty.call(state.profiles, prospectId)) return;
+    state.profiles[prospectId] = undefined;
+    try {
+      const data = await api.getLeadProfile(prospectId);
+      state.profiles[prospectId] = data && data.item ? data.item : null;
+    } catch {
+      delete state.profiles[prospectId]; // tenta de novo na próxima seleção
+      return;
+    }
+    if (state.selectedId === prospectId) render();
+  }
+
   function select(prospectId) {
     state.selectedId = prospectId;
     state.mode = null;
     state.formError = null;
     state.message = null;
     render();
+    loadProfile(prospectId);
   }
 
   function openConfirmation(mode) {
@@ -316,7 +336,7 @@ export function createApprovalsView({ document, root, api, canReview, canPromote
       document,
       'tr',
       {},
-      ...['Empresa', 'Cidade/UF', 'Nicho', 'Estado', 'Identidade', 'Dados', 'Pesquisa'].map((title) => h(document, 'th', { scope: 'col', text: title }))
+      ...['Empresa', 'Tipo', 'Cidade/UF', 'Nicho', 'Estado', 'Identidade', 'Dados', 'Pesquisa'].map((title) => h(document, 'th', { scope: 'col', text: title }))
     );
     const rows = state.items.map((item) => {
       const snapshot = item.discoverySnapshot || {};
@@ -337,6 +357,7 @@ export function createApprovalsView({ document, root, api, canReview, canPromote
             onclick: () => select(item.prospectId),
           })
         ),
+        h(document, 'td', {}, badge(leadTypeText(snapshot.tipoLead), TONES.tipoLead[textOf(snapshot.tipoLead)])),
         h(document, 'td', { text: cityUf(snapshot) || '—' }),
         h(document, 'td', { text: textOf(snapshot.nicho) || '—' }),
         h(document, 'td', {}, badge(labelForEstado(item.estado), TONES.estado[item.estado])),
@@ -492,6 +513,7 @@ export function createApprovalsView({ document, root, api, canReview, canPromote
     const snapshot = item.discoverySnapshot || {};
     const rows = [
       ['Estado na fila', badge(labelForEstado(item.estado), TONES.estado[item.estado])],
+      ['Tipo de lead', badge(leadTypeText(snapshot.tipoLead), TONES.tipoLead[textOf(snapshot.tipoLead)])],
       ['Tipo', textValue(snapshot.tipo)],
       ['Cidade/UF', textValue(cityUf(snapshot))],
       ['Nicho', textValue(snapshot.nicho)],
@@ -512,6 +534,7 @@ export function createApprovalsView({ document, root, api, canReview, canPromote
       ['Observações', textValue(snapshot.observacoes)],
       ['Hipótese de oportunidade', textValue(snapshot.hipoteseDeOportunidade)],
       ['Fontes', renderSources(snapshot.fontes)],
+      ['Análise comercial', canReview && typeof api.getLeadProfile === 'function' ? (Object.prototype.hasOwnProperty.call(state.profiles, item.prospectId) && state.profiles[item.prospectId] !== undefined ? buildLeadProfile(document, state.profiles[item.prospectId]) : h(document, 'span', { className: 'muted', text: 'Carregando…' })) : null],
       ['Histórico', renderHistory(item.historico)],
     ].filter(([, content]) => content !== null);
 

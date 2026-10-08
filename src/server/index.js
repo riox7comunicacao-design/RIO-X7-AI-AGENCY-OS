@@ -73,7 +73,7 @@ const { createConfiguredProspectingExclusionService } = require('../services/pro
 const { createFileBackedProspectingBriefService } = require('../services/prospectingBriefFileService');
 // Prospecting Job Service (Fase 2 — "INICIAR PROSPECÇÃO"): a execução automática por cima do Brief Service (descoberta + validação + UMA ingestão
 // pelo caminho oficial). Arquivo próprio (data/prospecting-jobs.json, fora do Git); nenhuma tabela, nenhuma API paga.
-const { createFileBackedProspectingJobService } = require('../services/prospectingJobFileService');
+const { createFileBackedProspectingJobService, createFileBackedLeadReconsiderationService } = require('../services/prospectingJobFileService');
 const { createApp } = require('./app');
 
 const ROOT = path.join(__dirname, '..', '..');
@@ -237,10 +237,20 @@ function createServer(env = process.env, options = {}) {
     authorizeProposer: authorizeProposerForLeadApproval,
     briefService: prospectingBriefService,
     filePath: resolveFile(env.RIO_X7_PROSPECTING_JOBS_PATH, undefined),
+    profilesPath: resolveFile(env.RIO_X7_PROSPECTING_PROFILES_PATH, undefined),
     checkPermanentExclusion: prospectingExclusionService ? (finding) => prospectingExclusionService.isExcluded(finding) : undefined,
     env,
   });
   prospectingJobService.recoverInterruptedJobs();
+
+  // Leads reprovados e reaprovação (Implementação 3.0): a MESMA fila e o MESMO CRM Service (só leitura), o MESMO arquivo de perfis do job (RIO_X7_PROSPECTING_PROFILES_PATH,
+  // padrão data/prospecting-profiles.json, fora do Git). A reaprovação é decisão humana: só confere CRM e duplicidade (nada de exclusões nem DNC).
+  const leadReconsiderationService = createFileBackedLeadReconsiderationService({
+    authorizeReviewer: authorizeReviewerForApprovalQueue,
+    crmService,
+    queuePath: resolveFile(env.RIO_X7_QUEUE_PATH, undefined),
+    profilesPath: resolveFile(env.RIO_X7_PROSPECTING_PROFILES_PATH, undefined),
+  });
 
   // Funnel Service (Etapa "Funis 1": funil/etapa, arquivo próprio, RIO_X7_FUNNELS_PATH; Etapa "Funis 2": card,
   // sobre o MESMO crmRepository/crmService que REPOSITORY_MODE decidiu para o CRM acima — nunca uma segunda
@@ -262,6 +272,7 @@ function createServer(env = process.env, options = {}) {
     prospectingService,
     prospectingBriefService,
     prospectingJobService,
+    leadReconsiderationService,
     prospectingExclusionService,
     funnelService,
     publicConfig: { supabaseUrl, supabaseAnonKey },

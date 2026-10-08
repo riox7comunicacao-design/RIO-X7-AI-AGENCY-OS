@@ -11,7 +11,9 @@
 //   #/aprovacoes              a fila de aprovação
 //   #/agentes                 a Central de Agentes IA (só a estrutura visual)
 //   #/funis                   o Kanban de Funis (reestruturação Prospecção/CRM/Funis, Etapa "Funis 2")
-//   #/prospeccao              o Workbench de Prospecção (Etapa "Prospecção 1")
+//   #/prospeccao              o Workbench de Prospecção (Etapa "Prospecção 1") — "Nova Prospecção"
+//   #/prospeccao/historico    o histórico das prospecções automáticas (Implementação 3.0)
+//   #/prospeccao/leads-reprovados   os leads reprovados e a reaprovação (Implementação 3.0)
 //
 // Um fragmento que não é nenhum destes é "not-found" (uma tela amigável), nunca um erro.
 
@@ -38,6 +40,8 @@ export function parseRoute(hash) {
   if (segments.length === 1 && segments[0] === 'agentes') return { name: 'agents' };
   if (segments.length === 1 && segments[0] === 'funis') return { name: 'funnels' };
   if (segments.length === 1 && segments[0] === 'prospeccao') return { name: 'prospecting' };
+  if (segments.length === 2 && segments[0] === 'prospeccao' && segments[1] === 'historico') return { name: 'prospecting-history' };
+  if (segments.length === 2 && segments[0] === 'prospeccao' && segments[1] === 'leads-reprovados') return { name: 'rejected-leads' };
   if (segments.length === 1 && segments[0] === 'exclusoes-permanentes') return { name: 'prospecting-exclusions' };
   return { name: 'not-found' };
 }
@@ -60,6 +64,10 @@ export function buildHash(route) {
       return '#/funis';
     case 'prospecting':
       return '#/prospeccao';
+    case 'prospecting-history':
+      return '#/prospeccao/historico';
+    case 'rejected-leads':
+      return '#/prospeccao/leads-reprovados';
     case 'prospecting-exclusions':
       return '#/exclusoes-permanentes';
     default:
@@ -75,6 +83,8 @@ export function sectionOf(route) {
   if (name === 'agents') return 'agents';
   if (name === 'funnels') return 'funnels';
   if (name === 'prospecting') return 'prospecting';
+  if (name === 'prospecting-history') return 'prospecting-history';
+  if (name === 'rejected-leads') return 'rejected-leads';
   if (name === 'prospecting-exclusions') return 'prospecting-exclusions';
   if (name === 'overview') return 'overview';
   return null;

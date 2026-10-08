@@ -36,7 +36,7 @@ async function iniciar({ hash = '', me = ME_ADMIN, itens } = {}) {
 const apiCalls = (t) => t.fetchImpl.calls.filter((chamada) => chamada.path.startsWith('/api/')).map((chamada) => `${chamada.method || 'GET'} ${chamada.path}`);
 const tela = (browser) => browser.root.textContent.replace(/\s+/g, ' ');
 
-test('[DASH-CENTRAL-1] o menu lateral é agrupado (Operacional, Comercial, Agentes IA, Gestão), leva a marca e o usuário, e só as áreas que existem são links', async () => {
+test('[DASH-CENTRAL-1] o menu lateral é agrupado (Operacional, Prospecção, Comercial, Agentes IA, Gestão), leva a marca e o usuário, e só as áreas que existem são links', async () => {
   const t = await iniciar();
   const lateral = t.browser.by.tag(t.browser.root, 'aside')[0];
   assert.ok(lateral, 'existe um menu lateral');
@@ -44,11 +44,11 @@ test('[DASH-CENTRAL-1] o menu lateral é agrupado (Operacional, Comercial, Agent
   assert.equal(t.browser.by.cls(lateral, 'brand-sub')[0].textContent, 'AI AGENCY OS');
   assert.deepEqual(
     t.browser.by.cls(lateral, 'nav-title').map((el) => el.textContent),
-    ['Operacional', 'Comercial', 'Agentes IA', 'Gestão']
+    ['Operacional', 'Prospecção', 'Comercial', 'Agentes IA', 'Gestão']
   );
 
   const nav = t.browser.by.tag(lateral, 'nav')[0];
-  assert.deepEqual(t.browser.by.tag(nav, 'a').map((link) => link.textContent), ['Visão Geral', 'CRM', 'Aprovações', 'Prospecção', 'Funis', 'Central de Agentes', 'Exclusões Permanentes']);
+  assert.deepEqual(t.browser.by.tag(nav, 'a').map((link) => link.textContent), ['Visão Geral', 'CRM', 'Nova Prospecção', 'Histórico', 'Approval Queue', 'Leads Reprovados', 'Funis', 'Central de Agentes', 'Exclusões Permanentes']);
 
   // as áreas ainda não implementadas: desabilitadas, marcadas, sem link e sem rota
   const emBreve = t.browser.by.cls(nav, 'soon');

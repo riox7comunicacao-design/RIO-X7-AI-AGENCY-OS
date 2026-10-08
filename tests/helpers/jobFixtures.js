@@ -16,6 +16,7 @@ const { createFileBackedProspectingService } = require('../../src/services/prosp
 const { createFileBackedCrmService } = require('../../src/services/crmFileService');
 const { createInMemoryBriefRepository } = require('../../src/research-prospector/briefRepository');
 const { createInMemoryJobRepository } = require('../../src/research-prospector/jobRepository');
+const { createInMemoryLeadProfileRepository } = require('../../src/research-prospector/leadProfileRepository');
 const { admin } = require('./promotionFixtures');
 
 const AGORA = new Date('2026-10-06T12:00:00.000Z');
@@ -84,7 +85,7 @@ function esperaAteAbortar() {
   return { espera, liberar };
 }
 
-function ambiente(t, { motor, paginas = {}, fetchPage: fetchPageProprio, exclusao, limits, briefService: briefServiceProprio, repository, now } = {}) {
+function ambiente(t, { motor, paginas = {}, fetchPage: fetchPageProprio, exclusao, limits, briefService: briefServiceProprio, repository, now, enriquecimento } = {}) {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'job-svc-'));
   t.after(() => fs.rmSync(dir, { recursive: true, force: true }));
   const crmService = createFileBackedCrmService({ authorizeOperation: authorizeCrmOperation, filePath: path.join(dir, 'crm.json') });
@@ -111,6 +112,8 @@ function ambiente(t, { motor, paginas = {}, fetchPage: fetchPageProprio, exclusa
   const espiao = {
     getBrief: briefService.getBrief,
     markResearching: briefService.markResearching,
+    createBrief: briefService.createBrief,
+    markReadyForResearch: briefService.markReadyForResearch,
     generateResearchPackage: async (...args) => {
       pacotes.push(args[1]);
       return briefService.generateResearchPackage(...args);
@@ -126,7 +129,10 @@ function ambiente(t, { motor, paginas = {}, fetchPage: fetchPageProprio, exclusa
       return briefService.ingestReplacementFindings(...args);
     },
   };
+  const perfis = createInMemoryLeadProfileRepository();
   const servico = createProspectingJobService({
+    profileRepository: perfis,
+    ...(enriquecimento ? { enrichmentEngine: enriquecimento } : {}),
     authorizeProposer: authorizeProposerForLeadApproval,
     briefService: briefServiceProprio ? briefServiceProprio(briefService) : espiao,
     repository: jobs,
@@ -136,7 +142,7 @@ function ambiente(t, { motor, paginas = {}, fetchPage: fetchPageProprio, exclusa
     now: now || (() => new Date()),
     limits,
   });
-  return { dir, crmService, prospectingService, briefService, briefRepo, jobs, servico, paginasChamadas, fetchPage, ingestoes, achadosIngeridos, pacotes };
+  return { dir, perfis, crmService, prospectingService, briefService, briefRepo, jobs, servico, paginasChamadas, fetchPage, ingestoes, achadosIngeridos, pacotes };
 }
 
 async function briefPronto(env, input = {}) {

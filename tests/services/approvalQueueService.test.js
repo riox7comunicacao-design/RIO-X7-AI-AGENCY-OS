@@ -925,6 +925,9 @@ test('[SVC-18] o Service cobre toda ação e leitura HUMANA do domínio; o que f
     // Prospecting Service V1: a ação de PROPOSTA de candidatos (PROPOSE:LEAD_APPROVAL, porta própria). Coberta por OUTRO Service
     // (src/services/prospectingService.js): a superfície de 5 operações que a API expõe não muda, e quem só aprova não propõe.
     createApprovalProposalActions: 'outro service: prospectingService (proposeProspect)',
+    // Implementação 3.0: a REAPROVAÇÃO (REJEITADO -> AGUARDANDO_REVISAO) é uma fábrica à parte, coberta por OUTRO Service (src/services/leadReconsiderationService.js,
+    // que também aplica as barreiras de CRM/DNC/duplicidade): a superfície de 5 operações que a API expõe não muda.
+    createApprovalReconsiderationActions: 'outro service: leadReconsiderationService (reconsiderLead)',
     getProspect: 'servico: getProspect',
     listQueue: 'servico: listQueue',
     getHistory: 'servico: getHistory',

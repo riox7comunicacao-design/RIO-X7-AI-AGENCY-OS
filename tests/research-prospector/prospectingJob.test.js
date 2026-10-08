@@ -16,8 +16,9 @@ test('[JOBDOM-1] o vocabulário de estados é o pedido, e ativo/terminal partici
   assert.ok(Object.isFrozen(job.JOB_STATUS) && Object.isFrozen(job.LIMITS));
 });
 
-test('[JOBDOM-2] tamanho do ciclo de descoberta: clamp(faltam x 3, 6, 12), nunca além do que ainda cabe no teto absoluto de 40; a quantidade pedida NÃO define o teto', () => {
-  assert.equal(job.LIMITS.MAX_CANDIDATES, 40);
+test('[JOBDOM-2] tamanho do ciclo de descoberta: clamp(faltam x 3, 6, 12), nunca além do que ainda cabe no teto absoluto de 50 (padrão, até 100); a quantidade pedida NÃO define o teto', () => {
+  assert.equal(job.LIMITS.MAX_CANDIDATES, 50);
+  assert.equal(job.LIMITS.MAX_CANDIDATES_CAP, 100);
   assert.equal(job.LIMITS.MAX_CYCLES, 6);
   assert.deepEqual([job.LIMITS.BATCH_MULTIPLIER, job.LIMITS.BATCH_MIN, job.LIMITS.BATCH_MAX], [3, 6, 12]);
   // 3 solicitados: o 1º ciclo é 9; 10 solicitados: 12 (o teto do ciclo)
@@ -25,9 +26,9 @@ test('[JOBDOM-2] tamanho do ciclo de descoberta: clamp(faltam x 3, 6, 12), nunca
   assert.equal(job.computeBatchSize(10, 0), 12);
   // adaptativo: o que falta manda (mínimo 6, máximo 12)
   assert.deepEqual([[3, 1], [3, 2], [3, 3], [10, 9], [10, 0], [100, 5], [1, 0], [1, 1]].map(([q, v]) => job.computeBatchSize(q, v)), [6, 6, 6, 6, 12, 12, 6, 6]);
-  // o último ciclo só pede o que ainda cabe nos 40
-  assert.deepEqual([36, 30, 39, 40].map((usados) => job.computeBatchSize(3, 0, {}, 40 - usados)), [4, 9, 1, 0]);
-  assert.equal(job.computeBatchSize(300, 0, {}, 40), 12, 'a quantidade pedida não aumenta o ciclo além de 12');
+  // o último ciclo só pede o que ainda cabe nos 50
+  assert.deepEqual([46, 40, 49, 50].map((usados) => job.computeBatchSize(3, 0, {}, 50 - usados)), [4, 9, 1, 0]);
+  assert.equal(job.computeBatchSize(300, 0, {}, 50), 12, 'a quantidade pedida não aumenta o ciclo além de 12');
   assert.equal(job.computeBatchSize(3, 0, { multiplier: 2, min: 3, max: 5 }), 5);
   for (const ruim of [0, -1, 1.5, '3', null, undefined, NaN]) assert.throws(() => job.computeBatchSize(ruim, 0), /quantidade/);
   for (const ruim of [-1, 1.5, '1', null]) assert.throws(() => job.computeBatchSize(3, ruim), /validated/);

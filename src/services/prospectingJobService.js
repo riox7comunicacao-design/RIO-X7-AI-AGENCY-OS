@@ -39,9 +39,12 @@ const { createResearcher } = require('../research-prospector/researcher');
 const { parseRegion, verifyOnPage, verifyOfficialSite } = require('../research-prospector/pageVerification');
 const digital = require('../research-prospector/digitalPresence');
 const { validateRawFindingsV2 } = require('../research-prospector/rawFindingV2');
-const { summarizeGeografia, BRIEF_STATUS, GEO_LEVEL } = require('../research-prospector/prospectingBrief');
+const { summarizeGeografia, BRIEF_STATUS, GEO_LEVEL, BRIEF_INPUT_KEYS } = require('../research-prospector/prospectingBrief');
 const { normalizeNameCity, normalizeDomain } = require('../research-prospector/normalize');
 const { assertValidJobRepository } = require('../research-prospector/jobRepository');
+const commercial = require('../research-prospector/commercialProfile');
+const { classifyLeadType } = require('../research-prospector/leadTypeClassification');
+const { createInMemoryLeadProfileRepository, assertValidLeadProfileRepository } = require('../research-prospector/leadProfileRepository');
 const {
   JOB_STATUS,
   JOB_STEP,
@@ -138,13 +141,15 @@ const CHANNEL_RESULT_TYPE = Object.freeze({ instagram: 'INSTAGRAM', facebook: 'F
 //   processId, isProcessAlive (injetáveis nos testes): o job guarda o PID do processo que o executa; a recuperação NÃO marca como interrompido um job
 //   cujo processo (outro, ainda vivo) é o dono — por exemplo, uma suíte de testes não pode estragar a prospecção real de um servidor em execução
 function createProspectingJobService(dependencies) {
-  const { authorizeProposer, briefService, repository, discoveryEngine, createFetchPage, checkPermanentExclusion, now = () => new Date(), limits: limitOverrides = {}, processId = process.pid, isProcessAlive = defaultIsProcessAlive } = dependencies || {};
+  const { authorizeProposer, briefService, repository, discoveryEngine, enrichmentEngine = null, profileRepository = createInMemoryLeadProfileRepository(), createFetchPage, checkPermanentExclusion, now = () => new Date(), limits: limitOverrides = {}, processId = process.pid, isProcessAlive = defaultIsProcessAlive } = dependencies || {};
 
   if (typeof authorizeProposer !== 'function') throw new Error('createProspectingJobService exige { authorizeProposer } (função)');
   for (const method of ['getBrief', 'markResearching', 'ingestFindings', 'ingestReplacementFindings']) {
     if (!briefService || typeof briefService[method] !== 'function') throw new Error(`createProspectingJobService exige { briefService } com ${method}()`);
   }
   assertValidJobRepository(repository);
+  assertValidLeadProfileRepository(profileRepository);
+  if (enrichmentEngine !== null && (!enrichmentEngine || typeof enrichmentEngine.enrich !== 'function')) throw new Error('createProspectingJobService: enrichmentEngine, se informado, deve ter enrich()');
   if (!discoveryEngine || typeof discoveryEngine.discover !== 'function') throw new Error('createProspectingJobService exige { discoveryEngine } com discover()');
   if (typeof createFetchPage !== 'function') throw new Error('createProspectingJobService exige { createFetchPage } (função)');
   if (checkPermanentExclusion !== undefined && checkPermanentExclusion !== null && typeof checkPermanentExclusion !== 'function') {
@@ -154,8 +159,8 @@ function createProspectingJobService(dependencies) {
   const isExcluded = typeof checkPermanentExclusion === 'function' ? checkPermanentExclusion : () => false;
 
   const limits = Object.freeze({
-    // o teto ABSOLUTO de candidatos (nunca acima de 40); a quantidade pedida NÃO define o teto
-    candidatesAbsoluteMax: Math.min(limitOverrides.candidatesAbsoluteMax ?? LIMITS.MAX_CANDIDATES, LIMITS.MAX_CANDIDATES),
+    // o teto de candidatos POR EXECUÇÃO: padrão 50, configurável até 100 (por job via { maxCandidates }); a quantidade pedida NÃO define o teto
+    candidatesAbsoluteMax: Math.min(limitOverrides.candidatesAbsoluteMax ?? LIMITS.MAX_CANDIDATES, LIMITS.MAX_CANDIDATES_CAP),
     batchMultiplier: limitOverrides.batchMultiplier ?? LIMITS.BATCH_MULTIPLIER,
     batchMin: limitOverrides.batchMin ?? LIMITS.BATCH_MIN,
     batchMax: limitOverrides.batchMax ?? LIMITS.BATCH_MAX,
@@ -211,13 +216,44 @@ function createProspectingJobService(dependencies) {
     return job;
   }
 
-  // a visão que sai para quem consulta: o job sem os achados internos, com o tempo decorrido calculado
+  // O RESUMO padronizado do resultado (contadores únicos, sem dupla contagem): tudo derivado do que o job já guarda — nunca de uma segunda contagem.
+  // naApprovalQueue = o que ESTE job entregou; jaExistentes = o que o pipeline encontrou JÁ na fila/CRM (não é entrega nova).
+  function summarize(job, elapsedMs) {
+    const list = Array.isArray(job.candidatos) ? job.candidatos : [];
+    const deliveries = list.map((candidate) => candidate.entrega).filter(Boolean);
+    const byState = (state) => deliveries.filter((delivery) => delivery.estadoOperacional === state && delivery.naFila !== true).length;
+    const tele = job.telemetria && typeof job.telemetria === 'object' ? job.telemetria : {};
+    const lote = job.lote && typeof job.lote === 'object' ? job.lote : {};
+    const limitsOf = job.limits && typeof job.limits === 'object' ? job.limits : {};
+    return {
+      solicitados: job.requestedQuantity,
+      limiteDeCandidatos: limitsOf.maxCandidates ?? null,
+      candidatosProcessados: list.filter((candidate) => candidate.resultado).length,
+      descobertos: Number.isInteger(tele.candidatosDescobertos) ? tele.candidatosDescobertos : list.length,
+      novos: Number.isInteger(tele.candidatosNovos) ? tele.candidatosNovos : list.length,
+      repetidos: Number.isInteger(tele.candidatosRepetidos) ? tele.candidatosRepetidos : 0,
+      validados: job.candidatesValidated || 0,
+      naoValidados: job.candidatesRejected || 0,
+      naApprovalQueue: Number.isInteger(lote.naFila) ? lote.naFila : job.leadsNaFila || 0,
+      jaExistentes: Number.isInteger(lote.jaEstavamNaFila) ? lote.jaEstavamNaFila : 0,
+      dadosInsuficientes: byState('DADOS_INSUFICIENTES'),
+      duplicados: byState('DUPLICADO'),
+      dnc: byState('DNC'),
+      reposicoes: Number.isInteger(tele.reposicoesRealizadas) ? tele.reposicoesRealizadas : 0,
+      enriquecidos: tele.enriquecimento && Number.isInteger(tele.enriquecimento.leadsEnriquecidos) ? tele.enriquecimento.leadsEnriquecidos : 0,
+      tempoMs: elapsedMs,
+      custoUsd: typeof tele.custoUsd === 'number' ? tele.custoUsd : 0,
+    };
+  }
+
+  // a visão que sai para quem consulta: o job sem os achados internos, com o tempo decorrido calculado e o resumo padronizado
   function view(job) {
     const out = copy(job);
     delete out.achadosValidados;
     const start = out.startedAt ? Date.parse(out.startedAt) : null;
     const end = out.finishedAt ? Date.parse(out.finishedAt) : now().getTime();
     out.elapsedMs = start === null ? 0 : Math.max(0, end - start);
+    out.resumo = summarize(out, out.elapsedMs);
     return out;
   }
 
@@ -228,9 +264,16 @@ function createProspectingJobService(dependencies) {
   // ------------------------------------------------------------------------------------------------------------------------------
 
   async function startJob(context, input) {
+    return begin(context, input, {});
+  }
+
+  async function begin(context, input, extra) {
     const author = authorize(context);
-    if (!isPlainObject(input) || Object.keys(input).length !== 1 || typeof input.briefId !== 'string') {
-      throw new ProspectingJobError(ERROR.INVALID_INPUT, 'Prospecção: envie exatamente { briefId }.');
+    if (!isPlainObject(input) || typeof input.briefId !== 'string' || Object.keys(input).some((key) => key !== 'briefId' && key !== 'maxCandidates')) {
+      throw new ProspectingJobError(ERROR.INVALID_INPUT, 'Prospecção: envie { briefId } e, opcionalmente, { maxCandidates }.');
+    }
+    if (input.maxCandidates !== undefined && (!Number.isInteger(input.maxCandidates) || input.maxCandidates < 1 || input.maxCandidates > LIMITS.MAX_CANDIDATES_CAP)) {
+      throw new ProspectingJobError(ERROR.INVALID_INPUT, `Prospecção: maxCandidates deve ser um inteiro entre 1 e ${LIMITS.MAX_CANDIDATES_CAP}.`);
     }
     const brief = await briefService.getBrief(context, input.briefId);
     // máquina de estados explícita: PRONTO_PARA_PESQUISA -> job. Um brief em PESQUISANDO (ou em qualquer outro estado) NUNCA inicia um novo job.
@@ -252,10 +295,11 @@ function createProspectingJobService(dependencies) {
     const instant = now();
     const prefix = `JOB-${instant.getUTCFullYear()}${String(instant.getUTCMonth() + 1).padStart(2, '0')}${String(instant.getUTCDate()).padStart(2, '0')}-`;
     const id = buildJobId(instant, all.filter((job) => job.id.startsWith(prefix)).length + 1);
-    const maxCandidates = limits.candidatesAbsoluteMax;
+    const maxCandidates = input.maxCandidates ?? limits.candidatesAbsoluteMax;
     const job = {
       id,
       briefId: brief.id,
+      ...extra,
       status: JOB_STATUS.CRIADO,
       createdAt: instant.toISOString(),
       startedAt: null,
@@ -274,7 +318,8 @@ function createProspectingJobService(dependencies) {
       cancelRequested: false,
       ingestionStarted: false,
       leadsNaFila: 0,
-      limits: { maxCandidates, maxDurationMs: limits.maxDurationMs, maxCycles: limits.maxCycles },
+      // os ciclos acompanham o teto escolhido quando ele passa do padrão (50 -> 6 ciclos; 100 -> 12): sem isso 100 candidatos nunca seriam alcançáveis em 6 ciclos de 12
+      limits: { maxCandidates, maxDurationMs: limits.maxDurationMs, maxCycles: maxCandidates <= limits.candidatesAbsoluteMax ? limits.maxCycles : Math.ceil((limits.maxCycles * maxCandidates) / limits.candidatesAbsoluteMax) },
       cycles: 0,
       candidatos: [],
       achadosValidados: [],
@@ -290,6 +335,24 @@ function createProspectingJobService(dependencies) {
     const promise = Promise.resolve().then(() => execute(id, context, brief, region, controller));
     running.set(id, { controller, promise });
     return view(job);
+  }
+
+  // REFAZER PROSPECÇÃO (Implementação 3.0): um job NOVO sobre um brief NOVO com o mesmo briefing do job anterior. O job anterior e o seu brief ficam intactos (histórico
+  // preservado), as exclusões permanentes, o DNC e a deduplicação valem como em qualquer job (a mesma cadeia de ingestão) e o que já está na fila/CRM não volta como entrega.
+  // Só um job TERMINADO pode ser refeito. A quantidade de candidatos do job anterior é reaproveitada.
+  async function redoJob(context, id) {
+    authorize(context);
+    const previous = requireJob(id);
+    if (isActive(previous.status)) throw new ProspectingJobError(ERROR.INVALID_STATE, `Prospecção: o job está ${previous.status}; só um job terminado pode ser refeito.`);
+    for (const method of ['createBrief', 'markReadyForResearch']) {
+      if (typeof briefService[method] !== 'function') throw new ProspectingJobError(ERROR.INVALID_STATE, 'Prospecção: refazer exige o Brief Service completo.');
+    }
+    const old = await briefService.getBrief(context, previous.briefId);
+    const input = Object.fromEntries(BRIEF_INPUT_KEYS.filter((key) => old[key] !== undefined && old[key] !== null).map((key) => [key, old[key]]));
+    const created = await briefService.createBrief(context, input);
+    await briefService.markReadyForResearch(context, created.id);
+    const maxCandidates = previous.limits && Number.isInteger(previous.limits.maxCandidates) ? previous.limits.maxCandidates : undefined;
+    return begin(context, { briefId: created.id, ...(maxCandidates ? { maxCandidates } : {}) }, { refeitoDe: previous.id });
   }
 
   function getJob(context, id) {
@@ -372,7 +435,8 @@ function createProspectingJobService(dependencies) {
     const startMs = now().getTime();
     const deadline = startMs + limits.maxDurationMs;
     const timeLeft = () => deadline - now().getTime();
-    const maxCandidates = limits.candidatesAbsoluteMax;
+    const maxCandidates = requireJob(id).limits.maxCandidates;
+    const maxCycles = requireJob(id).limits.maxCycles;
     const quantity = brief.quantidade;
     const tele = {
       discoveryMs: 0,
@@ -391,6 +455,8 @@ function createProspectingJobService(dependencies) {
       foraDaFila: 0,
       reposicoesNecessarias: 0, // quantas vezes a ingestão deixou a meta por atingir
       reposicoesRealizadas: 0, // ciclos de reposição que terminaram
+      // NÍVEL 3 (enriquecimento comercial): só para leads JÁ entregues à fila; uma chamada em lote por rodada
+      enriquecimento: { perfisGerados: 0, leadsEnriquecidos: 0, chamadas: 0, falhas: 0, pulado: 0, ms: 0 },
       eventos: [], // REPOSICAO_INICIADA | REPOSICAO_CONCLUIDA | REPOSICAO_SEM_CANDIDATOS_NOVOS | META_ATINGIDA (só código e ciclo)
     };
     const event = (codigo, ciclo) => {
@@ -407,7 +473,7 @@ function createProspectingJobService(dependencies) {
     let alreadyInQueue = 0; // validados que o pipeline encontrou JÁ na fila (não são entrega deste job)
     let stopReason = null;
 
-    const RECORD_KEYS = ['resultado', 'motivo', 'entrega', 'causa', 'faltando', 'empresa', 'nicho', 'localizacao', 'evidencias', 'fonteDaValidacao', 'siteOficial', 'presencaDigital', 'outrasPresencas', 'fontesDescoberta'];
+    const RECORD_KEYS = ['resultado', 'motivo', 'entrega', 'causa', 'faltando', 'empresa', 'nicho', 'localizacao', 'evidencias', 'fonteDaValidacao', 'siteOficial', 'presencaDigital', 'outrasPresencas', 'fontesDescoberta', 'tipoLead'];
     // o que é persistido por candidato: estados, trechos curtos e URLs — nunca texto de página
     const summary = (entry) => ({
       nome: entry.nome,
@@ -445,6 +511,7 @@ function createProspectingJobService(dependencies) {
             lotes: lotes.map((lote) => lote.loteId),
             contagens: lotes[lotes.length - 1].contagens,
             excluidosPermanentemente: excludedTotal,
+            prospectIds: [...delivered], // os leads que ESTE job entregou à fila (para o resultado ligar o job à Approval Queue, sem dupla contagem)
             validadosPeloMotor: ingestedAchados, // comprovados por código (empresa + nicho + localização)
             naFila: delivered.size, // encaminhados de fato à Approval Queue: só estes contam para a meta
             foraDaFila: Math.max(0, ingestedAchados - delivered.size), // validados pelo motor, mas que NÃO foram uma nova entrega deste job (retidos: dados insuficientes, DNC, duplicado...; ou já estavam na fila)
@@ -470,7 +537,7 @@ function createProspectingJobService(dependencies) {
 
     // o achado V2 de um candidato COMPROVADO: o Researcher monta com o site oficial CONFIRMADO e os perfis CONFIRMADOS; sem nenhum dos dois, um achado mínimo (só o que
     // foi comprovado e as URLs de onde veio) — nada é inferido
-    async function buildFinding(candidate, decision, siteOficial, presencaDigital, outrasPresencas) {
+    async function buildFinding(candidate, decision, siteOficial, presencaDigital, outrasPresencas, tipoLead) {
       const origem = decision.fonteDaValidacao.url;
       const results = [];
       if (siteOficial.status === digital.SITE_STATUS.ENCONTRADO) results.push({ nome: candidate.nome, url: siteOficial.url, tipoResultado: 'SITE', fonteUrl: origem, cidade: hint.cidade, ...(hint.estado ? { estado: hint.estado } : {}) });
@@ -491,6 +558,8 @@ function createProspectingJobService(dependencies) {
         const fontes = [...new Set([origem, ...outrasPresencas.map((p) => p.url)])].slice(0, 10);
         finding = { empresa: candidate.nome, cidade: hint.cidade, ...(hint.estado ? { estado: hint.estado } : {}), nicho: brief.nicho, fontes, dataDaPesquisa: now().toISOString().slice(0, 10) };
       }
+      // empresa + nicho + localização já foram comprovados por código (decision VALIDADO): o lead é válido mesmo sem site, rede social ou telefone
+      finding = { ...finding, comprovadoPorCodigo: true, tipoLead };
       const checkedFinding = validateRawFindingsV2([finding], { now: now() });
       return checkedFinding.ok ? finding : null;
     }
@@ -560,13 +629,27 @@ function createProspectingJobService(dependencies) {
       });
       const fontesDescoberta = digital.classifySources([...(officialHost ? [siteOficial.url] : []), ...candidate.fontesDescoberta.map((origem) => origem.url)], officialHost);
       const outrasPresencas = fontesDescoberta.filter((origem) => origem.tipo === digital.SOURCE_TYPE.DIRETORIO || origem.tipo === digital.SOURCE_TYPE.NOTICIA_OU_TERCEIRO);
+      // tipoLead (RULES — distinguir EMPRESA/PROFISSIONAL/UNIDADE_FRANQUIA): pelo nome e, quando o site oficial foi lido, pelo título/H1 e o texto
+      // já obtidos (nenhuma leitura nova). Nunca decide sozinho se o candidato é aprovado: só classifica o tipo.
+      const tipoLead = classifyLeadType({ nome: candidate.nome, identidade: officialPage ? officialPage.identidade : null, texto: officialPage ? officialPage.texto : null }).tipo;
       const { resultado, motivo, causa, faltando, empresa, nicho, localizacao, evidencias, fonteDaValidacao } = decision;
-      const record = { resultado, motivo, causa, faltando, empresa, nicho, localizacao, evidencias, fonteDaValidacao, siteOficial, presencaDigital, outrasPresencas, fontesDescoberta };
+      const record = { resultado, motivo, causa, faltando, empresa, nicho, localizacao, evidencias, fonteDaValidacao, siteOficial, presencaDigital, outrasPresencas, fontesDescoberta, tipoLead };
 
       if (resultado !== CANDIDATE_RESULT.VALIDADO) return { record };
-      const achado = await buildFinding(candidate, decision, siteOficial, presencaDigital, outrasPresencas);
+      const achado = await buildFinding(candidate, decision, siteOficial, presencaDigital, outrasPresencas, tipoLead);
       if (achado === null) return { record: { ...record, resultado: CANDIDATE_RESULT.NAO_VERIFICADO, motivo: CANDIDATE_REASON.VALIDACAO_FALHOU, evidencias: undefined, fonteDaValidacao: undefined } };
-      return { record, achado };
+      // 4) NÍVEL 2 -> 3: a base do perfil comercial, só do que o site oficial JÁ trouxe (contatos, endereço, responsável com cargo explícito): nenhuma leitura nova
+      const perfilInput = {
+        empresa: candidate.nome,
+        siteOficial,
+        presencaDigital,
+        outrasPresencas,
+        fontesDescoberta,
+        fontesValidacao: digital.classifySources([decision.fonteDaValidacao.url], officialHost),
+        pages: officialPage && siteOficial.status === digital.SITE_STATUS.ENCONTRADO ? [{ origem: siteOficial.url, oficial: true, texto: officialPage.texto, links: officialPage.links, identidade: officialPage.identidade }] : [],
+        today: now().toISOString().slice(0, 10),
+      };
+      return { record, achado, perfilInput };
     }
 
     // ---- ciclos: DESCOBERTA -> VALIDAÇÃO -> INGESTÃO -> MEDIÇÃO DA ENTREGA -> (meta atingida? senão, REPOSIÇÃO com candidatos NOVOS) ----
@@ -574,6 +657,77 @@ function createProspectingJobService(dependencies) {
     // Os candidatos NOVOS que ainda não foram examinados (porque a rodada já comprovou o que faltava) ficam no `backlog` e são examinados antes de uma nova descoberta:
     // se o pipeline reter os comprovados, os que sobraram continuam podendo entrar na fila — nada que foi descoberto é jogado fora.
     const backlog = [];
+
+    // ---- NÍVEL 3: ENRIQUECIMENTO COMERCIAL, só dos leads que ESTE job entregou à Approval Queue ----
+    // O perfil determinístico (já montado na validação) é salvo para cada lead entregue; depois UMA chamada em lote ao motor de enriquecimento completa
+    // responsável (confirmado pela página citada), tráfego pago e atividade recente. Falhou ou não há motor? O perfil fica como está, com o que não foi
+    // verificado marcado NAO_VERIFICADO. O enriquecimento NUNCA derruba a entrega: o lead já está na fila.
+    const plain = (text) => String(text).normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLowerCase().replace(/\s+/g, ' ');
+    async function enrichDelivered(round, outcomes) {
+      const items = [];
+      for (const finding of round) {
+        const outcome = outcomes.find((item) => item && item.empresa === finding.empresa && item.naFila === true && item.jaExistiaNaFila !== true && typeof item.prospectId === 'string');
+        const entry = candidates.find((candidate) => candidate.nome === finding.empresa && candidate._perfilInput);
+        if (outcome && entry) items.push({ prospectId: outcome.prospectId, entry });
+      }
+      for (const item of items) {
+        try {
+          profileRepository.save(item.prospectId, { ...commercial.buildCommercialProfile(item.entry._perfilInput), jobId: id, briefId: brief.id });
+          tele.enriquecimento.perfisGerados += 1;
+        } catch {
+          tele.enriquecimento.falhas += 1;
+        }
+      }
+      if (!enrichmentEngine || items.length === 0) return;
+      if (timeLeft() <= 0 || wasCancelRequested(id)) {
+        tele.enriquecimento.pulado += items.length;
+        return;
+      }
+      const startedAt = now().getTime();
+      for (let from = 0; from < items.length; from += 12) {
+        const chunk = items.slice(from, from + 12);
+        if (timeLeft() <= 0 || wasCancelRequested(id)) {
+          tele.enriquecimento.pulado += items.length - from;
+          break;
+        }
+        const channelsOf = (entry) => Object.fromEntries(digital.confirmedChannels(entry._perfilInput.presencaDigital).map(({ canal, url }) => [canal, url]));
+        let found;
+        try {
+          tele.enriquecimento.chamadas += 1;
+          found = await enrichmentEngine.enrich({
+            leads: chunk.map(({ entry }) => ({ nome: entry.nome, cidade: hint.cidade, ...(hint.estado ? { uf: hint.estado } : {}), site: entry._perfilInput.siteOficial.status === digital.SITE_STATUS.ENCONTRADO ? entry._perfilInput.siteOficial.url : null, canais: channelsOf(entry) })),
+            signal: controller.signal,
+            timeoutMs: Math.max(1, Math.min(limits.discoveryTimeoutMs, timeLeft())),
+          });
+        } catch {
+          found = null;
+        }
+        if (found && typeof found.custoUsd === 'number') tele.custoUsd += found.custoUsd;
+        if (found && Number.isInteger(found.webSearchRequests)) tele.webSearchRequests += found.webSearchRequests;
+        if (!found || found.ok !== true || !Array.isArray(found.resultados)) {
+          tele.enriquecimento.falhas += chunk.length;
+          continue;
+        }
+        for (const { prospectId, entry } of chunk) {
+          const raw = found.resultados.find((item) => item && item.nome === entry.nome);
+          if (!raw) continue;
+          const confirmedSources = new Set();
+          const claim = raw.responsavel;
+          if (claim && typeof claim === 'object' && typeof claim.origem === 'string' && typeof claim.nome === 'string' && typeof claim.cargo === 'string') {
+            const page = await fetchCached(claim.origem);
+            if (page && page.ok === true && typeof page.texto === 'string' && plain(page.texto).includes(plain(claim.nome)) && plain(page.texto).includes(plain(claim.cargo))) confirmedSources.add(claim.origem);
+          }
+          try {
+            const enrichment = commercial.normalizeEnrichment(raw, { today: entry._perfilInput.today, confirmedSources, confirmedChannels: new Set(Object.keys(channelsOf(entry))) });
+            profileRepository.save(prospectId, { ...commercial.buildCommercialProfile({ ...entry._perfilInput, enrichment }), jobId: id, briefId: brief.id });
+            tele.enriquecimento.leadsEnriquecidos += 1;
+          } catch {
+            tele.enriquecimento.falhas += 1;
+          }
+        }
+      }
+      tele.enriquecimento.ms += now().getTime() - startedAt;
+    }
 
     // uma RODADA sobre o backlog: valida até comprovar o que ainda FALTA na fila, ingere pela cadeia EXISTENTE (a 1ª pelo caminho de sempre; as seguintes pela ingestão de
     // reposição do Brief Service, que passa pelas mesmas exclusões, deduplicação, DNC e Approval Queue) e MEDE a entrega. Devolve true se o job já terminou (cancelado/erro).
@@ -598,7 +752,10 @@ function createProspectingJobService(dependencies) {
         Object.assign(entry, outcome.record);
         const confirmed = outcome.record.siteOficial && outcome.record.siteOficial.url ? normalizeDomain(outcome.record.siteOficial.url) : null;
         if (confirmed) knownKeys.add(`dominio:${confirmed}`); // o domínio confirmado também identifica o candidato
-        if (outcome.record.resultado === CANDIDATE_RESULT.VALIDADO && outcome.achado) pending.push(outcome.achado);
+        if (outcome.record.resultado === CANDIDATE_RESULT.VALIDADO && outcome.achado) {
+          pending.push(outcome.achado);
+          if (outcome.perfilInput) entry._perfilInput = outcome.perfilInput;
+        }
         save(JOB_STEP.VALIDANDO);
       }
       if (pending.length === 0) return false;
@@ -639,6 +796,7 @@ function createProspectingJobService(dependencies) {
       ingestedAchados += round.length;
       pending = [];
       patch(id, { ingestionStarted: false });
+      await enrichDelivered(round, outcomes);
       if (delivered.size < quantity) tele.reposicoesNecessarias += 1;
       save(JOB_STEP.VALIDANDO);
       return false;
@@ -657,7 +815,7 @@ function createProspectingJobService(dependencies) {
         if (stopReason === STOP_REASON.TEMPO) break;
         continue;
       }
-      if (cycle >= limits.maxCycles) break;
+      if (cycle >= maxCycles) break;
       if (candidates.length >= maxCandidates) {
         stopReason = STOP_REASON.CANDIDATOS;
         break;
@@ -754,7 +912,7 @@ function createProspectingJobService(dependencies) {
     return undefined;
   }
 
-  return Object.freeze({ startJob, getJob, listJobs, cancelJob, recoverInterruptedJobs, waitFor });
+  return Object.freeze({ startJob, redoJob, getJob, listJobs, cancelJob, recoverInterruptedJobs, waitFor });
 }
 
 module.exports = { createProspectingJobService, ProspectingJobError, ERROR };

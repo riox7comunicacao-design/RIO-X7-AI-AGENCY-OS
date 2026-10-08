@@ -23,8 +23,15 @@ function criar({ briefs = [BRIEF], jobs = [], respostas = [], canPropose = true 
       chamadas.push(['listJobs', briefId]);
       return { items: jobsNoServidor.filter((j) => briefId === undefined || j.briefId === briefId) };
     },
-    startProspectingJob: async (briefId) => {
+    redoProspectingJob: async (id) => {
+      chamadas.push(['redo', id]);
+      const criado = job({ id: 'JOB-20261006-009' });
+      jobsNoServidor = [criado, ...jobsNoServidor];
+      return { item: criado };
+    },
+    startProspectingJob: async (briefId, maxCandidates) => {
       chamadas.push(['start', briefId]);
+      chamadas.push(['max', maxCandidates]);
       const criado = job();
       jobsNoServidor = [criado, ...jobsNoServidor];
       return { item: criado };
@@ -268,7 +275,7 @@ test('[DASH-JOB-7d] o resultado por empresa (sem JSON): Validada/Não verificada
   const tabela = t.browser.by.id(t.browser.root, 'pros-job-candidates');
   assert.ok(tabela);
   const linhas = t.browser.by.tag(tabela, 'tr').slice(1).map((linha) => t.browser.by.tag(linha, 'td').map((celula) => celula.textContent));
-  assert.deepEqual(linhas, [['Clínica Alfa', 'Validada', 'Encontrado', 'Instagram, Google Meu Negócio', 'Na fila'], ['Instituto Granja', 'Validada', 'Não encontrado', '—', 'Fora da fila: Dados insuficientes'], ['Clínica Fora', 'Não verificada', 'Não encontrado', '—', '—']]);
+  assert.deepEqual(linhas, [['Clínica Alfa', 'Não verificado', 'Validada', 'Encontrado', 'Instagram, Google Meu Negócio', 'Na fila'], ['Instituto Granja', 'Não verificado', 'Validada', 'Não encontrado', '—', 'Fora da fila: Dados insuficientes'], ['Clínica Fora', 'Não verificado', 'Não verificada', 'Não encontrado', '—', '—']]);
   assert.doesNotMatch(t.tela(), /https:\/\/|\{|"status"/, 'nenhuma URL técnica nem JSON na tabela');
 });
 test('[DASH-JOB-8] destroy() para o acompanhamento (trocar de tela não deixa consulta pendurada) e falhas passageiras de rede não derrubam a tela', async () => {
@@ -333,4 +340,38 @@ test('[DASH-JOB-REP] reposição (2.2): durante a execução mostra "Leads na Ap
   await sem.browser.flush(8);
   await sem.rodarAgendada();
   assert.equal(sem.browser.by.id(sem.browser.root, 'pros-job-replenish'), null, 'sem reposição nada é mostrado');
+});
+
+test('[DASH-JOB-3.0] resultado padronizado, máximo de candidatos (padrão 50, até 100) e REFAZER PROSPECÇÃO (sem CANCELAR depois de terminar)', async () => {
+  const resumo = { solicitados: 3, limiteDeCandidatos: 50, candidatosProcessados: 8, descobertos: 9, novos: 8, repetidos: 1, validados: 4, naoValidados: 4, naApprovalQueue: 3, jaExistentes: 1, dadosInsuficientes: 0, duplicados: 0, dnc: 0, reposicoes: 1, enriquecidos: 3, tempoMs: 98000, custoUsd: 0.31, aprovados: 1, rejeitados: 0, promovidos: 0 };
+  const t = await montar({ respostas: [job({ status: 'CONCLUIDO', currentStep: 'FINALIZADO', progress: 100, candidatesDiscovered: 9, candidatesValidated: 4, candidatesRejected: 4, elapsedMs: 98000, resumo, lote: { loteId: 'lote:x', naFila: 3, foraDaFila: 1 } })] });
+  await selecionar(t);
+  const campo = t.browser.by.id(t.browser.root, 'pros-max-candidates');
+  assert.equal(campo.value, '50', 'o padrão é 50');
+  t.browser.type(campo, '80');
+  t.browser.click(t.browser.by.id(t.browser.root, 'pros-start-job'));
+  await t.browser.flush(8);
+  assert.deepEqual(t.chamadas.filter(([nome]) => nome === 'max'), [['max', 80]]);
+  await t.rodarAgendada();
+
+  const resumoNaTela = t.browser.by.id(t.browser.root, 'pros-job-summary');
+  assert.ok(resumoNaTela);
+  const texto = resumoNaTela.textContent.replace(/\s+/g, ' ');
+  for (const rotulo of ['Solicitados', 'Candidatos processados', 'Validados', 'Na Approval Queue', 'Já existentes', 'Dados insuficientes', 'Duplicados', 'DNC', 'Reposições', 'Tempo', 'Custo das pesquisas']) assert.ok(texto.includes(rotulo), rotulo);
+  assert.equal(t.browser.by.id(t.browser.root, 'pros-cancel-job'), null, 'sem CANCELAR depois de terminar');
+
+  t.browser.click(t.browser.by.id(t.browser.root, 'pros-redo-job'));
+  await t.browser.flush(8);
+  assert.deepEqual(t.chamadas.filter(([nome]) => nome === 'redo'), [['redo', 'JOB-20261006-001']]);
+  assert.match(t.tela(), /Em execução/, 'a tela passa a acompanhar o job novo');
+  assert.equal(t.browser.by.id(t.browser.root, 'pros-redo-job'), null, 'o job novo está ativo: sem refazer');
+  assert.ok(t.browser.by.id(t.browser.root, 'pros-cancel-job'), 'e agora, ativo, pode ser cancelado');
+
+  const invalido = await montar();
+  await selecionar(invalido);
+  invalido.browser.type(invalido.browser.by.id(invalido.browser.root, 'pros-max-candidates'), '101');
+  invalido.browser.click(invalido.browser.by.id(invalido.browser.root, 'pros-start-job'));
+  await invalido.browser.flush(8);
+  assert.deepEqual(invalido.chamadas.filter(([nome]) => nome === 'start'), [], 'acima de 100 nem chega à API');
+  assert.match(invalido.tela(), /entre 1 e 100/);
 });

@@ -9,6 +9,9 @@
 const { createProspectingJobService } = require('./prospectingJobService');
 const { createJsonFileJobRepository } = require('../research-prospector/jobRepository');
 const { createClaudeDiscoveryEngine } = require('../prospecting-adapters/claudeDiscoveryEngine');
+const { createClaudeEnrichmentEngine } = require('../prospecting-adapters/claudeEnrichmentEngine');
+const { createJsonFileLeadProfileRepository } = require('../research-prospector/leadProfileRepository');
+const { createLeadReconsiderationService } = require('./leadReconsiderationService');
 const { createHttpsTransport } = require('../research-adapters/httpsTransport');
 const { createPublicWeb } = require('../research-adapters/publicWeb');
 
@@ -17,7 +20,7 @@ const USER_AGENT = 'RioX7ResearcherV1/1.0 (pesquisa publica controlada)';
 const MAX_REQUESTS_PER_JOB = 500;
 
 function createFileBackedProspectingJobService(dependencies) {
-  const { authorizeProposer, briefService, filePath, checkPermanentExclusion, env, discoveryEngine, createFetchPage, limits, now } = dependencies || {};
+  const { authorizeProposer, briefService, filePath, profilesPath, checkPermanentExclusion, env, discoveryEngine, enrichmentEngine, createFetchPage, limits, now } = dependencies || {};
   if (filePath !== undefined && (typeof filePath !== 'string' || filePath.trim().length === 0)) {
     throw new Error('createFileBackedProspectingJobService: filePath, se informado, deve ser um texto não vazio');
   }
@@ -26,6 +29,10 @@ function createFileBackedProspectingJobService(dependencies) {
     briefService,
     repository: filePath === undefined ? createJsonFileJobRepository() : createJsonFileJobRepository(filePath),
     discoveryEngine: discoveryEngine || createClaudeDiscoveryEngine({ env }),
+    // o NÍVEL 3 (enriquecimento comercial): o motor real só é criado na composição de produção (quando o motor de descoberta também é o real) — um teste que injeta
+    // o motor de descoberta nunca dispara um `claude -p` sem querer
+    ...(enrichmentEngine !== undefined ? { enrichmentEngine } : discoveryEngine ? {} : { enrichmentEngine: createClaudeEnrichmentEngine({ env }) }),
+    profileRepository: profilesPath === undefined ? createJsonFileLeadProfileRepository() : createJsonFileLeadProfileRepository(profilesPath),
     createFetchPage: createFetchPage || (() => createPublicWeb({ transport: createHttpsTransport(), userAgent: USER_AGENT, maxRequests: MAX_REQUESTS_PER_JOB }).fetchPage),
     checkPermanentExclusion,
     ...(limits ? { limits } : {}),
@@ -33,4 +40,18 @@ function createFileBackedProspectingJobService(dependencies) {
   });
 }
 
-module.exports = { createFileBackedProspectingJobService, USER_AGENT, MAX_REQUESTS_PER_JOB };
+// Leads reprovados e reaprovação (Implementação 3.0) sobre a MESMA fila (queuePath), o MESMO CRM Service (só leitura) e o MESMO arquivo de perfis do job.
+function createFileBackedLeadReconsiderationService(dependencies) {
+  const { authorizeReviewer, crmService, queuePath, profilesPath } = dependencies || {};
+  if (profilesPath !== undefined && (typeof profilesPath !== 'string' || profilesPath.trim().length === 0)) {
+    throw new Error('createFileBackedLeadReconsiderationService: profilesPath, se informado, deve ser um texto não vazio');
+  }
+  return createLeadReconsiderationService({
+    authorizeReviewer,
+    crmService,
+    ...(queuePath === undefined ? {} : { queuePath }),
+    profileRepository: profilesPath === undefined ? createJsonFileLeadProfileRepository() : createJsonFileLeadProfileRepository(profilesPath),
+  });
+}
+
+module.exports = { createFileBackedProspectingJobService, createFileBackedLeadReconsiderationService, USER_AGENT, MAX_REQUESTS_PER_JOB };
