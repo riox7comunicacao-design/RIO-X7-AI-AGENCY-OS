@@ -73,7 +73,7 @@ const { createConfiguredProspectingExclusionService } = require('../services/pro
 const { createFileBackedProspectingBriefService } = require('../services/prospectingBriefFileService');
 // Prospecting Job Service (Fase 2 — "INICIAR PROSPECÇÃO"): a execução automática por cima do Brief Service (descoberta + validação + UMA ingestão
 // pelo caminho oficial). Arquivo próprio (data/prospecting-jobs.json, fora do Git); nenhuma tabela, nenhuma API paga.
-const { createFileBackedProspectingJobService, createFileBackedLeadReconsiderationService } = require('../services/prospectingJobFileService');
+const { createFileBackedProspectingJobService, createFileBackedLeadReconsiderationService, createFileBackedLeadEnrichmentService } = require('../services/prospectingJobFileService');
 const { createApp } = require('./app');
 
 const ROOT = path.join(__dirname, '..', '..');
@@ -238,6 +238,8 @@ function createServer(env = process.env, options = {}) {
     briefService: prospectingBriefService,
     filePath: resolveFile(env.RIO_X7_PROSPECTING_JOBS_PATH, undefined),
     profilesPath: resolveFile(env.RIO_X7_PROSPECTING_PROFILES_PATH, undefined),
+    queuePath: resolveFile(env.RIO_X7_QUEUE_PATH, undefined),
+    crmService,
     checkPermanentExclusion: prospectingExclusionService ? (finding) => prospectingExclusionService.isExcluded(finding) : undefined,
     env,
   });
@@ -245,6 +247,13 @@ function createServer(env = process.env, options = {}) {
 
   // Leads reprovados e reaprovação (Implementação 3.0): a MESMA fila e o MESMO CRM Service (só leitura), o MESMO arquivo de perfis do job (RIO_X7_PROSPECTING_PROFILES_PATH,
   // padrão data/prospecting-profiles.json, fora do Git). A reaprovação é decisão humana: só confere CRM e duplicidade (nada de exclusões nem DNC).
+  // COMPLETAR PESQUISA (3.0.2): o enriquecimento comercial aprofundado, sob demanda, de UM lead — a MESMA fila (só leitura) e o MESMO arquivo de perfis; o `claude -p` real só nasce aqui.
+  const leadEnrichmentService = createFileBackedLeadEnrichmentService({
+    authorizeReviewer: authorizeReviewerForApprovalQueue,
+    queuePath: resolveFile(env.RIO_X7_QUEUE_PATH, undefined),
+    profilesPath: resolveFile(env.RIO_X7_PROSPECTING_PROFILES_PATH, undefined),
+    env,
+  });
   const leadReconsiderationService = createFileBackedLeadReconsiderationService({
     authorizeReviewer: authorizeReviewerForApprovalQueue,
     crmService,
@@ -273,6 +282,7 @@ function createServer(env = process.env, options = {}) {
     prospectingBriefService,
     prospectingJobService,
     leadReconsiderationService,
+    leadEnrichmentService,
     prospectingExclusionService,
     funnelService,
     publicConfig: { supabaseUrl, supabaseAnonKey },

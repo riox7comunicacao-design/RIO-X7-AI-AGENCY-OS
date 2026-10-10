@@ -135,13 +135,13 @@ export function createProspectingView({ document, root, api, permissions, schedu
     selectedId: null,
     selected: null, // o brief carregado (getBrief)
     batch: null, // o lote real, quando selected.loteRealId existe
-    form: { nicho: '', subnicho: '', nivelGeografico: 'CIDADE', locais: '', pais: 'Brasil', quantidade: 50, observacoes: '' },
+    form: { nicho: '', subnicho: '', nivelGeografico: 'CIDADE', locais: '', pais: 'Brasil', quantidade: 50, maxCandidates: 50, observacoes: '' },
     findingsText: '',
     busy: false,
     message: null,
     job: null, // o job de prospecção automática do brief selecionado (o mais recente)
     manualOpen: false, // o "Modo manual" (fluxo antigo) está aberto?
-    maxCandidates: 50, // o máximo de candidatos examinados nesta execução (padrão 50, até 100)
+    maxByBrief: {}, // brief id -> o MÁXIMO DE CANDIDATOS escolhido no formulário (o brief em si não guarda isso: vai à API quando a prospecção é iniciada)
     candidateTypeFilter: 'TODOS', // filtro de tipoLead na tabela de candidatos examinados
   };
   let stopPolling = null;
@@ -230,13 +230,7 @@ export function createProspectingView({ document, root, api, permissions, schedu
     setMessage(null);
     render();
     try {
-      const limit = Math.trunc(Number(state.maxCandidates));
-      if (!Number.isInteger(limit) || limit < 1 || limit > 100) {
-        setMessage('error', 'Informe o máximo de candidatos entre 1 e 100.');
-        state.busy = false;
-        render();
-        return;
-      }
+      const limit = Number.isInteger(state.maxByBrief[state.selectedId]) ? state.maxByBrief[state.selectedId] : 50;
       const data = await api.startProspectingJob(state.selectedId, limit);
       state.job = data.item;
       pollFailures = 0;
@@ -358,6 +352,13 @@ export function createProspectingView({ document, root, api, permissions, schedu
     event.preventDefault();
     if (state.busy) return;
     const f = state.form;
+    // MÁXIMO DE CANDIDATOS (1..100) é o limite do motor, diferente da QUANTIDADE (leads desejados); o brief não o guarda: vai como `maxCandidates` ao iniciar a prospecção
+    const maxCandidates = Number(f.maxCandidates);
+    if (!Number.isInteger(maxCandidates) || maxCandidates < 1 || maxCandidates > 100) {
+      setMessage('error', 'Informe o máximo de candidatos entre 1 e 100.');
+      render();
+      return;
+    }
     const fields = { nicho: f.nicho, nivelGeografico: f.nivelGeografico, quantidade: Number(f.quantidade) };
     if (f.subnicho.trim() !== '') fields.subnicho = f.subnicho.trim();
     if (f.observacoes.trim() !== '') fields.observacoes = f.observacoes.trim();
@@ -370,7 +371,8 @@ export function createProspectingView({ document, root, api, permissions, schedu
     render();
     try {
       const criado = await api.createProspectingBrief(fields);
-      state.form = { nicho: '', subnicho: '', nivelGeografico: 'CIDADE', locais: '', pais: 'Brasil', quantidade: 50, observacoes: '' };
+      state.maxByBrief[criado.item.id] = maxCandidates;
+      state.form = { nicho: '', subnicho: '', nivelGeografico: 'CIDADE', locais: '', pais: 'Brasil', quantidade: 50, maxCandidates: 50, observacoes: '' };
       await load();
       await selectBrief(criado.item.id);
     } catch (error) {
@@ -415,6 +417,7 @@ export function createProspectingView({ document, root, api, permissions, schedu
     const locais = el('input', { id: 'pros-locais', value: f.locais, placeholder: 'Ex.: Petrópolis, Teresópolis', oninput: (e) => (f.locais = e.target.value) });
     const pais = el('input', { id: 'pros-pais', value: f.pais, oninput: (e) => (f.pais = e.target.value) });
     const quantidade = el('input', { id: 'pros-quantidade', type: 'number', min: '1', max: '300', value: String(f.quantidade), oninput: (e) => (f.quantidade = e.target.value) });
+    const maxCandidates = el('input', { id: 'pros-max-candidates', type: 'number', min: '1', max: '100', value: String(f.maxCandidates), oninput: (e) => (f.maxCandidates = e.target.value) });
     const observacoes = el('textarea', { id: 'pros-observacoes', rows: '2', oninput: (e) => (f.observacoes = e.target.value) }, f.observacoes);
 
     return el(
@@ -430,7 +433,12 @@ export function createProspectingView({ document, root, api, permissions, schedu
           ...(f.nivelGeografico === 'NACIONAL' ? [] : [locais])
         ),
         ...(f.nivelGeografico === 'NACIONAL' ? [el('div', { className: 'field' }, el('label', { for: 'pros-pais', text: 'País' }), pais)] : []),
-        el('div', { className: 'field' }, el('label', { for: 'pros-quantidade', text: 'Quantidade desejada (1–300)' }), quantidade)
+        el('div', { className: 'field' }, el('label', { for: 'pros-quantidade', text: 'Quantidade desejada (1–300)' }), quantidade),
+        el('div', { className: 'field' },
+          el('label', { for: 'pros-max-candidates', text: 'MÁXIMO DE CANDIDATOS (1–100)' }),
+          maxCandidates,
+          el('small', { className: 'muted', id: 'pros-max-candidates-help', text: 'Máximo de candidatos que o motor poderá processar nesta prospecção. A execução pode terminar antes quando atingir a quantidade desejada.' })
+        )
       ),
       el('div', { className: 'field' }, el('label', { for: 'pros-observacoes', text: 'Observações / objetivo (opcional)' }), observacoes),
       el('button', { type: 'submit', className: 'btn primary', disabled: state.busy || !canPropose, text: 'Criar lote' })
@@ -524,10 +532,6 @@ export function createProspectingView({ document, root, api, permissions, schedu
     if (startable && !active) {
       parts.push(
         el('p', { className: 'muted', text: 'A prospecção automática procura empresas na web, confere a página de cada uma e envia só as comprovadas para a aprovação.' }),
-        el('div', { className: 'field' },
-          el('label', { for: 'pros-max-candidates', text: 'Máximo de candidatos nesta execução (padrão 50, até 100)' }),
-          el('input', { id: 'pros-max-candidates', type: 'number', min: '1', max: '100', value: String(state.maxCandidates), oninput: (event) => { state.maxCandidates = event.target.value; } })
-        ),
         el('button', { type: 'button', className: 'btn primary', id: 'pros-start-job', disabled: state.busy, onclick: onStartJob, text: 'INICIAR PROSPECÇÃO' })
       );
     }

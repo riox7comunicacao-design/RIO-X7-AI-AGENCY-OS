@@ -40,8 +40,17 @@ const isPlainObject = (value) => {
   return prototype === Object.prototype || prototype === null;
 };
 
+// O CONTRATO DE RESPOSTA do Claude Code instalado (v2.1.267, `--output-format json`), conferido no próprio executável:
+//   término normal   { type: "result", subtype: "success", is_error: false, result: "<texto final>", num_turns, duration_api_ms, total_cost_usd, terminal_reason?, ... }
+//   interrupção real { type: "result", subtype: "error_max_turns" | "error_during_execution" | ..., is_error: true, errors: [...], num_turns, duration_api_ms, terminal_reason?, ... }  — SEM `result`
+// O limite de turnos (--max-turns) é aplicado sobre o contador interno do laço de consulta; `num_turns` é OUTRO contador e pode ser MAIOR que o limite numa execução que terminou normalmente.
+// Por isso o limite só é dado como atingido por `subtype: "error_max_turns"` (ou `terminal_reason: "max_turns"`) — nunca por `num_turns >= maxTurns`, que fica como mero aviso (`proximoDoLimite`).
+const CODE = /^[a-z][a-z_]{1,39}$/;
 function telemetryOf(output) {
   const out = {};
+  if (typeof output.subtype === 'string' && CODE.test(output.subtype)) out.subtype = output.subtype;
+  if (typeof output.terminal_reason === 'string' && CODE.test(output.terminal_reason)) out.terminalReason = output.terminal_reason;
+  if (Number.isInteger(output.duration_api_ms) && output.duration_api_ms >= 0) out.tempoApiMs = output.duration_api_ms;
   if (typeof output.total_cost_usd === 'number' && Number.isFinite(output.total_cost_usd) && output.total_cost_usd >= 0) out.custoUsd = output.total_cost_usd;
   if (Number.isInteger(output.num_turns) && output.num_turns >= 0) out.turnos = output.num_turns;
   if (isPlainObject(output.modelUsage)) {
@@ -121,18 +130,30 @@ function createClaudeRunner(options = {}) {
         });
         child.on('close', (code) => {
           if (settled) return;
-          if (code !== 0) return finish({ ok: false, code: 'EXIT_NONZERO' });
-          let output;
+          let output = null;
           try {
             output = JSON.parse(Buffer.concat(chunks).toString('utf8'));
           } catch {
-            return finish({ ok: false, code: 'OUTPUT_INVALID' });
+            output = null;
           }
+          // O LIMITE DE TURNOS (--max-turns) é um desfecho esperado, não um erro: o Claude Code o informa com subtype "error_max_turns" (e pode sair com código != 0). Nesse desfecho a resposta do Claude Code
+          // NÃO traz `result`; se uma versão trouxer um texto aproveitável (que passe no parse), ele volta com `limiteDeTurnos: true`; senão, MAX_TURNS (sem inventar nada). Só esse desfecho é limite.
+          const maxTurnsHit = isPlainObject(output) && (output.subtype === 'error_max_turns' || output.terminal_reason === 'max_turns');
+          // LIMITE DE USO da assinatura (ou de taxa): um desfecho DISTINTO de um erro qualquer — a tela precisa dizer "limite de uso atingido", não "erro". Só olha o texto do resultado; nada dele é guardado.
+          const usageLimit = isPlainObject(output) && /(usage limit|limit reached|rate limit|quota|limite de uso|too many requests|overloaded)/i.test(String(output.result || ''));
+          if (code !== 0 && !maxTurnsHit) return finish({ ok: false, code: usageLimit ? 'USAGE_LIMIT' : 'EXIT_NONZERO' });
           if (!isPlainObject(output)) return finish({ ok: false, code: 'OUTPUT_INVALID' });
-          if (output.is_error === true) return finish({ ok: false, code: 'AGENT_ERROR' });
+          if (maxTurnsHit) {
+            const partial = typeof output.result === 'string' ? parse(output.result) : null;
+            if (partial === null || partial === undefined) return finish({ ok: false, code: 'MAX_TURNS', limiteDeTurnos: true, ...telemetryOf(output) });
+            return finish({ ok: true, ...partial, limiteDeTurnos: true, ...telemetryOf(output) });
+          }
+          if (output.is_error === true) return finish({ ok: false, code: usageLimit ? 'USAGE_LIMIT' : 'AGENT_ERROR', ...telemetryOf(output) });
           const parsed = parse(output.result);
-          if (parsed === null || parsed === undefined) return finish({ ok: false, code: 'OUTPUT_INVALID' });
-          return finish({ ok: true, ...parsed, ...telemetryOf(output) });
+          if (parsed === null || parsed === undefined) return finish({ ok: false, code: 'OUTPUT_INVALID', ...telemetryOf(output) });
+          // um término NORMAL (success) com resposta válida nunca é "limite de turnos", mesmo com num_turns >= maxTurns: só avisa que chegou perto (`proximoDoLimite`)
+          const nearLimit = Number.isInteger(output.num_turns) && output.num_turns >= maxTurns;
+          return finish({ ok: true, ...parsed, ...(nearLimit ? { proximoDoLimite: true } : {}), ...telemetryOf(output) });
         });
         try {
           child.stdin.on('error', () => {});

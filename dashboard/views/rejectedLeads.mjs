@@ -13,6 +13,7 @@
 import { h, fill } from '../dom.mjs';
 import { textOf, formatDateTime } from '../format.mjs';
 import { buildLeadProfile } from './leadProfile.mjs';
+import { createEnrichmentPanel } from './leadEnrichmentPanel.mjs';
 
 const FILTERS = Object.freeze([
   ['TODOS', 'Todos'],
@@ -26,10 +27,10 @@ const STATE_LABELS = Object.freeze({ REJEITADO: 'Reprovado', DADOS_INSUFICIENTES
 
 const messageFor = (error) => (error && typeof error.serverMessage === 'string' && error.serverMessage !== '' ? error.serverMessage : 'Não foi possível concluir agora. Tente novamente em instantes.');
 
-export function createRejectedLeadsView({ document, root, api, permissions }) {
+export function createRejectedLeadsView({ document, root, api, permissions, schedule }) {
   const canReview = Boolean(permissions && permissions.canReview);
   const el = (tag, props, ...children) => h(document, tag, props, ...children);
-  const state = { status: 'idle', error: null, items: [], filtro: 'TODOS', openId: null, reason: '', busy: false, message: null };
+  const state = { status: 'idle', error: null, items: [], filtro: 'TODOS', openId: null, reason: '', busy: false, message: null, panels: {} };
   let destroyed = false;
 
   async function load() {
@@ -80,6 +81,18 @@ export function createRejectedLeadsView({ document, root, api, permissions }) {
     return el('div', { className: 'filter-bar', role: 'group', 'aria-label': 'Filtrar leads reprovados' }, ...FILTERS.map(([value, label]) => el('button', { type: 'button', className: `btn ${state.filtro === value ? 'primary' : 'secondary'}`, 'data-filter': value, 'aria-pressed': state.filtro === value ? 'true' : 'false', disabled: state.status === 'loading', onclick: () => setFilter(value), text: label })));
   }
 
+  // COMPLETAR PESQUISA / REVER SITE OFICIAL também aqui (3.0.2), com as MESMAS permissões (APPROVE:LEAD_APPROVAL, decidida pelo servidor). A pesquisa NÃO muda o estado do lead: ele continua
+  // reprovado (ou o que for) na Approval Queue — reaprovar, aprovar ou promover são ações humanas SEPARADAS e explícitas. Um painel por lead aberto, uma pesquisa por vez.
+  function panelFor(item) {
+    if (!canReview || typeof api.getLeadResearchStatus !== 'function' || typeof api.completeLeadResearch !== 'function') return null;
+    if (!state.panels[item.prospectId]) {
+      const panel = createEnrichmentPanel({ document, api, prospectId: item.prospectId, canRun: true, ...(schedule ? { schedule } : {}), onFinished: () => load() });
+      state.panels[item.prospectId] = panel;
+      panel.load();
+    }
+    return state.panels[item.prospectId];
+  }
+
   function detail(item) {
     const by = item.reprovadoPor ? `${textOf(item.reprovadoPor.name)} (${textOf(item.reprovadoPor.role)})` : 'Sistema (automático)';
     const nodes = [
@@ -92,7 +105,8 @@ export function createRejectedLeadsView({ document, root, api, permissions }) {
       ),
       el('h5', { text: 'Dados comerciais' }),
       buildLeadProfile(document, item.perfil),
-    ];
+      panelFor(item) ? panelFor(item).element : null,
+    ].filter(Boolean);
     if (item.estado === 'DNC') nodes.push(el('p', { className: 'notice bad', role: 'note', text: 'Este contato está em DNC (restrição de contato). Não é uma rejeição comercial e não pode ser reaprovado.' }));
     else if (!item.reaprovavel) nodes.push(el('p', { className: 'muted', text: 'Só um lead reprovado por um humano pode ser reaprovado.' }));
     else if (canReview) {
@@ -147,5 +161,12 @@ export function createRejectedLeadsView({ document, root, api, permissions }) {
     );
   }
 
-  return { load, render, destroy() { destroyed = true; } };
+  return {
+    load,
+    render,
+    destroy() {
+      destroyed = true;
+      for (const panel of Object.values(state.panels)) panel.destroy();
+    },
+  };
 }

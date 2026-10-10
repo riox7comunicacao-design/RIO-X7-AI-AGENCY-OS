@@ -1,7 +1,7 @@
 'use strict';
 
-// Implementação 3.0 — enriquecimento comercial dentro do MESMO job: descoberta -> validação -> ingestão -> enriquecimento (só dos entregues).
-// Peças REAIS: Brief Service, caminho oficial de ingestão, Approval Queue, perfil comercial. FAKES: motor de descoberta, motor de enriquecimento, leitura de página.
+// Implementação 3.0.2 — a prospecção automática é Descoberta -> Validação -> Ingestão -> Approval Queue: SEM enriquecimento aprofundado via Claude. O job só grava o perfil que o CÓDIGO extraiu das
+// páginas consultadas; o aprofundamento é sob demanda (leadEnrichment.test.js). Peças REAIS: Brief Service, caminho oficial de ingestão, Approval Queue, perfil comercial. FAKES: motores e leitura de página.
 
 const test = require('node:test');
 const assert = require('node:assert/strict');
@@ -30,97 +30,69 @@ const enriquecimentoFake = (respostas, { falha = false } = {}) => {
   };
 };
 
-test('[ENRICH-1] os leads ENTREGUES recebem perfil comercial determinístico (contatos, endereço, responsável com cargo) e UMA chamada de enriquecimento em lote', async (t) => {
+test('[AUTO-1] o job NÃO chama o motor de enriquecimento (mesmo se existir um injetado) e grava, para cada lead ENTREGUE, o perfil que o CÓDIGO extraiu das páginas já lidas: contatos, endereço, responsável com cargo explícito, redes, fontes', async (t) => {
   const paginas = { ...paginasBoas(), [siteDe('alfa')]: paginaRica('Clínica Alfa', 'alfa') };
-  const motor = enriquecimentoFake((pedido) => pedido.leads.map((lead) => ({
-    nome: lead.nome,
-    trafegoPago: { meta: { resultado: 'EVIDENCIA_ENCONTRADA', url: 'https://www.facebook.com/ads/library/?id=9', data: '2026-10-01' }, google: { resultado: 'NENHUMA_EVIDENCIA_PUBLICA_ENCONTRADA', url: 'https://adstransparency.google.com/?q=x' } },
-  })));
+  const motor = enriquecimentoFake(() => assert.fail('o motor de enriquecimento NÃO pode ser chamado pela prospecção automática'));
   const env = ambiente(t, { motor: motorFake({ rodadas: [{ candidatos: tresBons() }] }), paginas, enriquecimento: motor });
   const { job } = await iniciar(env);
   const fim = await env.servico.waitFor(job.id);
   assert.equal(fim.status, JOB_STATUS.CONCLUIDO);
-  assert.equal(motor.chamadas.length, 1, 'uma única chamada em lote para os 3 entregues');
-  assert.deepEqual(motor.chamadas[0].leads.map((l) => l.nome).sort(), ['Clínica Alfa', 'Clínica Beta', 'Clínica Gama']);
-  assert.deepEqual(Object.keys(motor.chamadas[0]).sort(), ['leads', 'signal', 'timeoutMs']);
-  assert.equal(JSON.stringify(motor.chamadas[0].leads).includes('MARCADOR'), false, 'nunca texto de página no pedido');
+  assert.equal(motor.chamadas.length, 0);
   const perfis = env.perfis.list();
   assert.equal(perfis.length, 3);
   const alfa = perfis.find((p) => p.empresa === 'Clínica Alfa');
   assert.equal(alfa.responsavel.nome, 'Ana Souza Lima');
-  assert.equal(alfa.responsavel.confianca, 'ALTA');
   assert.equal(alfa.endereco.cep, '25600-000');
   assert.equal(alfa.endereco.cidade, 'Petrópolis');
   assert.deepEqual(alfa.telefones.map((x) => x.numero), ['+552422223333']);
   assert.deepEqual(alfa.whatsapps.map((x) => x.numero), ['+5524988887777']);
   assert.deepEqual(alfa.emails.map((x) => x.email), ['contato@clinica.com.br']);
   assert.equal(alfa.siteOficial.status, 'ENCONTRADO');
-  assert.equal(alfa.trafegoPago.meta.status, 'EVIDENCIA_ENCONTRADA');
-  assert.equal(alfa.trafegoPago.google.status, 'NENHUMA_EVIDENCIA_PUBLICA_ENCONTRADA');
-  assert.equal(alfa.trafegoPago.tiktok.status, 'NAO_VERIFICADO');
-  assert.equal(alfa.atividadeRecente.janelas.ultimos30Dias, 'NAO_VERIFICADO');
-  assert.ok(alfa.fontesDescoberta.length > 0 && alfa.fontesValidacao.length > 0 && alfa.fontesEnriquecimento.length > 0, 'três famílias de fontes, separadas');
-  assert.deepEqual([fim.telemetria.enriquecimento.perfisGerados, fim.telemetria.enriquecimento.leadsEnriquecidos, fim.telemetria.enriquecimento.chamadas, fim.telemetria.enriquecimento.falhas], [3, 3, 1, 0]);
-  assert.equal(fim.telemetria.custoUsd, 0.05);
-  // o perfil é chaveado pelo prospectId que está na Approval Queue
+  assert.deepEqual([alfa.presencaDigital.instagram.url, alfa.presencaDigital.instagram.confirmacao], ['https://www.instagram.com/clinicaalfa', 'CONFIRMADO']);
+  assert.ok(alfa.fontesDescoberta.length > 0 && alfa.fontesValidacao.length > 0, 'fontes de descoberta e de validação');
+  assert.deepEqual([alfa.contexto.cidade, alfa.contexto.uf, alfa.contexto.nicho], ['Petrópolis', 'RJ', 'Clínicas de estética']);
+  // o aprofundamento fica PENDENTE e sob demanda: nada foi pesquisado por IA
+  assert.equal(alfa.enriquecimento.status, 'NAO_EXECUTADO');
+  assert.equal(alfa.enriquecimento.motivo, 'SOB_DEMANDA');
+  assert.ok(['trafegoPago', 'atividadeRecente'].every((c) => alfa.enriquecimento.camposPendentes.includes(c)));
+  assert.equal(alfa.enriquecimento.camposPendentes.includes('responsavel'), false, 'o que o código achou não é pendente');
+  assert.equal(alfa.trafegoPago.meta.status, 'NAO_VERIFICADO');
+  assert.equal(alfa.atividadeRecente.janelas.ultimos7Dias, 'NAO_VERIFICADO');
+  // custo e tempo: nenhuma etapa de enriquecimento
+  assert.deepEqual([fim.telemetria.enriquecimento.chamadas, fim.telemetria.enriquecimentoMs, fim.telemetria.custoUsd], [0, 0, 0]);
   const fila = createApprovalQueueService({ authorizeReviewer: authorizeReviewerForApprovalQueue, queuePath: path.join(env.dir, 'approval-queue.json') }).listQueue(admin());
   assert.equal(fila.length, 3);
   for (const item of fila) assert.ok(env.perfis.getById(item.prospectId), item.prospectId);
 });
 
-test('[ENRICH-2] responsável do motor só vale se a PÁGINA CITADA contém nome e cargo; sem isso o responsável NÃO é preenchido (nunca inferido)', async (t) => {
-  const citada = 'https://www.instagram.com/clinicabeta/';
-  const paginas = { ...paginasBoas(), [citada]: { ok: true, urlFinal: citada, links: [], texto: 'Clínica Beta — Fundador: Pedro Alves' } };
-  const motor = enriquecimentoFake((pedido) => pedido.leads.map((lead) => ({
-    nome: lead.nome,
-    responsavel: lead.nome === 'Clínica Beta' ? { nome: 'Pedro Alves', cargo: 'Fundador', origem: citada } : { nome: 'Fulano Inventado', cargo: 'Diretor', origem: 'https://www.instagram.com/outra/' },
-  })));
-  const env = ambiente(t, { motor: motorFake({ rodadas: [{ candidatos: tresBons() }] }), paginas, enriquecimento: motor });
+test('[AUTO-2] a ausência de contato/rede/site NÃO rejeita: lead cuja identidade, nicho e localização estão comprovados entra na fila com o perfil mínimo', async (t) => {
+  const env = ambiente(t, { motor: motorFake({ rodadas: [{ candidatos: tresBons() }] }), paginas: paginasBoas() });
   const { job } = await iniciar(env);
-  await env.servico.waitFor(job.id);
-  const perfis = env.perfis.list();
-  const beta = perfis.find((p) => p.empresa === 'Clínica Beta');
-  assert.deepEqual([beta.responsavel.nome, beta.responsavel.cargo, beta.responsavel.confianca], ['Pedro Alves', 'Fundador', 'MEDIA']);
-  for (const outro of perfis.filter((p) => p.empresa !== 'Clínica Beta')) assert.equal(outro.responsavel.status, 'NAO_ENCONTRADO', outro.empresa);
-});
-
-test('[ENRICH-3] sem motor de enriquecimento, ou com o motor falhando, o lead continua entregue e o perfil fica com tudo NAO_VERIFICADO/NAO_ENCONTRADO', async (t) => {
-  for (const enriquecimento of [undefined, enriquecimentoFake(() => [], { falha: true })]) {
-    const env = ambiente(t, { motor: motorFake({ rodadas: [{ candidatos: tresBons() }] }), paginas: paginasBoas(), enriquecimento });
-    const { job } = await iniciar(env);
-    const fim = await env.servico.waitFor(job.id);
-    assert.equal(fim.status, JOB_STATUS.CONCLUIDO, 'a entrega não depende do enriquecimento');
-    assert.equal(fim.lote.naFila, 3);
-    const perfis = env.perfis.list();
-    assert.equal(perfis.length, 3);
-    for (const perfil of perfis) {
-      assert.equal(perfil.trafegoPago.meta.status, 'NAO_VERIFICADO');
-      assert.equal(perfil.atividadeRecente.ultimaPostagem, null);
-      assert.equal(perfil.responsavel.status, 'NAO_ENCONTRADO');
-    }
-    if (enriquecimento) assert.equal(fim.telemetria.enriquecimento.falhas, 3);
+  const fim = await env.servico.waitFor(job.id);
+  assert.equal(fim.status, JOB_STATUS.CONCLUIDO);
+  for (const perfil of env.perfis.list()) {
+    assert.deepEqual([perfil.telefones, perfil.whatsapps, perfil.emails], [[], [], []]);
+    assert.equal(perfil.responsavel.status, 'NAO_ENCONTRADO');
+    assert.equal(perfil.enriquecimento.status, 'NAO_EXECUTADO');
   }
 });
 
-test('[ENRICH-4] só os validados e entregues são enriquecidos: candidato não validado e lead retido não geram perfil nem entram no pedido', async (t) => {
-  const motor = enriquecimentoFake((pedido) => pedido.leads.map((lead) => ({ nome: lead.nome })));
+test('[AUTO-3] só os validados e ENTREGUES ganham perfil: candidato não validado e lead retido pelo pipeline não geram perfil', async (t) => {
   const candidatos = [candidato('Clínica Alfa', 'alfa'), candidato('Clínica Sem Prova', 'semprova'), candidato('Clínica Gama', 'gama')];
   const paginas = { ...paginasBoas(), [siteDe('semprova')]: paginaBoa('Clínica Sem Prova', 'semprova', { sem: ['localizacao'] }) };
-  const env = ambiente(t, { motor: motorFake({ rodadas: [{ candidatos }, { candidatos: [] }] }), paginas, enriquecimento: motor });
+  const env = ambiente(t, { motor: motorFake({ rodadas: [{ candidatos }, { candidatos: [] }] }), paginas });
   const { job } = await iniciar(env, { quantidade: 2 });
   const fim = await env.servico.waitFor(job.id);
   assert.equal(fim.status, JOB_STATUS.CONCLUIDO);
-  assert.deepEqual(motor.chamadas.flatMap((c) => c.leads.map((l) => l.nome)).sort(), ['Clínica Alfa', 'Clínica Gama']);
   assert.deepEqual(env.perfis.list().map((p) => p.empresa).sort(), ['Clínica Alfa', 'Clínica Gama']);
 });
 
-test('[ENRICH-5] lead SEM site e sem rede social: VALIDADO, entra na Approval Queue e é enriquecido normalmente (site NAO_ENCONTRADO, nunca "não possui")', async (t) => {
+test('[AUTO-4] lead SEM site e sem rede social: VALIDADO, entra na Approval Queue com perfil mínimo (site NAO_ENCONTRADO, nunca "não possui"); a notícia/diretório fica em outras presenças e não gera contato', async (t) => {
   const noticia = 'https://portal.example.test/noticia-delta';
   const { paginaTerceiro } = require('../helpers/jobFixtures');
-  const paginas = { ...paginasBoas(), [noticia]: paginaTerceiro(noticia, { texto: 'Clínica Delta, clínica de estética e harmonização facial em Petrópolis - RJ, inaugurou novo espaço.' }) };
+  const paginas = { ...paginasBoas(), [noticia]: paginaTerceiro(noticia, { texto: 'Clínica Delta, clínica de estética e harmonização facial em Petrópolis - RJ, inaugurou novo espaço. Fale conosco: (24) 99999-0000.' }) };
   const delta = { nome: 'Clínica Delta', siteOficial: null, fontesDescoberta: [{ url: noticia, tipo: 'NOTICIA_OU_TERCEIRO' }], presencaDigital: {} };
-  const motor = enriquecimentoFake(() => []);
-  const env = ambiente(t, { motor: motorFake({ rodadas: [{ candidatos: [delta] }, { candidatos: [] }] }), paginas, enriquecimento: motor });
+  const env = ambiente(t, { motor: motorFake({ rodadas: [{ candidatos: [delta] }, { candidatos: [] }] }), paginas });
   const { job } = await iniciar(env, { quantidade: 1 });
   const fim = await env.servico.waitFor(job.id);
   assert.equal(fim.candidatos[0].resultado, 'VALIDADO');
@@ -131,7 +103,7 @@ test('[ENRICH-5] lead SEM site e sem rede social: VALIDADO, entra na Approval Qu
   assert.equal(perfil.siteOficial.status, 'NAO_ENCONTRADO');
   assert.deepEqual([perfil.telefones, perfil.whatsapps, perfil.emails], [[], [], []], 'contatos só do site oficial: nunca de uma notícia');
   assert.equal(perfil.outrasPresencas.some((o) => o.url === noticia), true);
-  assert.equal(motor.chamadas.length, 1, 'o lead sem site é enriquecido como qualquer outro');
+  assert.equal(perfil.enriquecimento.camposPendentes.includes('siteOficial'), true, 'o site pendente pode ser buscado sob demanda');
 });
 
 test('[REDO-1] REFAZER PROSPECÇÃO: job novo, brief novo com o mesmo briefing; o job anterior fica intacto; só job terminado; o que já está na fila não volta como entrega', async (t) => {
@@ -173,7 +145,7 @@ test('[RESUMO-1] o resumo do job é padronizado e sem dupla contagem: solicitado
   const env = ambiente(t, { motor: motorFake({ rodadas: [{ candidatos: tresBons(), telemetria: { custoUsd: 0.2, webSearchRequests: 2 } }] }), paginas: paginasBoas() });
   const { job } = await iniciar(env, { quantidade: 3 });
   const fim = await env.servico.waitFor(job.id);
-  assert.deepEqual(Object.keys(fim.resumo).sort(), ['candidatosProcessados', 'custoUsd', 'dadosInsuficientes', 'descobertos', 'dnc', 'duplicados', 'enriquecidos', 'jaExistentes', 'limiteDeCandidatos', 'naApprovalQueue', 'naoValidados', 'novos', 'repetidos', 'reposicoes', 'solicitados', 'tempoMs', 'validados']);
+  assert.deepEqual(Object.keys(fim.resumo).sort(), ['candidatosProcessados', 'custoUsd', 'dadosInsuficientes', 'descobertaSegundos', 'descobertos', 'dnc', 'duplicados', 'enriquecidos', 'enriquecimentoSegundos', 'ingestaoSegundos', 'jaExistentes', 'limiteDeCandidatos', 'naApprovalQueue', 'naoValidados', 'novos', 'repetidos', 'repetidosDnc', 'repetidosDuplicados', 'repetidosNaFila', 'repetidosNoJob', 'reposicoes', 'solicitados', 'tempoMs', 'totalSegundos', 'validacaoSegundos', 'validados']);
   assert.deepEqual([fim.resumo.solicitados, fim.resumo.candidatosProcessados, fim.resumo.validados, fim.resumo.naApprovalQueue, fim.resumo.jaExistentes, fim.resumo.limiteDeCandidatos], [3, 3, 3, 3, 0, 50]);
   assert.equal(fim.resumo.custoUsd, 0.2);
   assert.deepEqual(fim.lote.prospectIds.length, 3);

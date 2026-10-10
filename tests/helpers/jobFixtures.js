@@ -16,6 +16,7 @@ const { createFileBackedProspectingService } = require('../../src/services/prosp
 const { createFileBackedCrmService } = require('../../src/services/crmFileService');
 const { createInMemoryBriefRepository } = require('../../src/research-prospector/briefRepository');
 const { createInMemoryJobRepository } = require('../../src/research-prospector/jobRepository');
+const { createKnownLeadIdentities } = require('../../src/services/knownLeadIdentities');
 const { createInMemoryLeadProfileRepository } = require('../../src/research-prospector/leadProfileRepository');
 const { admin } = require('./promotionFixtures');
 
@@ -85,7 +86,7 @@ function esperaAteAbortar() {
   return { espera, liberar };
 }
 
-function ambiente(t, { motor, paginas = {}, fetchPage: fetchPageProprio, exclusao, limits, briefService: briefServiceProprio, repository, now, enriquecimento } = {}) {
+function ambiente(t, { motor, paginas = {}, fetchPage: fetchPageProprio, exclusao, limits, briefService: briefServiceProprio, repository, now, enriquecimento, conhecidos } = {}) {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'job-svc-'));
   t.after(() => fs.rmSync(dir, { recursive: true, force: true }));
   const crmService = createFileBackedCrmService({ authorizeOperation: authorizeCrmOperation, filePath: path.join(dir, 'crm.json') });
@@ -132,6 +133,9 @@ function ambiente(t, { motor, paginas = {}, fetchPage: fetchPageProprio, exclusa
   const perfis = createInMemoryLeadProfileRepository();
   const servico = createProspectingJobService({
     profileRepository: perfis,
+    // a lista de identidades JÁ CONHECIDAS (fila + CRM reais do ambiente) que a descoberta recebe: só com `conhecidos: true` (3.0.1). Sem ela é o fluxo ANTERIOR, em que a deduplicação
+    // do pipeline (DNC, duplicado, já na fila) é quem barra — os testes dessa barreira continuam valendo e provam que ela segue sendo a autoridade final.
+    ...(typeof conhecidos === 'function' ? { knownIdentities: conhecidos } : conhecidos !== true ? {} : { knownIdentities: createKnownLeadIdentities({ queuePath: path.join(dir, 'approval-queue.json'), crmService }) }),
     ...(enriquecimento ? { enrichmentEngine: enriquecimento } : {}),
     authorizeProposer: authorizeProposerForLeadApproval,
     briefService: briefServiceProprio ? briefServiceProprio(briefService) : espiao,

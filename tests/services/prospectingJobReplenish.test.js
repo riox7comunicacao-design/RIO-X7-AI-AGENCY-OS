@@ -67,16 +67,16 @@ test('[REPLENISH-2] meta 3; a 1ª rodada entrega 2; a reposição entrega 0 (o n
   assert.equal(fim.telemetria.reposicoesNecessarias, 2);
 });
 
-test('[REPLENISH-3] a reposição só encontra um candidato JÁ CONHECIDO -> nenhum candidato novo -> PARCIAL, sem reprocessar e sem repetir a chamada', async (t) => {
-  const motor = rodadasDe(tresBons(), [candidato('Clínica Alfa', 'alfa')], unicos('Z', 5));
+test('[REPLENISH-3] a reposição só encontra um candidato JÁ CONHECIDO (duas rodadas seguidas) -> nenhum candidato novo -> PARCIAL, sem reprocessar', async (t) => {
+  const motor = rodadasDe(tresBons(), [candidato('Clínica Alfa', 'alfa')], [candidato('Clínica Alfa', 'alfa')], unicos('Z', 5));
   const env = ambiente(t, { motor, paginas: paginasBoas() });
   await marcarDnc(env, ['alfa']);
   const { fim } = await rodar(env);
   assert.equal(fim.status, JOB_STATUS.PARCIAL);
-  assert.equal(motor.pedidos.length, 2, 'a rodada sem candidatos novos encerra: nenhuma 3ª chamada idêntica');
+  assert.equal(motor.pedidos.length, 3, 'a 1ª rodada só de repetidos ainda tenta a reposição; a 2ª seguida encerra: nenhuma 4ª chamada');
   assert.deepEqual(env.ingestoes, [3], 'nada voltou à ingestão');
   assert.equal(env.paginasChamadas.filter((url) => url === siteDe('alfa')).length, 1, 'a Alfa (DNC, conhecida) não foi lida de novo');
-  assert.deepEqual([fim.telemetria.candidatosNovos, fim.telemetria.candidatosRepetidos, fim.telemetria.candidatosDescobertos], [3, 1, 4]);
+  assert.deepEqual([fim.telemetria.candidatosNovos, fim.telemetria.candidatosRepetidos, fim.telemetria.candidatosDescobertos], [3, 2, 5]);
   assert.equal(fim.telemetria.limitReached, STOP_REASON.SEM_CANDIDATOS_NOVOS);
   assert.ok(codigos(fim).includes('REPOSICAO_SEM_CANDIDATOS_NOVOS'));
   assert.equal(codigos(fim).includes('META_ATINGIDA'), false);

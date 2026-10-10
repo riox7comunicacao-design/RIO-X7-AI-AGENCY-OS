@@ -172,6 +172,13 @@ export function createApiClient({ getAccessToken, refreshAccessToken, onSessionL
     // Leads reprovados e reaprovação (Implementação 3.0): o corpo da reaprovação é só { reason } — a identidade vem do token.
     listRejectedLeads: (filtro) => request('GET', typeof filtro === 'string' && filtro !== '' ? `/api/leads/reprovados?filtro=${encodeURIComponent(filtro)}` : '/api/leads/reprovados'),
     reapproveLead: (prospectId, reason) => request('POST', `/api/leads/reprovados/${encodeURIComponent(prospectId)}/reaprovar`, typeof reason === 'string' && reason !== '' ? { reason } : {}),
+    // COMPLETAR PESQUISA (3.0.2): estado e início do enriquecimento sob demanda de UM lead (corpo vazio: o servidor decide o que pesquisar).
+    getLeadResearchStatus: (prospectId) => request('GET', `/api/leads/${encodeURIComponent(prospectId)}/completar-pesquisa`),
+    completeLeadResearch: (prospectId) => request('POST', `/api/leads/${encodeURIComponent(prospectId)}/completar-pesquisa`, {}),
+    // REVER SITE OFICIAL: ação explícita de UM lead (corpo vazio)
+    // A DECISÃO humana sobre a proposta de novo domínio: exatamente { decisao: 'CONFIRMAR' | 'MANTER' } (o usuário vem do token; nenhuma pesquisa)
+    decideLeadSiteProposal: (prospectId, decisao) => request('POST', `/api/leads/${encodeURIComponent(prospectId)}/proposta-site`, { decisao }),
+    reviewLeadSite: (prospectId) => request('POST', `/api/leads/${encodeURIComponent(prospectId)}/rever-site`, {}),
     getLeadProfile: (prospectId) => request('GET', `/api/leads/${encodeURIComponent(prospectId)}/perfil`),
     getProspectingJobStatus: (id) => request('GET', `/api/prospecting/jobs/${encodeURIComponent(id)}/status`),
     cancelProspectingJob: (id) => request('POST', `/api/prospecting/jobs/${encodeURIComponent(id)}/cancel`, {}),

@@ -38,6 +38,31 @@ export const LEAD_TYPE_LABELS = Object.freeze({
 });
 
 const NOT_FOUND = 'Não encontrado';
+const ENRICHMENT_LABELS = Object.freeze({ COMPLETO: 'Completo', INCOMPLETO: 'Pesquisa incompleta', FALHOU: 'Falhou', NAO_EXECUTADO: 'Não executado' });
+const FIELD_LABELS = Object.freeze({ responsavel: 'responsável', endereco: 'endereço', telefones: 'telefones', whatsapps: 'WhatsApps', emails: 'e-mails', presencaDigital: 'presença digital', trafegoPago: 'tráfego pago', atividadeRecente: 'atividade recente' });
+
+// O estado do enriquecimento comercial: nunca finge que está completo — mostra o que ficou NÃO VERIFICADO, o que foi não encontrado COM a verificação documentada (o que não prova que não existe) e se o
+// limite de turnos do motor foi atingido. Um registro ANTIGO (sem o resultado por campo, `resolucao`) não tem verificação documentada: o que ele listava como "não encontrado" aparece como NÃO VERIFICADO e um
+// "Completo" desse tipo é mostrado como pesquisa incompleta. Os dados já confirmados continuam acima.
+function enrichmentRow(document, info) {
+  if (!info || typeof info !== 'object') return null;
+  const labels = (list) => (Array.isArray(list) ? list : []).map((field) => FIELD_LABELS[field] || textOf(field));
+  const hasResult = typeof info.resolucao === 'object' && info.resolucao !== null && !Array.isArray(info.resolucao);
+  const pending = labels(info.camposPendentes);
+  const listed = labels(info.camposNaoEncontrados);
+  const documented = hasResult ? listed : [];
+  const unverified = hasResult ? pending : [...new Set([...pending, ...listed])];
+  const legacyComplete = info.status === 'COMPLETO' && !hasResult && unverified.length > 0;
+  return row(
+    document,
+    'Enriquecimento',
+    h(document, 'span', { text: legacyComplete ? ENRICHMENT_LABELS.INCOMPLETO : ENRICHMENT_LABELS[info.status] || 'Não verificado' }),
+    legacyComplete ? h(document, 'div', { className: 'muted', text: 'Registrado como Completo, mas sem verificação documentada dos campos que faltam (registro LEGADO).' }) : null,
+    info.limiteDeTurnos ? h(document, 'div', { className: 'muted', text: 'Limite de turnos do motor atingido.' }) : null,
+    unverified.length > 0 ? h(document, 'div', { className: 'muted', text: `Não verificado (pode ser pesquisado de novo): ${unverified.join(', ')}` }) : null,
+    documented.length > 0 ? h(document, 'div', { className: 'muted', text: `Não encontrado após verificação documentada: ${documented.join(', ')} (não prova que a informação não exista)` }) : null
+  );
+}
 
 function link(document, url, label) {
   const safe = safeHttpUrl(url);
@@ -74,7 +99,10 @@ export function buildLeadProfile(document, perfil) {
 
   const ownerBlock = owner.status === 'ENCONTRADO'
     ? [h(document, 'span', { text: `${textOf(owner.nome)} — ${textOf(owner.cargo) || 'cargo não informado'}` }), ' ', h(document, 'span', { className: 'muted', text: `(confiança ${textOf(owner.confianca) || 'não informada'}) ` }), link(document, owner.origem, 'fonte')]
-    : [h(document, 'span', { text: NOT_FOUND })];
+    : owner.status === 'PENDENTE_DE_CONFIRMACAO'
+      // encontrado numa fonte cujo vínculo com A EMPRESA não está demonstrado: NUNCA aparece como confirmado
+      ? [h(document, 'span', { className: 'badge warn', text: 'PENDENTE DE CONFIRMAÇÃO' }), ' ', h(document, 'span', { text: `${textOf(owner.nome)} — ${textOf(owner.cargo) || 'cargo não informado'}` }), ' ', link(document, owner.origem, 'fonte'), h(document, 'div', { className: 'muted', text: 'O vínculo desta fonte com a empresa não está demonstrado (nome, cargo e cidade iguais não bastam). Não use como contato confirmado.' })]
+      : [h(document, 'span', { text: NOT_FOUND })];
   const addressText = [textOf(address.rua), [textOf(address.cidade), textOf(address.estado)].filter(Boolean).join('/'), textOf(address.cep) ? `CEP ${textOf(address.cep)}` : ''].filter(Boolean).join(' · ');
   const addressBlock = address.status === 'ENCONTRADO' && addressText ? [h(document, 'span', { text: addressText }), ' ', link(document, address.origem, 'fonte')] : [h(document, 'span', { text: NOT_FOUND })];
 
@@ -118,6 +146,7 @@ export function buildLeadProfile(document, perfil) {
       h(document, 'div', { className: 'muted', text: WINDOWS.map(([key, label]) => `${label}: ${ACTIVITY_LABELS[windows[key]] || 'Não verificado'}`).join(' · ') }),
       perfil.dataPesquisa ? h(document, 'div', { className: 'muted', text: `Pesquisado em ${formatDate(perfil.dataPesquisa)}` }) : null
     ),
+    enrichmentRow(document, perfil.enriquecimento),
     row(document, 'Fontes de descoberta', sourceList(document, perfil.fontesDescoberta)),
     row(document, 'Fontes de validação', sourceList(document, perfil.fontesValidacao)),
     row(document, 'Fontes de enriquecimento', sourceList(document, perfil.fontesEnriquecimento)),
@@ -128,6 +157,8 @@ export function buildLeadProfile(document, perfil) {
 const SUMMARY_FIELDS = Object.freeze([
   ['solicitados', 'Solicitados'],
   ['candidatosProcessados', 'Candidatos processados'],
+  ['novos', 'Novos'],
+  ['repetidos', 'Repetidos'],
   ['validados', 'Validados'],
   ['naApprovalQueue', 'Na Approval Queue'],
   ['jaExistentes', 'Já existentes'],
@@ -138,6 +169,12 @@ const SUMMARY_FIELDS = Object.freeze([
   ['aprovados', 'Aprovados'],
   ['rejeitados', 'Rejeitados'],
   ['promovidos', 'Promovidos'],
+]);
+
+const TIME_FIELDS = Object.freeze([
+  ['descobertaSegundos', 'Descoberta'],
+  ['validacaoSegundos', 'Validação'],
+  ['enriquecimentoSegundos', 'Enriquecimento'],
 ]);
 
 function formatClock(ms) {
@@ -151,6 +188,11 @@ export function buildJobSummary(document, resumo) {
   const cells = SUMMARY_FIELDS.filter(([key]) => Number.isInteger(resumo[key])).map(([key, label]) =>
     h(document, 'div', { className: 'summary-cell', 'data-key': key }, h(document, 'span', { className: 'summary-value', text: String(resumo[key]) }), h(document, 'span', { className: 'summary-label', text: label }))
   );
+  // tempo de cada etapa, em segundos (só quando o servidor informou: jobs antigos não têm)
+  for (const [key, label] of TIME_FIELDS) {
+    // o enriquecimento aprofundado deixou de fazer parte da prospecção (3.0.2: é sob demanda): só aparece em jobs antigos que o mediram
+    if (typeof resumo[key] === 'number' && (key !== 'enriquecimentoSegundos' || resumo[key] > 0)) cells.push(h(document, 'div', { className: 'summary-cell', 'data-key': key }, h(document, 'span', { className: 'summary-value', text: `${resumo[key]}s` }), h(document, 'span', { className: 'summary-label', text: label })));
+  }
   cells.push(h(document, 'div', { className: 'summary-cell', 'data-key': 'tempoMs' }, h(document, 'span', { className: 'summary-value', text: formatClock(resumo.tempoMs) }), h(document, 'span', { className: 'summary-label', text: 'Tempo' })));
   if (typeof resumo.custoUsd === 'number') {
     cells.push(h(document, 'div', { className: 'summary-cell', 'data-key': 'custoUsd' }, h(document, 'span', { className: 'summary-value', text: `US$ ${resumo.custoUsd.toFixed(2)}` }), h(document, 'span', { className: 'summary-label', text: 'Custo das pesquisas' })));

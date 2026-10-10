@@ -23,6 +23,7 @@
 // vem SÓ do autorizador. Erros: `LeadReconsiderationError` com `code` estável para as barreiras; os da autorização passam intactos.
 
 const approvalQueueDomain = require('../research-prospector/approvalQueue');
+const commercialProfile = require('../research-prospector/commercialProfile');
 const { checkDuplicate } = require('../research-prospector/duplicateCheck');
 const { identityViews, toProspectorRecords } = require('../research-prospector/crmAdapter');
 const { DUPLICATE_STATUS } = require('../research-prospector/constants');
@@ -199,7 +200,8 @@ function createLeadReconsiderationService(dependencies) {
     authorize(context);
     const id = requireProspectId(prospectId);
     const profile = profileOf(id);
-    return profile ? copy(profile) : null;
+    // um responsável gravado SEM o vínculo com a empresa demonstrado é mostrado como PENDENTE_DE_CONFIRMACAO (o registro em disco não muda)
+    return profile ? copy(commercialProfile.presentProfile(profile)) : null;
   }
 
   return Object.freeze({ listReprovados, reconsiderLead, getProfile });

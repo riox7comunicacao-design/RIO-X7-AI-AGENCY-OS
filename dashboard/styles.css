@@ -432,3 +432,8 @@ table.crm-table td.empty { color: var(--muted); }
 @media (max-width: 760px) {
   .kv-row { grid-template-columns: 1fr; }
 }
+
+/* COMPLETAR PESQUISA (3.0.2): painel de enriquecimento sob demanda dentro da Análise comercial */
+.enrich-panel { margin-top: 12px; padding: 10px 12px; border: 1px solid var(--line); border-radius: 8px; background: var(--surface); }
+.enrich-panel .enrich-head { margin-bottom: 6px; }
+.enrich-panel progress { width: 100%; }

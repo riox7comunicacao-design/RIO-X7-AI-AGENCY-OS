@@ -344,12 +344,12 @@ test('[JOB-15c] no máximo 6 ciclos de descoberta (PARCIAL, CICLOS), mesmo que a
   assert.equal(fim.telemetria.limitReached, STOP_REASON.CICLOS);
 });
 
-test('[JOB-15d] parada por falta de candidatos: um ciclo sem NENHUM candidato novo (só repetidos) encerra a descoberta — PARCIAL, e nada é inventado', async (t) => {
-  const motor = motorFake({ rodadas: [{ candidatos: [candidato('Clínica Alfa', 'alfa')] }, { candidatos: [candidato('Clínica Alfa', 'alfa')] }, { candidatos: unicos('V', 5) }] });
+test('[JOB-15d] parada por falta de candidatos: DUAS rodadas seguidas sem NENHUM candidato novo (só repetidos) encerram a descoberta — PARCIAL, e nada é inventado (3.0.1: a 1ª rodada só de repetidos ainda tenta a reposição)', async (t) => {
+  const motor = motorFake({ rodadas: [{ candidatos: [candidato('Clínica Alfa', 'alfa')] }, { candidatos: [candidato('Clínica Alfa', 'alfa')] }, { candidatos: [candidato('Clínica Alfa', 'alfa')] }, { candidatos: unicos('V', 5) }] });
   const env = ambiente(t, { motor, paginas: paginasBoas() });
   const { job } = await iniciar(env, { quantidade: 3 });
   const fim = await env.servico.waitFor(job.id);
-  assert.equal(motor.pedidos.length, 2, 'o 3º ciclo nunca é pedido: o 2º não trouxe ninguém novo');
+  assert.equal(motor.pedidos.length, 3, 'o 4º ciclo nunca é pedido: o 2º e o 3º só trouxeram repetidos');
   assert.equal(fim.candidatesDiscovered, 1);
   assert.equal(fim.status, JOB_STATUS.PARCIAL);
   assert.equal(fim.telemetria.limitReached, STOP_REASON.SEM_CANDIDATOS_NOVOS);
@@ -490,7 +490,7 @@ test('[JOB-20] persistência mínima: nenhum texto de página, prompt nem achado
   assert.deepEqual(salvo.achadosValidados, []);
   assert.deepEqual(Object.keys(salvo.candidatos[0]).sort(), ['ciclo', 'empresa', 'entrega', 'evidencias', 'fonteDaValidacao', 'fontesDescoberta', 'localizacao', 'nicho', 'nome', 'outrasPresencas', 'presencaDigital', 'resultado', 'siteOficial', 'tipoLead', 'url']);
   for (const aspecto of ['empresa', 'nicho', 'localizacao']) assert.ok(salvo.candidatos[0].evidencias[aspecto].trecho.length <= 80, 'evidência curta');
-  assert.deepEqual(Object.keys(salvo.telemetria).sort(), ['candidatosDescobertos', 'candidatosNovos', 'candidatosRepetidos', 'ciclosExecutados', 'ciclosReposicao', 'custoUsd', 'discoveryMs', 'discoveryRuns', 'enriquecimento', 'eventos', 'foraDaFila', 'limitReached', 'naFila', 'reposicoesNecessarias', 'reposicoesRealizadas', 'validadosPeloMotor', 'validationMs', 'webSearchRequests']);
+  assert.deepEqual(Object.keys(salvo.telemetria).sort(), ['candidatosDescobertos', 'candidatosNovos', 'candidatosRepetidos', 'ciclosExecutados', 'ciclosReposicao', 'conhecidos', 'custoUsd', 'descobertaMs', 'descobertaSegundos', 'discoveryMs', 'discoveryRuns', 'enriquecimento', 'enriquecimentoMs', 'enriquecimentoSegundos', 'eventos', 'foraDaFila', 'ingestaoMs', 'ingestaoSegundos', 'jaEstavamNaFila', 'limitReached', 'naFila', 'repetidosPor', 'reposicoesNecessarias', 'reposicoesRealizadas', 'totalMs', 'totalSegundos', 'validacaoMs', 'validacaoSegundos', 'validadosPeloMotor', 'validationMs', 'webSearchRequests']);
 });
 
 test('[JOB-21] segurança do motor: o pedido leva só o que o brief diz (nunca texto de página, contexto de usuário nem CRM) e o Service não entrega ao motor nenhuma porta do CRM', async (t) => {
@@ -499,7 +499,7 @@ test('[JOB-21] segurança do motor: o pedido leva só o que o brief diz (nunca t
   const { job } = await iniciar(env, { subnicho: 'Harmonização' });
   await env.servico.waitFor(job.id);
   const pedido = motor.pedidos[0];
-  assert.deepEqual(Object.keys(pedido).sort(), ['cidade', 'excluir', 'limit', 'nicho', 'signal', 'subnicho', 'timeoutMs', 'uf']);
+  assert.deepEqual(Object.keys(pedido).sort(), ['cidade', 'conhecidos', 'excluir', 'limit', 'nicho', 'signal', 'subnicho', 'timeoutMs', 'uf']);
   assert.deepEqual([pedido.nicho, pedido.subnicho, pedido.cidade, pedido.uf], ['Clínicas de estética', 'Harmonização', 'Petrópolis', 'RJ']);
   assert.equal(JSON.stringify({ ...pedido, signal: undefined }).includes(MARCADOR), false);
   const codigo = fs.readFileSync(path.join(__dirname, '..', '..', 'src', 'services', 'prospectingJobService.js'), 'utf8').replace(/\/\/.*$/gm, '');

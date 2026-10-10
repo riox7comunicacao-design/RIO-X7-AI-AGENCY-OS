@@ -154,7 +154,8 @@ test('[ENG-6] falhas viram códigos estáveis, sem lançar: saída não-JSON, is
   const quando = async (script, extras = {}) => createClaudeDiscoveryEngine({ spawn: spawnFake(script).spawn, platform: 'linux', ...extras }).discover(PEDIDO);
   assert.deepEqual(await quando(responder('isto não é json')), { ok: false, code: 'OUTPUT_INVALID' });
   assert.deepEqual(await quando(responder(JSON.stringify({ is_error: true, result: 'x' }))), { ok: false, code: 'AGENT_ERROR' });
-  assert.deepEqual(await quando(responder(saidaClaude('sem nenhuma lista de candidatos'))), { ok: false, code: 'OUTPUT_INVALID' });
+  // a falha de uma resposta que o Claude Code JÁ cobrou traz a telemetria real (custo, turnos, WebSearch): nada se esconde
+  assert.deepEqual(await quando(responder(saidaClaude('sem nenhuma lista de candidatos'))), { ok: false, code: 'OUTPUT_INVALID', custoUsd: 0.3156, turnos: 9, webSearchRequests: 4 });
   assert.deepEqual(await quando(responder('{}', 1)), { ok: false, code: 'EXIT_NONZERO' });
   const gigante = await quando((child) => child.stdout.emit('data', Buffer.alloc(5000, 97)), { maxOutputBytes: 2048 });
   assert.deepEqual(gigante, { ok: false, code: 'OUTPUT_TOO_LARGE' });

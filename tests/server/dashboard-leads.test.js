@@ -27,7 +27,7 @@ const PERFIL = {
   dataPesquisa: '2026-10-07',
 };
 const LEAD = (extras = {}) => ({ prospectId: 'pid-alfa', empresa: 'Clínica Alfa', estado: 'REJEITADO', reaprovavel: true, reprovadoEm: '2026-10-07T12:00:00.000Z', reprovadoPor: { userId: 'u1', name: 'Rafael Closer', role: 'COMMERCIAL_CLOSER' }, origemDaDecisao: 'HUMANO', motivo: 'Sem fit', reaprovacoes: 0, jobOrigem: 'JOB-20261007-001', dadosComerciais: { empresa: 'Clínica Alfa' }, perfil: PERFIL, historico: [], ...extras });
-const RESUMO = { solicitados: 3, limiteDeCandidatos: 50, candidatosProcessados: 8, descobertos: 9, novos: 8, repetidos: 1, validados: 4, naoValidados: 4, naApprovalQueue: 3, jaExistentes: 1, dadosInsuficientes: 0, duplicados: 0, dnc: 0, reposicoes: 1, enriquecidos: 3, tempoMs: 98000, custoUsd: 0.31, aprovados: 1, rejeitados: 1, promovidos: 0 };
+const RESUMO = { solicitados: 3, limiteDeCandidatos: 50, candidatosProcessados: 8, descobertos: 9, novos: 8, repetidos: 1, validados: 4, naoValidados: 4, naApprovalQueue: 3, jaExistentes: 1, dadosInsuficientes: 0, duplicados: 0, dnc: 0, reposicoes: 1, enriquecidos: 3, tempoMs: 98000, descobertaSegundos: 41.5, validacaoSegundos: 8.2, enriquecimentoSegundos: 30, ingestaoSegundos: 1.1, totalSegundos: 98, custoUsd: 0.31, aprovados: 1, rejeitados: 1, promovidos: 0 };
 
 test('[DASH-LEADS-1] Leads Reprovados: filtros, dados comerciais completos (sem JSON), "Não verificado" onde não há prova, e REAPROVAR LEAD recarrega a lista', async () => {
   const { createRejectedLeadsView } = await import('../../dashboard/views/rejectedLeads.mjs');
@@ -120,8 +120,10 @@ test('[DASH-LEADS-3] Histórico: cada prospecção com o resumo padronizado; REF
   await view.load();
   await browser.flush();
   const tela = browser.root.textContent.replace(/\s+/g, ' ');
-  for (const rotulo of ['Solicitados', 'Candidatos processados', 'Validados', 'Na Approval Queue', 'Já existentes', 'Dados insuficientes', 'Duplicados', 'DNC', 'Reposições', 'Tempo', 'Aprovados', 'Rejeitados', 'Promovidos']) assert.ok(tela.includes(rotulo), rotulo);
+  for (const rotulo of ['Solicitados', 'Candidatos processados', 'Validados', 'Na Approval Queue', 'Já existentes', 'Dados insuficientes', 'Duplicados', 'DNC', 'Reposições', 'Tempo', 'Repetidos', 'Descoberta', 'Validação', 'Enriquecimento', 'Aprovados', 'Rejeitados', 'Promovidos']) assert.ok(tela.includes(rotulo), rotulo);
   assert.match(tela, /01:38/);
+  assert.match(tela, /41.5s/);
+  assert.match(tela, /30s/);
   assert.match(tela, /US\$ 0\.31/);
   assert.equal(porAttr(browser, 'data-redo', 'JOB-20261007-002'), null, 'job ativo não tem refazer');
   browser.click(porAttr(browser, 'data-redo', 'JOB-20261007-001'));
@@ -167,4 +169,47 @@ test('[DASH-LEADS-4] Approval Queue: ao abrir um lead, a análise comercial (per
   await leitor.flush(8);
   assert.deepEqual(buscas, ['pid-alfa', 'pid-manual'], 'sem permissão de revisão, o perfil nem é pedido');
   assert.doesNotMatch(leitor.root.textContent, /Análise comercial/);
+});
+
+test('[DASH-LEADS-5] o perfil mostra o estado do enriquecimento: incompleto, campos pendentes e limite de turnos atingido — nunca finge estar completo', async () => {
+  const { buildLeadProfile } = await import('../../dashboard/views/leadProfile.mjs');
+  const browser = createBrowser();
+  const mostrar = (enriquecimento) => {
+    browser.root.replaceChildren(buildLeadProfile(browser.document, { ...PERFIL, enriquecimento }));
+    return browser.root.textContent.replace(/\s+/g, ' ');
+  };
+  const incompleto = mostrar({ status: 'INCOMPLETO', camposPendentes: ['responsavel', 'trafegoPago'], limiteDeTurnos: true });
+  assert.match(incompleto, /EnriquecimentoPesquisa incompleta/);
+  assert.match(incompleto, /Limite de turnos do motor atingido/);
+  assert.match(incompleto, /Não verificado \(pode ser pesquisado de novo\): responsável, tráfego pago/);
+  assert.match(incompleto, /Ana Souza/, 'os dados já confirmados continuam à vista');
+  const completo = mostrar({ status: 'COMPLETO', camposPendentes: [], camposNaoEncontrados: ['emails'], resolucao: { emails: { status: 'NAO_ENCONTRADO_COM_VERIFICACAO', resolvido: true } }, limiteDeTurnos: false });
+  assert.match(completo, /EnriquecimentoCompleto/);
+  assert.match(completo, /Não encontrado após verificação documentada: e-mails \(não prova que a informação não exista\)/);
+  assert.doesNotMatch(completo, /Limite de turnos|Não verificado \(pode|não encontrado publicamente/);
+  // um registro ANTIGO marcado Completo, sem o resultado por campo, NÃO tem verificação documentada: aparece como pesquisa incompleta e o "não encontrado" dele como NÃO VERIFICADO
+  const legado = mostrar({ status: 'COMPLETO', camposPendentes: [], camposNaoEncontrados: ['responsavel', 'emails'], limiteDeTurnos: false });
+  assert.match(legado, /EnriquecimentoPesquisa incompleta/);
+  assert.match(legado, /Registrado como Completo, mas sem verificação documentada.*LEGADO/);
+  assert.match(legado, /Não verificado \(pode ser pesquisado de novo\): responsável, e-mails/);
+  assert.doesNotMatch(legado, /Não encontrado após verificação|publicamente/);
+  assert.match(mostrar({ status: 'NAO_EXECUTADO', camposPendentes: ['emails'] }), /Não executado/);
+  assert.doesNotMatch(mostrar(undefined), /Enriquecimento(Completo|Incompleto)/, 'perfil antigo (sem o campo) não afirma nada');
+});
+
+test('[DASH-LEADS-6] o responsável PENDENTE_DE_CONFIRMACAO é mostrado como pendente (selo + aviso), nunca como confirmado; o confirmado segue normal', async () => {
+  const { buildLeadProfile } = await import('../../dashboard/views/leadProfile.mjs');
+  const browser = createBrowser();
+  const mostrar = (responsavel) => {
+    browser.root.replaceChildren(buildLeadProfile(browser.document, { ...PERFIL, responsavel }));
+    return browser.root.textContent.replace(/\s+/g, ' ');
+  };
+  const pendente = mostrar({ status: 'PENDENTE_DE_CONFIRMACAO', nome: 'Pessoa Teste Alfa', cargo: 'Sócio-Administrador', origem: 'https://agregador-exemplo.com.br/empresas/1', confianca: 'MEDIA', vinculo: { demonstrado: false } });
+  assert.match(pendente, /PENDENTE DE CONFIRMAÇÃO/);
+  assert.match(pendente, /Pessoa Teste Alfa — Sócio-Administrador/);
+  assert.match(pendente, /O vínculo desta fonte com a empresa não está demonstrado.*Não use como contato confirmado/);
+  assert.doesNotMatch(pendente, /confiança MEDIA/, 'sem a confiança de um dado confirmado');
+  const confirmado = mostrar({ status: 'ENCONTRADO', nome: 'Ana Souza', cargo: 'Proprietária', origem: 'https://clinicaalfa.com.br/', confianca: 'ALTA' });
+  assert.doesNotMatch(confirmado, /PENDENTE DE CONFIRMAÇÃO/);
+  assert.match(confirmado, /Ana Souza — Proprietária/);
 });

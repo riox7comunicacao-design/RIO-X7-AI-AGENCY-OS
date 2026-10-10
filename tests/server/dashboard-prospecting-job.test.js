@@ -18,6 +18,12 @@ function criar({ briefs = [BRIEF], jobs = [], respostas = [], canPropose = true 
   let jobsNoServidor = [...jobs]; // o "servidor": o que a listagem devolve acompanha o que o status já informou
   const api = {
     listProspectingBriefs: async () => ({ items: briefAtual }),
+    createProspectingBrief: async (fields) => {
+      chamadas.push(['create', fields]);
+      const novo = { ...BRIEF, id: 'PROS-20261008-009', ...fields, cidades: [fields.cidades], contagens: null };
+      briefAtual = [novo, ...briefAtual];
+      return { item: novo };
+    },
     getProspectingBrief: async (id) => ({ item: briefAtual.find((b) => b.id === id) }),
     listProspectingJobs: async (briefId) => {
       chamadas.push(['listJobs', briefId]);
@@ -346,12 +352,10 @@ test('[DASH-JOB-3.0] resultado padronizado, máximo de candidatos (padrão 50, a
   const resumo = { solicitados: 3, limiteDeCandidatos: 50, candidatosProcessados: 8, descobertos: 9, novos: 8, repetidos: 1, validados: 4, naoValidados: 4, naApprovalQueue: 3, jaExistentes: 1, dadosInsuficientes: 0, duplicados: 0, dnc: 0, reposicoes: 1, enriquecidos: 3, tempoMs: 98000, custoUsd: 0.31, aprovados: 1, rejeitados: 0, promovidos: 0 };
   const t = await montar({ respostas: [job({ status: 'CONCLUIDO', currentStep: 'FINALIZADO', progress: 100, candidatesDiscovered: 9, candidatesValidated: 4, candidatesRejected: 4, elapsedMs: 98000, resumo, lote: { loteId: 'lote:x', naFila: 3, foraDaFila: 1 } })] });
   await selecionar(t);
-  const campo = t.browser.by.id(t.browser.root, 'pros-max-candidates');
-  assert.equal(campo.value, '50', 'o padrão é 50');
-  t.browser.type(campo, '80');
+  assert.equal(t.browser.by.tag(t.browser.root, 'input').filter((el) => el.id === 'pros-max-candidates').length, 1, 'um único campo de máximo (no formulário), nenhum duplicado no bloco de iniciar');
   t.browser.click(t.browser.by.id(t.browser.root, 'pros-start-job'));
   await t.browser.flush(8);
-  assert.deepEqual(t.chamadas.filter(([nome]) => nome === 'max'), [['max', 80]]);
+  assert.deepEqual(t.chamadas.filter(([nome]) => nome === 'max'), [['max', 50]]);
   await t.rodarAgendada();
 
   const resumoNaTela = t.browser.by.id(t.browser.root, 'pros-job-summary');
@@ -367,11 +371,77 @@ test('[DASH-JOB-3.0] resultado padronizado, máximo de candidatos (padrão 50, a
   assert.equal(t.browser.by.id(t.browser.root, 'pros-redo-job'), null, 'o job novo está ativo: sem refazer');
   assert.ok(t.browser.by.id(t.browser.root, 'pros-cancel-job'), 'e agora, ativo, pode ser cancelado');
 
-  const invalido = await montar();
-  await selecionar(invalido);
-  invalido.browser.type(invalido.browser.by.id(invalido.browser.root, 'pros-max-candidates'), '101');
-  invalido.browser.click(invalido.browser.by.id(invalido.browser.root, 'pros-start-job'));
-  await invalido.browser.flush(8);
-  assert.deepEqual(invalido.chamadas.filter(([nome]) => nome === 'start'), [], 'acima de 100 nem chega à API');
-  assert.match(invalido.tela(), /entre 1 e 100/);
+});
+
+// ---- MÁXIMO DE CANDIDATOS no formulário "Novo lote" -------------------------------------------------------------------------------------------------------------
+async function preencher(t, { quantidade, maximo }) {
+  const raiz = t.browser.root;
+  t.browser.type(t.browser.by.id(raiz, 'pros-nicho'), 'Clínicas de estética');
+  t.browser.type(t.browser.by.id(raiz, 'pros-locais'), 'Petrópolis/RJ');
+  if (quantidade !== undefined) t.browser.type(t.browser.by.id(raiz, 'pros-quantidade'), String(quantidade));
+  if (maximo !== undefined) t.browser.type(t.browser.by.id(raiz, 'pros-max-candidates'), String(maximo));
+}
+const criarLote = async (t) => {
+  t.browser.click(t.browser.by.text(t.browser.root, 'Criar lote', 'button'));
+  await t.browser.flush(10);
+};
+
+test('[DASH-MAXCAND-1] o campo MÁXIMO DE CANDIDATOS aparece no formulário, ao lado da quantidade desejada, com mín. 1, máx. 100, padrão 50 e o texto auxiliar', async () => {
+  const t = await montar({ briefs: [] });
+  const campo = t.browser.by.id(t.browser.root, 'pros-max-candidates');
+  assert.ok(campo);
+  assert.deepEqual([campo.getAttribute('type'), campo.getAttribute('min'), campo.getAttribute('max'), campo.value], ['number', '1', '100', '50']);
+  assert.ok(t.browser.by.text(t.browser.root, 'MÁXIMO DE CANDIDATOS (1–100)', 'label'));
+  assert.equal(t.browser.by.id(t.browser.root, 'pros-max-candidates-help').textContent, 'Máximo de candidatos que o motor poderá processar nesta prospecção. A execução pode terminar antes quando atingir a quantidade desejada.');
+  const quantidade = t.browser.by.id(t.browser.root, 'pros-quantidade');
+  assert.equal(quantidade.value, '50', 'a quantidade desejada continua com o seu campo e o seu padrão');
+  assert.equal(quantidade.getAttribute('max'), '300', 'e com o seu limite (1–300), diferente do máximo de candidatos');
+  assert.equal(campo.parentNode.parentNode, quantidade.parentNode.parentNode, 'os dois campos ficam lado a lado na mesma grade do formulário');
+});
+
+test('[DASH-MAXCAND-2] quantidade 3 + máximo 10: o lote é criado só com os campos do brief (quantidade 3) e a prospecção iniciada leva maxCandidates = 10 (quantidade e máximo nunca se confundem)', async () => {
+  const t = await montar({ briefs: [] });
+  await preencher(t, { quantidade: 3, maximo: 10 });
+  await criarLote(t);
+  const criacao = t.chamadas.filter(([nome]) => nome === 'create');
+  assert.equal(criacao.length, 1);
+  assert.equal(criacao[0][1].quantidade, 3);
+  assert.equal('maxCandidates' in criacao[0][1], false, 'o brief não conhece maxCandidates (a API de briefs recusa campos desconhecidos)');
+  assert.deepEqual(Object.keys(criacao[0][1]).sort(), ['cidades', 'nicho', 'nivelGeografico', 'quantidade']);
+
+  t.browser.click(t.browser.by.id(t.browser.root, 'pros-start-job'));
+  await t.browser.flush(8);
+  assert.deepEqual(t.chamadas.filter(([nome]) => nome === 'start'), [['start', 'PROS-20261008-009']]);
+  assert.deepEqual(t.chamadas.filter(([nome]) => nome === 'max'), [['max', 10]], 'maxCandidates = 10 chega à API');
+});
+
+test('[DASH-MAXCAND-3] aceita 1 a 100 (inclusive os limites); 0, 101, vazio e decimal são recusados na tela, sem criar lote nem chamar a API', async () => {
+  for (const [maximo, esperado] of [[1, 1], [100, 100], [50, 50]]) {
+    const t = await montar({ briefs: [] });
+    await preencher(t, { quantidade: 3, maximo });
+    await criarLote(t);
+    t.browser.click(t.browser.by.id(t.browser.root, 'pros-start-job'));
+    await t.browser.flush(8);
+    assert.deepEqual(t.chamadas.filter(([nome]) => nome === 'max'), [['max', esperado]], String(maximo));
+  }
+  for (const invalido of ['0', '101', '', '7.5', '-3']) {
+    const t = await montar({ briefs: [] });
+    await preencher(t, { quantidade: 3, maximo: invalido });
+    await criarLote(t);
+    assert.deepEqual(t.chamadas.filter(([nome]) => nome === 'create'), [], `"${invalido}" não cria o lote`);
+    assert.match(t.tela(), /máximo de candidatos entre 1 e 100/);
+  }
+});
+
+test('[DASH-MAXCAND-4] sem mexer no campo o padrão 50 é enviado; os demais campos do formulário seguem como antes (nicho, locais, quantidade) e o formulário volta ao padrão depois de criar', async () => {
+  const t = await montar({ briefs: [] });
+  await preencher(t, { quantidade: 7 });
+  await criarLote(t);
+  const [, campos] = t.chamadas.find(([nome]) => nome === 'create');
+  assert.deepEqual({ nicho: campos.nicho, nivelGeografico: campos.nivelGeografico, quantidade: campos.quantidade, cidades: campos.cidades }, { nicho: 'Clínicas de estética', nivelGeografico: 'CIDADE', quantidade: 7, cidades: 'Petrópolis/RJ' });
+  t.browser.click(t.browser.by.id(t.browser.root, 'pros-start-job'));
+  await t.browser.flush(8);
+  assert.deepEqual(t.chamadas.filter(([nome]) => nome === 'max'), [['max', 50]]);
+  assert.equal(t.browser.by.id(t.browser.root, 'pros-max-candidates').value, '50', 'o formulário volta ao padrão depois de criar');
+  assert.equal(t.browser.by.id(t.browser.root, 'pros-quantidade').value, '50');
 });

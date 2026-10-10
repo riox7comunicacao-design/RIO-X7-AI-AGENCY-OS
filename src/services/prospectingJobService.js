@@ -141,7 +141,7 @@ const CHANNEL_RESULT_TYPE = Object.freeze({ instagram: 'INSTAGRAM', facebook: 'F
 //   processId, isProcessAlive (injetáveis nos testes): o job guarda o PID do processo que o executa; a recuperação NÃO marca como interrompido um job
 //   cujo processo (outro, ainda vivo) é o dono — por exemplo, uma suíte de testes não pode estragar a prospecção real de um servidor em execução
 function createProspectingJobService(dependencies) {
-  const { authorizeProposer, briefService, repository, discoveryEngine, enrichmentEngine = null, profileRepository = createInMemoryLeadProfileRepository(), createFetchPage, checkPermanentExclusion, now = () => new Date(), limits: limitOverrides = {}, processId = process.pid, isProcessAlive = defaultIsProcessAlive } = dependencies || {};
+  const { authorizeProposer, briefService, repository, discoveryEngine, knownIdentities = null, profileRepository = createInMemoryLeadProfileRepository(), createFetchPage, checkPermanentExclusion, now = () => new Date(), limits: limitOverrides = {}, processId = process.pid, isProcessAlive = defaultIsProcessAlive } = dependencies || {};
 
   if (typeof authorizeProposer !== 'function') throw new Error('createProspectingJobService exige { authorizeProposer } (função)');
   for (const method of ['getBrief', 'markResearching', 'ingestFindings', 'ingestReplacementFindings']) {
@@ -149,7 +149,7 @@ function createProspectingJobService(dependencies) {
   }
   assertValidJobRepository(repository);
   assertValidLeadProfileRepository(profileRepository);
-  if (enrichmentEngine !== null && (!enrichmentEngine || typeof enrichmentEngine.enrich !== 'function')) throw new Error('createProspectingJobService: enrichmentEngine, se informado, deve ter enrich()');
+  if (knownIdentities !== null && typeof knownIdentities !== 'function') throw new Error('createProspectingJobService: knownIdentities, se informado, deve ser uma função');
   if (!discoveryEngine || typeof discoveryEngine.discover !== 'function') throw new Error('createProspectingJobService exige { discoveryEngine } com discover()');
   if (typeof createFetchPage !== 'function') throw new Error('createProspectingJobService exige { createFetchPage } (função)');
   if (checkPermanentExclusion !== undefined && checkPermanentExclusion !== null && typeof checkPermanentExclusion !== 'function') {
@@ -235,13 +235,23 @@ function createProspectingJobService(dependencies) {
       validados: job.candidatesValidated || 0,
       naoValidados: job.candidatesRejected || 0,
       naApprovalQueue: Number.isInteger(lote.naFila) ? lote.naFila : job.leadsNaFila || 0,
-      jaExistentes: Number.isInteger(lote.jaEstavamNaFila) ? lote.jaEstavamNaFila : 0,
+      // cada categoria soma o que o pipeline classificou + o que o filtro de economia reconheceu ANTES (repetidosPor): são conjuntos disjuntos (um candidato filtrado nunca chega ao pipeline)
+      jaExistentes: (Number.isInteger(lote.jaEstavamNaFila) ? lote.jaEstavamNaFila : 0) + (tele.repetidosPor ? tele.repetidosPor.fila : 0),
       dadosInsuficientes: byState('DADOS_INSUFICIENTES'),
-      duplicados: byState('DUPLICADO'),
-      dnc: byState('DNC'),
+      duplicados: byState('DUPLICADO') + (tele.repetidosPor ? tele.repetidosPor.duplicado : 0),
+      dnc: byState('DNC') + (tele.repetidosPor ? tele.repetidosPor.dnc : 0),
+      repetidosDnc: tele.repetidosPor ? tele.repetidosPor.dnc : 0,
+      repetidosDuplicados: tele.repetidosPor ? tele.repetidosPor.duplicado : 0,
+      repetidosNaFila: tele.repetidosPor ? tele.repetidosPor.fila : 0,
+      repetidosNoJob: tele.repetidosPor ? tele.repetidosPor.job : 0,
       reposicoes: Number.isInteger(tele.reposicoesRealizadas) ? tele.reposicoesRealizadas : 0,
       enriquecidos: tele.enriquecimento && Number.isInteger(tele.enriquecimento.leadsEnriquecidos) ? tele.enriquecimento.leadsEnriquecidos : 0,
       tempoMs: elapsedMs,
+      descobertaSegundos: typeof tele.descobertaSegundos === 'number' ? tele.descobertaSegundos : 0,
+      validacaoSegundos: typeof tele.validacaoSegundos === 'number' ? tele.validacaoSegundos : 0,
+      enriquecimentoSegundos: typeof tele.enriquecimentoSegundos === 'number' ? tele.enriquecimentoSegundos : 0,
+      ingestaoSegundos: typeof tele.ingestaoSegundos === 'number' ? tele.ingestaoSegundos : 0,
+      totalSegundos: Math.round(elapsedMs / 100) / 10,
       custoUsd: typeof tele.custoUsd === 'number' ? tele.custoUsd : 0,
     };
   }
@@ -441,6 +451,7 @@ function createProspectingJobService(dependencies) {
     const tele = {
       discoveryMs: 0,
       validationMs: 0,
+      ingestaoMs: 0, // tempo gasto na ingestão (pipeline oficial: exclusões, deduplicação, DNC, Approval Queue)
       custoUsd: 0,
       webSearchRequests: 0,
       discoveryRuns: 0,
@@ -452,11 +463,17 @@ function createProspectingJobService(dependencies) {
       candidatosRepetidos: 0, // os já conhecidos: nunca voltam à validação, à ingestão nem à fila
       validadosPeloMotor: 0,
       naFila: 0,
+      jaEstavamNaFila: 0, // validados que o pipeline encontrou JÁ na fila (não são entrega deste job)
       foraDaFila: 0,
+      // identidades JÁ CONHECIDAS (Approval Queue + CRM) entregues à descoberta para ela não as reencontrar; `repetidos` = quantos candidatos devolvidos casaram com elas
+      conhecidos: { fila: 0, crm: 0, indisponivel: false, repetidos: 0, rodadasSoRepetidos: 0 },
+      // as IDENTIDADES repetidas por origem, SEM sobreposição nem dupla contagem (cada uma em UMA categoria, a mais restritiva: dnc > duplicado > fila > job). candidatosRepetidos conta as
+      // DEVOLUÇÕES repetidas do motor (o mesmo lead pode voltar várias vezes); repetidosPor conta o lead uma vez só
+      repetidosPor: { dnc: 0, duplicado: 0, fila: 0, job: 0 },
       reposicoesNecessarias: 0, // quantas vezes a ingestão deixou a meta por atingir
       reposicoesRealizadas: 0, // ciclos de reposição que terminaram
       // NÍVEL 3 (enriquecimento comercial): só para leads JÁ entregues à fila; uma chamada em lote por rodada
-      enriquecimento: { perfisGerados: 0, leadsEnriquecidos: 0, chamadas: 0, falhas: 0, pulado: 0, ms: 0 },
+      enriquecimento: { perfisGerados: 0, leadsEnriquecidos: 0, chamadas: 0, falhas: 0, pulado: 0, incompletos: 0, limiteDeTurnos: 0, ms: 0 },
       eventos: [], // REPOSICAO_INICIADA | REPOSICAO_CONCLUIDA | REPOSICAO_SEM_CANDIDATOS_NOVOS | META_ATINGIDA (só código e ciclo)
     };
     const event = (codigo, ciclo) => {
@@ -494,7 +511,19 @@ function createProspectingJobService(dependencies) {
       tele.validadosPeloMotor = ingestedAchados + pending.length;
       tele.naFila = delivered.size;
       tele.foraDaFila = Math.max(0, ingestedAchados - delivered.size);
-      return { ...tele, eventos: tele.eventos.map((e) => ({ ...e })) };
+      tele.jaEstavamNaFila = alreadyInQueue;
+      // tempos por etapa (ms e segundos): reaproveitam os contadores existentes (discoveryMs/validationMs/enriquecimento.ms) com nomes claros para a tela
+      const seconds = (ms) => Math.round(ms / 100) / 10;
+      tele.descobertaMs = tele.discoveryMs;
+      tele.validacaoMs = tele.validationMs;
+      tele.enriquecimentoMs = tele.enriquecimento.ms;
+      tele.totalMs = Math.max(0, now().getTime() - startMs);
+      tele.descobertaSegundos = seconds(tele.descobertaMs);
+      tele.validacaoSegundos = seconds(tele.validacaoMs);
+      tele.enriquecimentoSegundos = seconds(tele.enriquecimentoMs);
+      tele.ingestaoSegundos = seconds(tele.ingestaoMs);
+      tele.totalSegundos = seconds(tele.totalMs);
+      return { ...tele, conhecidos: { ...tele.conhecidos }, repetidosPor: { ...tele.repetidosPor }, eventos: tele.eventos.map((e) => ({ ...e })) };
     };
     const checked = () => candidates.filter((c) => c.resultado !== undefined).length;
     // 15% = descobrindo; de 20% a 90% = candidatos já examinados; 92% = ingerindo; 100% = terminou. Nunca regride.
@@ -658,75 +687,24 @@ function createProspectingJobService(dependencies) {
     // se o pipeline reter os comprovados, os que sobraram continuam podendo entrar na fila — nada que foi descoberto é jogado fora.
     const backlog = [];
 
-    // ---- NÍVEL 3: ENRIQUECIMENTO COMERCIAL, só dos leads que ESTE job entregou à Approval Queue ----
-    // O perfil determinístico (já montado na validação) é salvo para cada lead entregue; depois UMA chamada em lote ao motor de enriquecimento completa
-    // responsável (confirmado pela página citada), tráfego pago e atividade recente. Falhou ou não há motor? O perfil fica como está, com o que não foi
-    // verificado marcado NAO_VERIFICADO. O enriquecimento NUNCA derruba a entrega: o lead já está na fila.
-    const plain = (text) => String(text).normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLowerCase().replace(/\s+/g, ' ');
-    async function enrichDelivered(round, outcomes) {
-      const items = [];
+    // ---- PERFIL COMERCIAL dos leads entregues, SEM novas chamadas de IA (3.0.2) ----
+    // A prospecção automática é: Descoberta -> Validação -> Ingestão -> Approval Queue. Para cada lead ENTREGUE o job só grava o perfil que o CÓDIGO já extraiu das páginas consultadas
+    // (empresa, tipo de lead, site, endereço/CEP, telefones, WhatsApps, e-mails, redes sociais, fontes) — nenhuma leitura nova, nenhum Claude. O enriquecimento aprofundado (responsável, anúncios,
+    // atividade, canais que faltam...) é SOB DEMANDA: o botão COMPLETAR PESQUISA do perfil (leadEnrichmentService), só para o lead selecionado e só para os campos pendentes.
+    const enrichmentStatus = (needs) => ({ status: 'NAO_EXECUTADO', camposPendentes: needs, limiteDeTurnos: false, motivo: 'SOB_DEMANDA' });
+    function saveDeliveredProfiles(round, outcomes) {
       for (const finding of round) {
         const outcome = outcomes.find((item) => item && item.empresa === finding.empresa && item.naFila === true && item.jaExistiaNaFila !== true && typeof item.prospectId === 'string');
         const entry = candidates.find((candidate) => candidate.nome === finding.empresa && candidate._perfilInput);
-        if (outcome && entry) items.push({ prospectId: outcome.prospectId, entry });
-      }
-      for (const item of items) {
+        if (!outcome || !entry) continue;
         try {
-          profileRepository.save(item.prospectId, { ...commercial.buildCommercialProfile(item.entry._perfilInput), jobId: id, briefId: brief.id });
+          const profile = commercial.buildCommercialProfile(entry._perfilInput);
+          profileRepository.save(outcome.prospectId, { ...profile, contexto: { cidade: hint.cidade, uf: hint.estado || null, nicho: brief.nicho }, enriquecimento: enrichmentStatus(commercial.enrichmentNeeds(profile)), jobId: id, briefId: brief.id });
           tele.enriquecimento.perfisGerados += 1;
         } catch {
           tele.enriquecimento.falhas += 1;
         }
       }
-      if (!enrichmentEngine || items.length === 0) return;
-      if (timeLeft() <= 0 || wasCancelRequested(id)) {
-        tele.enriquecimento.pulado += items.length;
-        return;
-      }
-      const startedAt = now().getTime();
-      for (let from = 0; from < items.length; from += 12) {
-        const chunk = items.slice(from, from + 12);
-        if (timeLeft() <= 0 || wasCancelRequested(id)) {
-          tele.enriquecimento.pulado += items.length - from;
-          break;
-        }
-        const channelsOf = (entry) => Object.fromEntries(digital.confirmedChannels(entry._perfilInput.presencaDigital).map(({ canal, url }) => [canal, url]));
-        let found;
-        try {
-          tele.enriquecimento.chamadas += 1;
-          found = await enrichmentEngine.enrich({
-            leads: chunk.map(({ entry }) => ({ nome: entry.nome, cidade: hint.cidade, ...(hint.estado ? { uf: hint.estado } : {}), site: entry._perfilInput.siteOficial.status === digital.SITE_STATUS.ENCONTRADO ? entry._perfilInput.siteOficial.url : null, canais: channelsOf(entry) })),
-            signal: controller.signal,
-            timeoutMs: Math.max(1, Math.min(limits.discoveryTimeoutMs, timeLeft())),
-          });
-        } catch {
-          found = null;
-        }
-        if (found && typeof found.custoUsd === 'number') tele.custoUsd += found.custoUsd;
-        if (found && Number.isInteger(found.webSearchRequests)) tele.webSearchRequests += found.webSearchRequests;
-        if (!found || found.ok !== true || !Array.isArray(found.resultados)) {
-          tele.enriquecimento.falhas += chunk.length;
-          continue;
-        }
-        for (const { prospectId, entry } of chunk) {
-          const raw = found.resultados.find((item) => item && item.nome === entry.nome);
-          if (!raw) continue;
-          const confirmedSources = new Set();
-          const claim = raw.responsavel;
-          if (claim && typeof claim === 'object' && typeof claim.origem === 'string' && typeof claim.nome === 'string' && typeof claim.cargo === 'string') {
-            const page = await fetchCached(claim.origem);
-            if (page && page.ok === true && typeof page.texto === 'string' && plain(page.texto).includes(plain(claim.nome)) && plain(page.texto).includes(plain(claim.cargo))) confirmedSources.add(claim.origem);
-          }
-          try {
-            const enrichment = commercial.normalizeEnrichment(raw, { today: entry._perfilInput.today, confirmedSources, confirmedChannels: new Set(Object.keys(channelsOf(entry))) });
-            profileRepository.save(prospectId, { ...commercial.buildCommercialProfile({ ...entry._perfilInput, enrichment }), jobId: id, briefId: brief.id });
-            tele.enriquecimento.leadsEnriquecidos += 1;
-          } catch {
-            tele.enriquecimento.falhas += 1;
-          }
-        }
-      }
-      tele.enriquecimento.ms += now().getTime() - startedAt;
     }
 
     // uma RODADA sobre o backlog: valida até comprovar o que ainda FALTA na fila, ingere pela cadeia EXISTENTE (a 1ª pelo caminho de sempre; as seguintes pela ingestão de
@@ -765,6 +743,7 @@ function createProspectingJobService(dependencies) {
       const round = pending;
       patch(id, { ingestionStarted: true, currentStep: JOB_STEP.INGERINDO, progress: Math.max(requireJob(id).progress, 92), ...counts(), candidatos: candidates.map(summary), achadosValidados: round, telemetria: syncTelemetry() });
       let result;
+      const ingestStartedAt = now().getTime();
       try {
         result = lotes.length === 0 ? await briefService.ingestFindings(context, brief.id, round) : await briefService.ingestReplacementFindings(context, brief.id, round);
       } catch {
@@ -772,6 +751,7 @@ function createProspectingJobService(dependencies) {
         finalize(id, JOB_STATUS.ERRO, { ...counts(), candidatos: candidates.map(summary), telemetria: syncTelemetry(), ...(lotes.length > 0 ? { lote: aggregateLote() } : {}), error: { code: ERROR_CODE.INGESTION_FAILED, message: 'A ingestão dos candidatos validados falhou; nada foi promovido ao CRM.' } });
         return true;
       }
+      tele.ingestaoMs += now().getTime() - ingestStartedAt;
       // MEDIÇÃO DA ENTREGA: o que o pipeline REALMENTE entregou à fila nesta rodada (lote.prospectIds); só isto conta para a meta. Um validado retido
       // (DADOS_INSUFICIENTES, DNC, DUPLICADO, REJEITADO...) NÃO conta e permanece nos resultados com o seu estado real.
       const batchResult = result && result.lote && typeof result.lote === 'object' ? result.lote : null;
@@ -796,11 +776,50 @@ function createProspectingJobService(dependencies) {
       ingestedAchados += round.length;
       pending = [];
       patch(id, { ingestionStarted: false });
-      await enrichDelivered(round, outcomes);
+      saveDeliveredProfiles(round, outcomes);
       if (delivered.size < quantity) tele.reposicoesNecessarias += 1;
       save(JOB_STEP.VALIDANDO);
       return false;
     }
+
+    // ---- ANTI-REPETIÇÃO: o que a Approval Queue e o CRM já têm entra em `knownKeys` (mesmas chaves de identidade da deduplicação: domínio, depois nome + cidade) e na lista
+    // COMPACTA que a descoberta recebe (nome | domínio | Instagram). É um filtro de ECONOMIA: a deduplicação do pipeline continua sendo a autoridade final.
+    const externalKinds = new Map(); // chave de identidade -> 'dnc' | 'duplicado' | 'fila' (a mais restritiva vence)
+    const KIND_PRIORITY = { dnc: 0, duplicado: 1, fila: 2 };
+    const externalGroup = new Map(); // chave -> identidade conhecida (uma identidade tem várias chaves)
+    let groupSeq = 0;
+    const countedRepeats = new Set(); // identidades distintas já contadas em repetidosPor (o motor pode devolver a MESMA várias vezes: o lead conta uma vez)
+    const strictestKind = (keys) => keys.map((key) => externalKinds.get(key)).filter(Boolean).sort((a, b) => KIND_PRIORITY[a] - KIND_PRIORITY[b])[0] || null;
+    let externalForPrompt = [];
+    if (knownIdentities !== null) {
+      try {
+        const known = await knownIdentities(context, { cidade: hint.cidade, uf: hint.estado });
+        const list = known && Array.isArray(known.identidades) ? known.identidades : [];
+        tele.conhecidos.fila = known && Number.isInteger(known.fila) ? known.fila : 0;
+        tele.conhecidos.crm = known && Number.isInteger(known.crm) ? known.crm : 0;
+        tele.conhecidos.indisponivel = Boolean(known && known.crmIndisponivel);
+        for (const identity of list) {
+          if (!isPlainObject(identity)) continue;
+          const keys = candidateKeys({ nome: typeof identity.nome === 'string' && identity.nome.trim() !== '' ? identity.nome.trim() : '?', siteOficial: identity.dominio ? `https://${identity.dominio}/` : null }, identity.cidade || hint.cidade);
+          if (typeof identity.nome !== 'string' || identity.nome.trim() === '') keys.splice(keys.findIndex((key) => key.startsWith('nome:')), 1);
+          const kind = Object.prototype.hasOwnProperty.call(KIND_PRIORITY, identity.categoria) ? identity.categoria : 'fila';
+          groupSeq += 1;
+          for (const key of keys) {
+            if (!externalGroup.has(key)) externalGroup.set(key, groupSeq);
+            knownKeys.add(key);
+            const current = externalKinds.get(key);
+            if (!current || KIND_PRIORITY[kind] < KIND_PRIORITY[current]) externalKinds.set(key, kind);
+          }
+        }
+        externalForPrompt = list.filter(isPlainObject);
+      } catch {
+        tele.conhecidos.indisponivel = true; // sem a lista a descoberta funciona como antes; a deduplicação do pipeline continua protegendo
+      }
+    }
+    // ao motor vão SÓ os identificadores compactos (nome, cidade/UF, domínio, Instagram): a categoria de segurança e qualquer outro campo ficam aqui dentro
+    const compactForEngine = (identity) => Object.fromEntries(['nome', 'cidade', 'uf', 'dominio', 'instagram'].filter((field) => typeof identity[field] === 'string' && identity[field] !== '').map((field) => [field, identity[field]]));
+    const knownForDiscovery = () => [...externalForPrompt.map(compactForEngine), ...candidates.map((c) => ({ nome: c.nome, ...(c._in && c._in.siteOficial ? { dominio: normalizeDomain(c._in.siteOficial) } : {}) }))];
+    let emptyRounds = 0; // rodadas seguidas em que a descoberta só trouxe candidatos já conhecidos
 
     let cycle = 0;
     for (;;) {
@@ -839,6 +858,7 @@ function createProspectingJobService(dependencies) {
         uf: region.uf,
         limit: batch,
         excluir: candidates.map((c) => c.nome),
+        conhecidos: knownForDiscovery(),
         signal: controller.signal,
         timeoutMs: Math.max(1, Math.min(limits.discoveryTimeoutMs, timeLeft())),
       });
@@ -867,6 +887,16 @@ function createProspectingJobService(dependencies) {
         const keys = candidateKeys(item, hint.cidade);
         if (keys.some((key) => knownKeys.has(key))) {
           repeated += 1;
+          const kind = strictestKind(keys);
+          if (kind !== null) tele.conhecidos.repetidos += 1; // devoluções repetidas do motor (eventos)
+          // repetidosPor conta IDENTIDADES distintas, cada uma em UMA categoria (a mais restritiva): o mesmo lead devolvido de novo não é contado outra vez
+          const matched = keys.find((key) => knownKeys.has(key));
+          const groupId = kind !== null ? externalGroup.get(keys.find((key) => externalKinds.get(key) === kind)) : matched;
+          const countKey = `${kind || 'job'}:${groupId}`;
+          if (!countedRepeats.has(countKey)) {
+            countedRepeats.add(countKey);
+            tele.repetidosPor[kind || 'job'] += 1;
+          }
           continue;
         }
         if (candidates.length + fresh.length >= maxCandidates || fresh.length >= batch) break;
@@ -882,10 +912,19 @@ function createProspectingJobService(dependencies) {
       }
       save(JOB_STEP.VALIDANDO);
       if (fresh.length === 0) {
-        stopReason = STOP_REASON.SEM_CANDIDATOS_NOVOS;
-        if (replenishing) event('REPOSICAO_SEM_CANDIDATOS_NOVOS', cycle);
-        break;
+        // o motor não trouxe NADA aproveitável: acabou. Só trouxe REPETIDOS: a reposição tenta de novo (com os repetidos agora também na lista de conhecidos), mas no máximo
+        // 2 rodadas seguidas assim — dentro dos mesmos limites de ciclos, candidatos e tempo.
+        emptyRounds += 1;
+        tele.conhecidos.rodadasSoRepetidos += repeated > 0 ? 1 : 0;
+        if (repeated === 0 || emptyRounds >= 2) {
+          stopReason = STOP_REASON.SEM_CANDIDATOS_NOVOS;
+          if (replenishing) event('REPOSICAO_SEM_CANDIDATOS_NOVOS', cycle);
+          break;
+        }
+        event('DESCOBERTA_SO_REPETIDOS', cycle);
+        continue;
       }
+      emptyRounds = 0;
 
       if (await processRound()) return undefined;
       if (replenishing) {

@@ -186,6 +186,14 @@ const CATALOG = Object.freeze({
   JOB_BRIEF_UNSUPPORTED: [400, 'A prospecção automática exige um brief de uma única cidade.'],
   JOB_PERSISTENCE: [503, 'Não foi possível ler ou gravar as prospecções agora. Tente novamente em instantes.'],
   // Reaprovação de leads (Implementação 3.0), por `code` estável do Lead Reconsideration Service — nunca por mensagem.
+  // COMPLETAR PESQUISA (3.0.2), por `code` estável do Lead Enrichment Service — nunca por mensagem.
+  ENRICH_INVALID_INPUT: [400, 'O pedido de pesquisa é inválido.'],
+  ENRICH_NOT_FOUND: [404, 'Lead não encontrado na Approval Queue.'],
+  ENRICH_ALREADY_RUNNING: [409, 'Já existe uma pesquisa em andamento para este lead.'],
+  ENRICH_UNAVAILABLE: [503, 'O Claude não está disponível neste computador.'],
+  ENRICH_BUSY: [409, 'Já existe uma pesquisa em andamento para outro lead. Aguarde ela terminar.'],
+  ENRICH_NO_PROPOSAL: [409, 'Não há proposta de novo site oficial pendente para este lead.'],
+  ENRICH_NOT_ALLOWED: [409, 'Este lead está em DNC (não contatar): a pesquisa não é permitida.'],
   RECON_FILTRO_INVALIDO: [400, 'O filtro de leads reprovados é inválido.'],
   RECON_NAO_REAPROVAVEL: [409, 'Só um lead rejeitado por um humano pode ser reaprovado.'],
   RECON_JA_NO_CRM: [409, 'Reaprovação bloqueada: o lead já existe no CRM.'],
@@ -424,6 +432,8 @@ function mapErrorToHttp(error) {
     if (CATALOG[code][0] === 400) details = safeDetails(error.details);
   } else if (error && typeof error === 'object' && Object.prototype.hasOwnProperty.call(JOB_CODES, error.code)) {
     code = JOB_CODES[error.code];
+  } else if (error && typeof error === 'object' && error.name === 'LeadEnrichmentError' && typeof error.code === 'string' && Object.prototype.hasOwnProperty.call(CATALOG, error.code)) {
+    code = error.code;
   } else if (error && typeof error === 'object' && error.name === 'LeadReconsiderationError' && Object.prototype.hasOwnProperty.call(RECON_CODES, error.code)) {
     code = RECON_CODES[error.code];
   } else if (error && typeof error === 'object' && Object.prototype.hasOwnProperty.call(EXCLUSION_CODES, error.code)) {
@@ -606,7 +616,7 @@ function parseTarget(req) {
 }
 
 // `crm`: as rotas do CRM só existem quando o CRM Service foi injetado; sem ele, /api/crm... é uma rota desconhecida (404).
-function matchRoute(pathname, { crm, promotion, prospecting, prospectingBatchReads, prospectingBrief, prospectingJobs, prospectingExclusions, funnels, leadReview }) {
+function matchRoute(pathname, { crm, promotion, prospecting, prospectingBatchReads, prospectingBrief, prospectingJobs, prospectingExclusions, funnels, leadReview, leadEnrichment }) {
   if (pathname === '/api/me') return { name: 'me', label: '/api/me', methods: ['GET'] };
   if (pathname === '/api/approvals') return { name: 'list', label: '/api/approvals', methods: ['GET'] };
   if (prospecting && pathname === '/api/prospecting/submit') return { name: 'prospecting-submit', label: '/api/prospecting/submit', methods: ['POST'] };
@@ -633,6 +643,14 @@ function matchRoute(pathname, { crm, promotion, prospecting, prospectingBatchRea
     if (jobAction) return { family: 'prospecting-job', name: `job-${jobAction[2]}`, label: `/api/prospecting/jobs/:id/${jobAction[2]}`, methods: jobAction[2] === 'status' ? ['GET'] : ['POST'], rawId: jobAction[1] };
   }
   // Leads reprovados / reaprovação / perfil comercial (Implementação 3.0) — só existe quando o Lead Reconsideration Service foi injetado.
+  if (leadEnrichment) {
+    const complete = /^\/api\/leads\/([^/]+)\/completar-pesquisa$/.exec(pathname);
+    if (complete) return { family: 'lead-enrichment', name: 'lead-completar', label: '/api/leads/:id/completar-pesquisa', methods: ['GET', 'POST'], rawId: complete[1] };
+    const reviewSite = /^\/api\/leads\/([^/]+)\/rever-site$/.exec(pathname);
+    if (reviewSite) return { family: 'lead-enrichment', name: 'lead-rever-site', label: '/api/leads/:id/rever-site', methods: ['POST'], rawId: reviewSite[1] };
+    const siteProposal = /^\/api\/leads\/([^/]+)\/proposta-site$/.exec(pathname);
+    if (siteProposal) return { family: 'lead-enrichment', name: 'lead-proposta-site', label: '/api/leads/:id/proposta-site', methods: ['POST'], rawId: siteProposal[1] };
+  }
   if (leadReview) {
     if (pathname === '/api/leads/reprovados') return { family: 'lead-review', name: 'leads-reprovados', label: '/api/leads/reprovados', methods: ['GET'] };
     const reapprove = /^\/api\/leads\/reprovados\/([^/]+)\/reaprovar$/.exec(pathname);
@@ -768,6 +786,7 @@ function createApp(dependencies) {
     prospectingJobService,
     prospectingExclusionService,
     leadReconsiderationService,
+    leadEnrichmentService,
     funnelService,
     publicConfig,
     staticRoot,
@@ -807,6 +826,11 @@ function createApp(dependencies) {
       if (!prospectingJobService || typeof prospectingJobService[operation] !== 'function') {
         throw new Error(`createApp exige { prospectingJobService } com ${operation}()`);
       }
+    }
+  }
+  if (leadEnrichmentService !== undefined) {
+    for (const operation of ['start', 'reviewSite', 'decideSiteProposal', 'getStatus']) {
+      if (!leadEnrichmentService || typeof leadEnrichmentService[operation] !== 'function') throw new Error(`createApp exige { leadEnrichmentService } com ${operation}()`);
     }
   }
   if (leadReconsiderationService !== undefined) {
@@ -1045,6 +1069,24 @@ function createApp(dependencies) {
     return item && item.resumo ? { ...item, resumo: { ...item.resumo, ...counters } } : item;
   }
 
+  // COMPLETAR PESQUISA (3.0.2): GET devolve o estado; POST (corpo vazio) inicia a pesquisa dos campos pendentes DESTE lead e responde 202 na hora (a pesquisa segue em segundo plano).
+  // A autorização (APPROVE:LEAD_APPROVAL), o que pesquisar e todas as regras são do Service; nada aqui toca a Approval Queue.
+  async function dispatchLeadEnrichment(req, url, route, context) {
+    readQuery(url, []);
+    const id = decodeId(route.rawId);
+    if (req.method === 'GET') return respond(200, { item: await leadEnrichmentService.getStatus(context, id) });
+    if (route.name === 'lead-proposta-site') {
+      // a DECISÃO humana sobre a proposta de novo domínio: exatamente { decisao: 'CONFIRMAR' | 'MANTER' }; o usuário vem do token, nunca do corpo; nenhuma pesquisa
+      const body = await readJsonBody(req);
+      if (!body || typeof body !== 'object' || Array.isArray(body) || Object.keys(body).length !== 1 || typeof body.decisao !== 'string') throw new HttpError('INVALID_REQUEST', 'Envie exatamente { decisao }.');
+      return respond(200, { item: await leadEnrichmentService.decideSiteProposal(context, id, body.decisao) });
+    }
+    if (Object.keys(await readJsonBody(req)).length > 0) throw new HttpError('INVALID_REQUEST', 'Campos não permitidos na requisição.');
+    // SEMPRE um único lead (o id da URL), por uma chamada explícita: não há rota de lote
+    if (route.name === 'lead-rever-site') return respond(202, { item: await leadEnrichmentService.reviewSite(context, id) });
+    return respond(202, { item: await leadEnrichmentService.start(context, id) });
+  }
+
   // Leads reprovados e reaprovação (Implementação 3.0): cada rota só traduz HTTP <-> uma chamada ao Lead Reconsideration Service — a autorização
   // (APPROVE:LEAD_APPROVAL), as barreiras (CRM, DNC, duplicidade, exclusão permanente) e o estado são do Service. Nada é apagado; reaprovar não aprova nem promove.
   async function dispatchLeadReview(req, url, route, context) {
@@ -1126,6 +1168,7 @@ function createApp(dependencies) {
       prospectingExclusions: prospectingExclusionService !== undefined,
       funnels: funnelService !== undefined,
       leadReview: leadReconsiderationService !== undefined,
+      leadEnrichment: leadEnrichmentService !== undefined,
     });
     if (route === null) {
       trace.label = 'static';
@@ -1143,6 +1186,7 @@ function createApp(dependencies) {
     if (route.family === 'prospecting-job') return dispatchProspectingJob(req, url, route, context);
     if (route.family === 'prospecting-exclusion') return dispatchProspectingExclusion(req, url, route, context);
     if (route.family === 'lead-review') return dispatchLeadReview(req, url, route, context);
+    if (route.family === 'lead-enrichment') return dispatchLeadEnrichment(req, url, route, context);
 
     if (route.name === 'prospecting-submit') {
       // Só transporte: sem query, corpo JSON (objeto) de até 4 MiB, e o objeto INTEIRO vai ao serviço — que decide (autoriza

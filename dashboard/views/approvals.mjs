@@ -18,6 +18,7 @@ import { h } from '../dom.mjs';
 import { textOf, safeHttpUrl, formatDate, formatDateTime } from '../format.mjs';
 import { buildHash } from '../router.mjs';
 import { buildLeadProfile, LEAD_TYPE_LABELS } from './leadProfile.mjs';
+import { createEnrichmentPanel } from './leadEnrichmentPanel.mjs';
 
 // Estas quatro funções puras vivem em ../format.mjs (compartilhadas com as demais telas); continuam exportadas daqui.
 export { textOf, safeHttpUrl, formatDate, formatDateTime };
@@ -162,8 +163,8 @@ const cityUf = (snapshot) => [textOf(snapshot.cidade), textOf(snapshot.estadoUf)
 // document/root: onde desenhar. api: { listApprovals, approve, reject, promoteApproval } (api.mjs). canReview: mostra os
 // botões de aprovar/rejeitar. canPromote: mostra "Promover para CRM" nos aprovados. canReadCrm: mostra "Ver no CRM".
 // As três são conveniência de interface (vêm de /api/me); quem autoriza é o servidor.
-export function createApprovalsView({ document, root, api, canReview, canPromote = false, canReadCrm = false }) {
-  const state = { loading: true, items: [], selectedId: null, mode: null, busy: false, message: null, formError: null, filter: PENDING_ESTADO, promoted: {}, profiles: {} };
+export function createApprovalsView({ document, root, api, canReview, canPromote = false, canReadCrm = false, schedule }) {
+  const state = { loading: true, items: [], selectedId: null, mode: null, busy: false, message: null, formError: null, filter: PENDING_ESTADO, promoted: {}, profiles: {}, panels: {} };
   let reasonInput = null;
 
   const badge = (text, tone) => h(document, 'span', { className: `badge ${tone || 'neutral'}`, text });
@@ -213,6 +214,27 @@ export function createApprovalsView({ document, root, api, canReview, canPromote
       return;
     }
     if (state.selectedId === prospectId) render();
+  }
+
+  // COMPLETAR PESQUISA (3.0.2): um painel por lead aberto (criado uma vez e reaproveitado a cada render, para a consulta de estado seguir). Ao terminar, o perfil é recarregado.
+  function panelFor(item) {
+    if (!canReview || typeof api.getLeadResearchStatus !== 'function' || typeof api.completeLeadResearch !== 'function') return null;
+    if (!state.panels[item.prospectId]) {
+      const panel = createEnrichmentPanel({
+        document,
+        api,
+        prospectId: item.prospectId,
+        canRun: true,
+        ...(schedule ? { schedule } : {}),
+        onFinished: () => {
+          delete state.profiles[item.prospectId];
+          loadProfile(item.prospectId);
+        },
+      });
+      state.panels[item.prospectId] = panel;
+      panel.load();
+    }
+    return state.panels[item.prospectId];
   }
 
   function select(prospectId) {
@@ -534,7 +556,7 @@ export function createApprovalsView({ document, root, api, canReview, canPromote
       ['Observações', textValue(snapshot.observacoes)],
       ['Hipótese de oportunidade', textValue(snapshot.hipoteseDeOportunidade)],
       ['Fontes', renderSources(snapshot.fontes)],
-      ['Análise comercial', canReview && typeof api.getLeadProfile === 'function' ? (Object.prototype.hasOwnProperty.call(state.profiles, item.prospectId) && state.profiles[item.prospectId] !== undefined ? buildLeadProfile(document, state.profiles[item.prospectId]) : h(document, 'span', { className: 'muted', text: 'Carregando…' })) : null],
+      ['Análise comercial', canReview && typeof api.getLeadProfile === 'function' ? h(document, 'div', {}, Object.prototype.hasOwnProperty.call(state.profiles, item.prospectId) && state.profiles[item.prospectId] !== undefined ? buildLeadProfile(document, state.profiles[item.prospectId]) : h(document, 'span', { className: 'muted', text: 'Carregando…' }), panelFor(item) ? panelFor(item).element : null) : null],
       ['Histórico', renderHistory(item.historico)],
     ].filter(([, content]) => content !== null);
 
@@ -599,5 +621,12 @@ export function createApprovalsView({ document, root, api, canReview, canPromote
     );
   }
 
-  return { load, render, state };
+  return {
+    load,
+    render,
+    state,
+    destroy() {
+      for (const panel of Object.values(state.panels)) panel.destroy();
+    },
+  };
 }
