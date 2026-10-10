@@ -97,6 +97,9 @@ test('[DASH-SITE-3] Leads Reprovados: o painel COMPLETAR PESQUISA / REVER SITE O
   const abrir = () => browser.find(browser.root, (el) => el.getAttribute('data-open') === 'pid-rej');
   browser.click(abrir());
   await browser.flush(10);
+  // UX 4.0.2: o painel fica na aba Pesquisa comercial da gaveta (aberta pela pessoa)
+  browser.click(browser.find(browser.root, (el) => el.getAttribute('role') === 'tab' && el.getAttribute('data-tab') === 'pesquisa'));
+  await browser.flush();
   assert.ok(browser.by.id(browser.root, 'enrich-run'), 'COMPLETAR PESQUISA em Leads Reprovados');
   assert.ok(browser.by.id(browser.root, 'enrich-review-site'), 'REVER SITE OFICIAL em Leads Reprovados');
   assert.match(browser.root.textContent, /Ana Souza — Proprietária/, 'o perfil continua à vista');

@@ -78,7 +78,7 @@ async function criarLote(x, { quantidade, maximo }) {
   x.browser.type(x.browser.by.id(raiz, 'pros-locais'), 'Petrópolis');
   x.browser.type(x.browser.by.id(raiz, 'pros-quantidade'), String(quantidade));
   if (maximo !== undefined) x.browser.type(x.browser.by.id(raiz, 'pros-max-candidates'), String(maximo));
-  x.browser.click(x.browser.by.text(raiz, 'Criar lote', 'button'));
+  x.browser.click(x.browser.by.text(raiz, 'Criar briefing', 'button'));
   await x.browser.flush(12);
 }
 
@@ -89,12 +89,15 @@ async function loteProntoEIniciar(x, opcoes) {
   await x.browser.flush(12);
   assert.match(x.tela(), /Pronto para pesquisa/);
   const iniciar = x.browser.by.id(x.browser.root, 'pros-start-job');
-  assert.ok(iniciar, 'o botão INICIAR PROSPECÇÃO aparece');
+  assert.ok(iniciar, 'o botão "Iniciar prospecção" aparece');
   x.browser.click(iniciar);
+  await x.browser.flush(4);
+  assert.equal(x.requisicoes.filter((r) => r.method === 'POST' && r.path === '/api/prospecting/jobs').length, 0, 'abrir a confirmação não inicia a prospecção');
+  x.browser.click(x.browser.find(x.browser.root, (el) => el.getAttribute('data-action') === 'confirm'));
   await x.browser.flush(12);
 }
 
-test('[JOBSTART-1] lote criado (quantidade 3, máximo 10) -> INICIAR PROSPECÇÃO: o POST /api/prospecting/jobs leva { briefId, maxCandidates: 10 }, é aceito (202) e a mensagem "Envie exatamente" NÃO aparece', async (t) => {
+test('[JOBSTART-1] briefing criado (quantidade 3, máximo 10) -> Iniciar prospecção (com confirmação): o POST /api/prospecting/jobs leva { briefId, maxCandidates: 10 }, é aceito (202) e a mensagem "Envie exatamente" NÃO aparece', async (t) => {
   const x = await montarTela(t);
   await loteProntoEIniciar(x, { quantidade: 3, maximo: 10 });
 

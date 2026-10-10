@@ -420,6 +420,8 @@ test('[DASH-PROMO-16] duplicidade e restrição de contato no CRM aparecem como 
   await clicar(s, 'Promover');
   assert.match(tela(s.browser), /parece já existir no CRM/);
 
+  s.browser.press('Escape'); // a gaveta é modal (UX 4.0): fecha antes de abrir outro lead
+  await s.browser.flush();
   await clicar(s, 'Consultório Beta');
   await clicar(s, 'Promover para CRM');
   await clicar(s, 'Promover');

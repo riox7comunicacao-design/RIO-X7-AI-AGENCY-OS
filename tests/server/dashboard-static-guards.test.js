@@ -36,7 +36,7 @@ function scan(file) {
 const SCANS = new Map(FILES.map((file) => [rel(file), scan(file)]));
 
 test('[DASH-GUARD-1] a lista de módulos do Dashboard é a esperada (um módulo novo exige decidir aqui — de propósito)', () => {
-  assert.deepEqual([...SCANS.keys()].sort(), ['api.mjs', 'app.mjs', 'crm-model.mjs', 'dom.mjs', 'format.mjs', 'main.mjs', 'router.mjs', 'views/agents.mjs', 'views/approvals.mjs', 'views/crm.mjs', 'views/funnels.mjs', 'views/leadEnrichmentPanel.mjs', 'views/leadProfile.mjs', 'views/overview.mjs', 'views/prospecting.mjs', 'views/prospectingExclusions.mjs', 'views/prospectingHistory.mjs', 'views/rejectedLeads.mjs']);
+  assert.deepEqual([...SCANS.keys()].sort(), ['api.mjs', 'app.mjs', 'crm-model.mjs', 'dom.mjs', 'format.mjs', 'main.mjs', 'router.mjs', 'ui/components.mjs', 'ui/dataBus.mjs', 'ui/index.mjs', 'ui/overlays.mjs', 'ui/routedDrawer.mjs', 'ui/toasts.mjs', 'views/agents.mjs', 'views/approvals.mjs', 'views/crm.mjs', 'views/funnels.mjs', 'views/jobDetails.mjs', 'views/leadEnrichmentPanel.mjs', 'views/leadProfile.mjs', 'views/overview.mjs', 'views/prospecting.mjs', 'views/prospectingExclusions.mjs', 'views/prospectingHistory.mjs', 'views/rejectedLeads.mjs']);
   for (const [nome, { analysis }] of SCANS) assert.deepEqual(analysis.issues, [], `${nome}: carregamento que a análise não enxerga`);
 });
 
@@ -48,11 +48,11 @@ test('[DASH-GUARD-2] o Dashboard conversa com o servidor SÓ pelo cliente de API
       if (identifiers.has(proibido)) assert.ok((permitidos.get(proibido) || []).includes(nome), `${nome} não pode usar ${proibido}: a rede é do cliente de API`);
     }
   }
-  for (const nome of ['views/crm.mjs', 'views/overview.mjs', 'views/approvals.mjs', 'main.mjs', 'crm-model.mjs']) {
+  for (const nome of ['views/crm.mjs', 'views/jobDetails.mjs', 'views/overview.mjs', 'views/approvals.mjs', 'main.mjs', 'crm-model.mjs']) {
     assert.equal(SCANS.get(nome).identifiers.has('fetch'), false, `${nome} não usa fetch`);
   }
   // As telas e o painel recebem o cliente de API (ou o fetch) por parâmetro — nunca importam api.mjs para chamá-lo às escondidas.
-  for (const nome of ['views/crm.mjs', 'views/overview.mjs']) {
+  for (const nome of ['views/crm.mjs', 'views/jobDetails.mjs', 'views/overview.mjs']) {
     assert.deepEqual(SCANS.get(nome).analysis.refs.filter((ref) => /api\.mjs$/.test(ref.specifier)), [], `${nome} recebe a api por parâmetro`);
   }
 });

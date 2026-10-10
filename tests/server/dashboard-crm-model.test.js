@@ -358,7 +358,7 @@ test('[DASH-MODEL-13] rotas: cada # vira a rota certa e volta (ida e volta), o i
   assert.equal(buildHash({ name: 'qualquer' }), '#/');
   assert.equal(buildHash(undefined), '#/');
 
-  for (const estranho of ['#/xyz', '#/crm/outro', '#/crm/registro', '#/crm/registro/', '#/crm/registro/%20', '#/crm/registro/%E0%A4%A', '#/crm/registro/a/b', '#/crm/novo/x', '#/aprovacoes/x', '#//crm', '#/CRM', 'javascript:alert(1)']) {
+  for (const estranho of ['#/xyz', '#/crm/outro', '#/crm/registro', '#/crm/registro/', '#/crm/registro/%20', '#/crm/registro/%E0%A4%A', '#/crm/registro/a/b', '#/crm/novo/x', '#/aprovacoes/%E0%A4%A', '#/aprovacoes/a/b', '#//crm', '#/CRM', 'javascript:alert(1)']) {
     assert.deepEqual(parseRoute(estranho), { name: 'not-found' }, estranho);
   }
   for (const naoTexto of [undefined, null, 42, {}]) assert.deepEqual(parseRoute(naoTexto), { name: 'overview' }, 'sem fragmento = Visão Geral');

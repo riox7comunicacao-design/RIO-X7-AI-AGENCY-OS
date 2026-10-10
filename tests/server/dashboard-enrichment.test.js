@@ -159,6 +159,9 @@ test('[DASH-ENRICH-3] na Approval Queue o painel fica DENTRO da Análise comerci
   assert.match(tela(), /Análise comercial/);
   assert.match(tela(), /Ana Souza — Proprietária/, 'o perfil está legível');
   assert.ok(browser.by.id(browser.root, 'enrich-run'), 'o botão COMPLETAR PESQUISA está na Análise comercial');
+  // UX 4.0: a gaveta organiza o lead em abas; o botão fica na aba da pesquisa comercial (aberta pelo usuário)
+  browser.click(browser.find(browser.root, (node) => node.getAttribute('role') === 'tab' && node.getAttribute('data-tab') === 'pesquisa'));
+  await browser.flush();
 
   browser.click(browser.by.id(browser.root, 'enrich-run'));
   await browser.flush(10);

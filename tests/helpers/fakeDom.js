@@ -20,6 +20,14 @@
 //   const browser = createBrowser();          // { document, window, ... } + as ações de "usuário"
 //   browser.type(input, 'texto'); browser.click(botao); browser.choose(select, 'VALOR'); await browser.flush();
 
+// Um elemento está fora de alcance do teclado/mouse se ele ou um ancestral é `inert` ou `hidden`.
+function isInertOrHidden(element) {
+  for (let current = element; current && current.nodeType === 1; current = current.parentNode) {
+    if (current.hasAttribute('inert') || current.hidden) return true;
+  }
+  return false;
+}
+
 class FakeText {
   constructor(data) {
     this.nodeType = 3;
@@ -181,7 +189,8 @@ class FakeElement {
 
   // --- foco e eventos ---------------------------------------------------
   focus() {
-    if (!this.disabled) this.ownerDocument.activeElement = this;
+    if (this.disabled || isInertOrHidden(this)) return;
+    this.ownerDocument.activeElement = this;
   }
 
   blur() {
@@ -231,6 +240,29 @@ class FakeDocument {
   constructor() {
     this.title = '';
     this.activeElement = null;
+    this.hidden = false;
+    this._listeners = new Map();
+    this.body = null; // um <body> de teste (criado sob demanda por createBrowser)
+  }
+
+  // Ouvintes no nível do document (como o ESC dos modais): addEventListener/removeEventListener e a contagem, para provar que nada vaza.
+  addEventListener(type, listener) {
+    if (!this._listeners.has(type)) this._listeners.set(type, []);
+    this._listeners.get(type).push(listener);
+  }
+
+  removeEventListener(type, listener) {
+    const list = this._listeners.get(type) || [];
+    const index = list.indexOf(listener);
+    if (index >= 0) list.splice(index, 1);
+  }
+
+  listenerCount(type) {
+    return (this._listeners.get(type) || []).length;
+  }
+
+  _dispatch(event) {
+    for (const listener of [...(this._listeners.get(event.type) || [])]) listener.call(this, event);
   }
 
   createElement(tag) {
@@ -246,6 +278,8 @@ class FakeDocument {
 class FakeWindow {
   constructor(hash = '') {
     this._hash = hash;
+    this._entries = [hash];
+    this._index = 0;
     this._listeners = new Set();
     const win = this;
     this.location = {
@@ -256,12 +290,33 @@ class FakeWindow {
         const next = String(value).startsWith('#') ? String(value) : `#${value}`;
         if (next === win._hash) return;
         win._hash = next;
+        win._entries.splice(win._index + 1, win._entries.length, next); // uma navegação nova descarta o "avançar"
+        win._index += 1;
         queueMicrotask(() => win._emitHashChange());
       },
     };
     this.history = {
       replaceState(_state, _title, url) {
         win._hash = String(url);
+        win._entries[win._index] = win._hash;
+      },
+      // voltar/avançar do navegador: move na pilha e avisa (hashchange assíncrono), se a entrada mudou
+      go(delta) {
+        const target = win._index + delta;
+        if (target < 0 || target >= win._entries.length) return;
+        win._index = target;
+        const changed = win._entries[target] !== win._hash;
+        win._hash = win._entries[target];
+        if (changed) queueMicrotask(() => win._emitHashChange());
+      },
+      back() {
+        this.go(-1);
+      },
+      forward() {
+        this.go(1);
+      },
+      get length() {
+        return win._entries.length;
       },
     };
   }
@@ -331,6 +386,7 @@ function createBrowser({ hash = '' } = {}) {
   const document = new FakeDocument();
   const window = new FakeWindow(hash);
   const root = document.createElement('div');
+  document.body = document.createElement('body');
 
   const browser = {
     document,
@@ -347,9 +403,29 @@ function createBrowser({ hash = '' } = {}) {
 
     text: (element = root) => element.textContent,
 
+    // Teclado: keydown no elemento em foco (ou no `target`), com bubbling até a raiz e depois os ouvintes do document. O comportamento
+    // padrão da tecla Tab (se ninguém o impediu) move o foco para o próximo (Shift+Tab: anterior) elemento focável fora de áreas inert/ocultas.
+    press(key, { target, shiftKey = false } = {}) {
+      const origin = target || document.activeElement || root;
+      const event = makeEvent('keydown', { key, shiftKey });
+      origin.dispatchEvent(event);
+      if (!event.propagationStopped) document._dispatch(event);
+      // comportamento padrão do navegador: Enter ou Espaço em um botão o aciona (clique)
+      if ((key === 'Enter' || key === ' ') && !event.defaultPrevented && origin.localName === 'button') browser.click(origin);
+      if (key === 'Tab' && !event.defaultPrevented) {
+        const order = focusables(root);
+        if (order.length > 0) {
+          const at = order.indexOf(document.activeElement);
+          const next = shiftKey ? (at <= 0 ? order.length - 1 : at - 1) : (at < 0 || at === order.length - 1 ? 0 : at + 1);
+          order[next].focus();
+        }
+      }
+      return event;
+    },
+
     // Clique: o evento (com bubbling) e depois o comportamento PADRÃO do navegador, se ninguém o impediu.
     click(element) {
-      if (element.disabled) return;
+      if (element.disabled || isInertOrHidden(element)) return;
       const event = makeEvent('click');
       element.dispatchEvent(event);
       if (event.defaultPrevented) return;
@@ -388,9 +464,23 @@ function createBrowser({ hash = '' } = {}) {
   return browser;
 }
 
+const FOCUSABLE_TAGS = new Set(['button', 'select', 'textarea', 'input', 'a']);
+
+// Os elementos que o teclado alcança, na ordem do documento (button/input/select/textarea ativos, a[href], tabindex >= 0) — fora de áreas inert/ocultas.
+function focusables(container) {
+  return findAll(container, (element) => {
+    if (element.disabled || isInertOrHidden(element)) return false;
+    const tabindex = element.getAttribute('tabindex');
+    if (tabindex !== null) return Number(tabindex) >= 0;
+    if (element.localName === 'a') return element.hasAttribute('href');
+    if (element.localName === 'input' && element.type === 'hidden') return false;
+    return FOCUSABLE_TAGS.has(element.localName);
+  });
+}
+
 function closest(element, tag) {
   for (let current = element.parentNode; current; current = current.parentNode) if (current.localName === tag) return current;
   return null;
 }
 
-module.exports = { createBrowser, FakeDocument, FakeElement, FakeWindow, makeEvent, findAll, find, by };
+module.exports = { createBrowser, FakeDocument, FakeElement, FakeWindow, makeEvent, findAll, find, by, focusables, isInertOrHidden };

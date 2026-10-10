@@ -62,9 +62,13 @@ test('[DASH-LEADS-1] Leads Reprovados: filtros, dados comerciais completos (sem 
   }
   assert.doesNotMatch(aberto, /\{"|\[object/);
   const botao = browser.by.id(browser.root, 'btn-reapprove');
-  assert.equal(botao.textContent, 'REAPROVAR LEAD');
-  browser.type(browser.by.id(browser.root, 'reapprove-reason'), 'Cliente pediu');
+  assert.equal(botao.textContent, 'Reconsiderar lead');
+  // UX 4.0.2: reconsiderar SEMPRE pede a confirmação humana (a justificativa é opcional e fica na confirmação)
   browser.click(botao);
+  await browser.flush(4);
+  assert.equal(chamadas.filter(([nome]) => nome === 'reaprovar').length, 0, 'abrir a confirmação não reconsidera nada');
+  browser.type(browser.by.id(browser.root, 'reapprove-reason'), 'Cliente pediu');
+  browser.click(browser.by.button(browser.root, 'Reconsiderar'));
   await browser.flush(8);
   assert.deepEqual(chamadas.slice(1, 3), [['reaprovar', 'pid-alfa', 'Cliente pediu'], ['lista', 'TODOS']]);
   assert.match(tela(), /voltou para a Approval Queue/);
@@ -77,7 +81,7 @@ test('[DASH-LEADS-1] Leads Reprovados: filtros, dados comerciais completos (sem 
   browser.click(porAttr(browser, 'data-open', 'pid-dnc'));
   await browser.flush();
   assert.equal(browser.by.id(browser.root, 'btn-reapprove'), null);
-  assert.match(tela(), /não pode ser reaprovado/);
+  assert.match(tela(), /não pode ser reconsiderado/);
   assert.match(tela(), /não tem análise comercial detalhada|não tem análise/);
 });
 
@@ -99,6 +103,8 @@ test('[DASH-LEADS-2] Leads Reprovados: sem APPROVE:LEAD_APPROVAL não há botão
   browser.click(porAttr(browser, 'data-open', 'pid-alfa'));
   await browser.flush();
   browser.click(browser.by.id(browser.root, 'btn-reapprove'));
+  await browser.flush(4);
+  browser.click(browser.by.button(browser.root, 'Reconsiderar'));
   await browser.flush(8);
   assert.match(browser.root.textContent, /o lead já existe no CRM/);
   assert.match(browser.root.textContent, /Clínica Alfa/, 'o lead continua na lista');
@@ -119,18 +125,34 @@ test('[DASH-LEADS-3] Histórico: cada prospecção com o resumo padronizado; REF
   const view = createProspectingHistoryView({ document: browser.document, root: browser.root, api, navigate: (hash) => destinos.push(hash) });
   await view.load();
   await browser.flush();
+  // UX 4.0.3: o resumo padronizado fica na gaveta da prospecção (aba Resultados); a lista mostra os indicadores principais
+  assert.equal(porAttr(browser, 'data-redo', 'JOB-20261007-001'), null, 'a lista não oferece refazer: ele só existe na gaveta, com confirmação');
+  browser.click(porAttr(browser, 'data-open', 'JOB-20261007-001'));
+  await browser.flush(8);
   const tela = browser.root.textContent.replace(/\s+/g, ' ');
   for (const rotulo of ['Solicitados', 'Candidatos processados', 'Validados', 'Na Approval Queue', 'Já existentes', 'Dados insuficientes', 'Duplicados', 'DNC', 'Reposições', 'Tempo', 'Repetidos', 'Descoberta', 'Validação', 'Enriquecimento', 'Aprovados', 'Rejeitados', 'Promovidos']) assert.ok(tela.includes(rotulo), rotulo);
   assert.match(tela, /01:38/);
   assert.match(tela, /41.5s/);
   assert.match(tela, /30s/);
   assert.match(tela, /US\$ 0\.31/);
-  assert.equal(porAttr(browser, 'data-redo', 'JOB-20261007-002'), null, 'job ativo não tem refazer');
+  assert.equal(chamadas.length, 0, 'abrir o detalhe não inicia nada');
   browser.click(porAttr(browser, 'data-redo', 'JOB-20261007-001'));
+  await browser.flush(4);
+  assert.equal(chamadas.length, 0, 'refazer pede a confirmação humana: nada foi iniciado ainda');
+  browser.click(browser.find(browser.root, (el) => el.getAttribute('data-action') === 'confirm'));
   await browser.flush(8);
   assert.deepEqual(chamadas, ['JOB-20261007-001']);
   assert.deepEqual(destinos, ['#/prospeccao']);
   assert.equal(browser.by.text(browser.root, 'CANCELAR PROSPECÇÃO', 'button'), null, 'o histórico nunca oferece cancelar');
+  // job ativo: nenhuma opção de refazer na gaveta
+  const ativo = createBrowser();
+  const v2 = createProspectingHistoryView({ document: ativo.document, root: ativo.root, api, navigate: () => {} });
+  await v2.load();
+  await ativo.flush();
+  ativo.click(porAttr(ativo, 'data-open', 'JOB-20261007-002'));
+  await ativo.flush(8);
+  assert.equal(porAttr(ativo, 'data-redo', 'JOB-20261007-002'), null, 'job ativo não tem refazer');
+  assert.ok(ativo.by.link(ativo.root, 'Acompanhar na Nova Prospecção'));
 });
 
 test('[DASH-LEADS-4] Approval Queue: ao abrir um lead, a análise comercial (perfil) aparece; sem perfil, um aviso honesto; quem não revisa não busca o perfil', async () => {
@@ -156,6 +178,8 @@ test('[DASH-LEADS-4] Approval Queue: ao abrir um lead, a análise comercial (per
   assert.match(tela, /Análise comercial/);
   assert.match(tela, /Ana Souza — Proprietária/);
   assert.match(tela, /Evidência pública encontrada/);
+  browser.press('Escape'); // a gaveta é modal (UX 4.0): fecha antes de abrir outro lead
+  await browser.flush();
   browser.click(browser.by.button(browser.root, 'Clínica Manual'));
   await browser.flush(8);
   assert.match(browser.root.textContent, /não tem análise comercial detalhada/);

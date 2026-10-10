@@ -29,6 +29,7 @@ import { createProspectingExclusionsView } from './views/prospectingExclusions.m
 import { createProspectingHistoryView } from './views/prospectingHistory.mjs';
 import { createRejectedLeadsView } from './views/rejectedLeads.mjs';
 import { createOverviewView } from './views/overview.mjs';
+import { createUi, createDataBus } from './ui/index.mjs';
 
 const NO_ACCESS = 'Esta conta não possui acesso a esta área.';
 const BASE_TITLE = 'Rio X7 AI Agency OS';
@@ -38,11 +39,15 @@ const PAGE_TITLES = Object.freeze({
   'crm-new': 'Novo registro · CRM',
   'crm-record': 'Registro · CRM',
   approvals: 'Aprovações',
+  'approval-lead': 'Lead · Aprovações',
   agents: 'Agentes IA',
   funnels: 'Funis',
   prospecting: 'Nova Prospecção',
   'prospecting-history': 'Histórico de prospecções',
+  'prospecting-job': 'Prospecção · Histórico',
+  'prospecting-run': 'Execução · Nova Prospecção',
   'rejected-leads': 'Leads Reprovados',
+  'rejected-lead': 'Lead · Leads Reprovados',
   'prospecting-exclusions': 'Exclusões Permanentes',
   'not-found': 'Página não encontrada',
 });
@@ -301,7 +306,12 @@ export function startDashboard({ document, root, fetchImpl, sdk, navigation }) {
           );
         })
       );
-      mount(shell(me, main, nav));
+      // A moldura e, ao lado dela, o lugar das CAMADAS (gaveta/modal/confirmação) e dos AVISOS: enquanto há uma camada aberta, a moldura fica inert.
+      const shellEl = shell(me, main, nav);
+      const overlayHost = h(document, 'div', { className: 'overlay-host' });
+      mount(shellEl, overlayHost);
+      const ui = createUi({ document, host: overlayHost, getInertTargets: () => [shellEl] });
+      const bus = createDataBus();
 
       // Cada tela desenha no SEU contêiner: uma resposta que chega depois de a pessoa trocar de tela cai num contêiner
       // que já saiu da página, sem apagar a tela atual.
@@ -309,6 +319,47 @@ export function startDashboard({ document, root, fetchImpl, sdk, navigation }) {
       const crmContainer = container();
       const navigate = (hash) => navigation.go(hash);
       const crmView = createCrmView({ document, root: crmContainer, api, permissions, navigate });
+      // A Approval Queue é PERSISTENTE na sessão (como o CRM): busca, filtro, ordem e página sobrevivem a trocar de módulo; a gaveta do lead tem URL (#/aprovacoes/<id>).
+      const approvalsContainer = container();
+      const approvalsView = createApprovalsView({
+        document,
+        root: approvalsContainer,
+        api,
+        canReview: permissions.canReview,
+        // Promover exige as duas permissões (o servidor confere as reais): APPROVE:LEAD_APPROVAL e WRITE:CRM.
+        canPromote: permissions.canReview && permissions.canWriteCrm,
+        canReadCrm: permissions.canReadCrm,
+        ui,
+        bus,
+        navigation,
+      });
+      // o contador do menu acompanha a fila: quem muda a fila avisa pelo barramento (sem recarregar a página)
+      const approvalsLink = navLinks.get('approvals');
+      const stopCounts = bus.subscribe('approvals:counts', ({ pending }) => {
+        if (!approvalsLink) return;
+        if (Number.isInteger(pending) && pending > 0) {
+          approvalsLink.setAttribute('data-count', String(pending));
+          approvalsLink.setAttribute('aria-label', `Approval Queue, ${pending} ${pending === 1 ? 'pendente' : 'pendentes'}`);
+        } else {
+          approvalsLink.removeAttribute('data-count');
+          approvalsLink.removeAttribute('aria-label');
+        }
+      });
+      // Leads Reprovados também é PERSISTENTE (filtro, busca, ordem e página sobrevivem a trocar de módulo; a gaveta do lead tem URL). Reconsiderar devolve o lead à fila:
+      // o barramento avisa e a Approval Queue se atualiza em silêncio (uma leitura), para o contador do menu acompanhar.
+      const rejectedContainer = container();
+      const rejectedView = createRejectedLeadsView({ document, root: rejectedContainer, api, permissions, ui, bus, navigation });
+      const stopReconsider = bus.subscribe('approvals:changed', ({ action }) => {
+        if (action === 'reconsider') approvalsView.refresh();
+      });
+      // O Histórico de prospecções também é PERSISTENTE (busca, filtro, ordem e página sobrevivem a trocar de módulo; a gaveta da prospecção tem URL). Refazer leva à Nova Prospecção.
+      const historyContainer = container();
+      const historyView = createProspectingHistoryView({ document, root: historyContainer, api, navigate, canProposeLead: permissions.canProposeLead, ui, bus, navigation });
+      // A Nova Prospecção também é PERSISTENTE (o rascunho do formulário, o briefing e a gaveta da execução, com URL, sobrevivem a trocar de módulo). Nada começa sozinho:
+      // só a confirmação humana inicia uma prospecção; o acompanhamento só consulta o status de um job em andamento, com a tela à vista.
+      const prospectingContainer = container();
+      const prospectingView = createProspectingView({ document, root: prospectingContainer, api, permissions, ui, bus, navigation });
+      let currentSection = null;
       let transient = null; // a tela sem estado guardado (Visão Geral, Aprovações) que está na página agora
 
       function setActive(section) {
@@ -324,6 +375,11 @@ export function startDashboard({ document, root, fetchImpl, sdk, navigation }) {
         setActive(section);
         if (transient && typeof transient.destroy === 'function') transient.destroy();
         transient = null;
+        if (currentSection === 'approvals' && section !== 'approvals') approvalsView.hide(); // saiu da fila: as camadas fecham e as consultas param
+        if (currentSection === 'rejected-leads' && section !== 'rejected-leads') rejectedView.hide();
+        if (currentSection === 'prospecting-history' && section !== 'prospecting-history') historyView.hide();
+        if (currentSection === 'prospecting' && section !== 'prospecting') prospectingView.hide();
+        currentSection = section;
 
         if (section === 'crm') {
           if (!permissions.canReadCrm) {
@@ -333,18 +389,8 @@ export function startDashboard({ document, root, fetchImpl, sdk, navigation }) {
           main.replaceChildren(crmContainer);
           crmView.show(route);
         } else if (section === 'approvals') {
-          const target = container();
-          main.replaceChildren(target);
-          transient = createApprovalsView({
-            document,
-            root: target,
-            api,
-            canReview: permissions.canReview,
-            // Promover exige as duas permissões (o servidor confere as reais): APPROVE:LEAD_APPROVAL e WRITE:CRM.
-            canPromote: permissions.canReview && permissions.canWriteCrm,
-            canReadCrm: permissions.canReadCrm,
-          });
-          transient.load();
+          main.replaceChildren(approvalsContainer);
+          approvalsView.show(route);
         } else if (section === 'agents') {
           const target = container();
           main.replaceChildren(target);
@@ -364,28 +410,22 @@ export function startDashboard({ document, root, fetchImpl, sdk, navigation }) {
             main.replaceChildren(h(document, 'p', { className: 'message error', role: 'alert', text: NO_ACCESS }));
             return;
           }
-          const target = container();
-          main.replaceChildren(target);
-          transient = createProspectingView({ document, root: target, api, permissions });
-          transient.load();
+          main.replaceChildren(prospectingContainer);
+          prospectingView.show(route);
         } else if (section === 'prospecting-history') {
           if (!permissions.canProposeLead) {
             main.replaceChildren(h(document, 'p', { className: 'message error', role: 'alert', text: NO_ACCESS }));
             return;
           }
-          const target = container();
-          main.replaceChildren(target);
-          transient = createProspectingHistoryView({ document, root: target, api, navigate });
-          transient.load();
+          main.replaceChildren(historyContainer);
+          historyView.show(route);
         } else if (section === 'rejected-leads') {
           if (!permissions.canReview) {
             main.replaceChildren(h(document, 'p', { className: 'message error', role: 'alert', text: NO_ACCESS }));
             return;
           }
-          const target = container();
-          main.replaceChildren(target);
-          transient = createRejectedLeadsView({ document, root: target, api, permissions });
-          transient.load();
+          main.replaceChildren(rejectedContainer);
+          rejectedView.show(route);
         } else if (section === 'prospecting-exclusions') {
           if (!permissions.canManageProspectingExclusions) {
             main.replaceChildren(h(document, 'p', { className: 'message error', role: 'alert', text: NO_ACCESS }));
@@ -415,7 +455,10 @@ export function startDashboard({ document, root, fetchImpl, sdk, navigation }) {
       }
 
       const stopRouting = navigation.subscribe(() => renderRoute(parseRoute(navigation.current())));
-      session = { stopRouting, views: [crmView, { destroy: () => transient && typeof transient.destroy === 'function' && transient.destroy() }] };
+      session = {
+        stopRouting,
+        views: [crmView, approvalsView, rejectedView, historyView, prospectingView, { destroy: stopReconsider }, { destroy: () => transient && typeof transient.destroy === 'function' && transient.destroy() }, { destroy: stopCounts }, { destroy: () => ui.destroy() }],
+      };
       renderRoute(parseRoute(navigation.current()));
     }
 

@@ -9,6 +9,7 @@
 //   #/crm/novo                formulário de novo registro
 //   #/crm/registro/<id>       ficha de um registro (o id vai codificado: crm%3A...)
 //   #/aprovacoes              a fila de aprovação
+//   #/aprovacoes/<id>         a fila com a GAVETA do lead aberta (UX 4.0; o id vai codificado). Abrir por link direto funciona e o Voltar do navegador fecha a gaveta
 //   #/agentes                 a Central de Agentes IA (só a estrutura visual)
 //   #/funis                   o Kanban de Funis (reestruturação Prospecção/CRM/Funis, Etapa "Funis 2")
 //   #/prospeccao              o Workbench de Prospecção (Etapa "Prospecção 1") — "Nova Prospecção"
@@ -37,11 +38,47 @@ export function parseRoute(hash) {
     return { name: 'not-found' };
   }
   if (segments.length === 1 && segments[0] === 'aprovacoes') return { name: 'approvals' };
+  if (segments.length === 2 && segments[0] === 'aprovacoes' && segments[1] !== '') {
+    try {
+      const id = decodeURIComponent(segments[1]);
+      if (id.trim() !== '') return { name: 'approval-lead', id };
+    } catch {
+      // um "%" solto: not-found, como qualquer rota que não existe.
+    }
+    return { name: 'not-found' };
+  }
   if (segments.length === 1 && segments[0] === 'agentes') return { name: 'agents' };
   if (segments.length === 1 && segments[0] === 'funis') return { name: 'funnels' };
   if (segments.length === 1 && segments[0] === 'prospeccao') return { name: 'prospecting' };
+  if (segments.length === 3 && segments[0] === 'prospeccao' && segments[1] === 'execucao' && segments[2] !== '') {
+    try {
+      const id = decodeURIComponent(segments[2]);
+      if (id.trim() !== '') return { name: 'prospecting-run', id };
+    } catch {
+      // um '%' solto: not-found, como qualquer rota que não existe.
+    }
+    return { name: 'not-found' };
+  }
   if (segments.length === 2 && segments[0] === 'prospeccao' && segments[1] === 'historico') return { name: 'prospecting-history' };
+  if (segments.length === 3 && segments[0] === 'prospeccao' && segments[1] === 'historico' && segments[2] !== '') {
+    try {
+      const id = decodeURIComponent(segments[2]);
+      if (id.trim() !== '') return { name: 'prospecting-job', id };
+    } catch {
+      // um '%' solto: not-found, como qualquer rota que não existe.
+    }
+    return { name: 'not-found' };
+  }
   if (segments.length === 2 && segments[0] === 'prospeccao' && segments[1] === 'leads-reprovados') return { name: 'rejected-leads' };
+  if (segments.length === 3 && segments[0] === 'prospeccao' && segments[1] === 'leads-reprovados' && segments[2] !== '') {
+    try {
+      const id = decodeURIComponent(segments[2]);
+      if (id.trim() !== '') return { name: 'rejected-lead', id };
+    } catch {
+      // um '%' solto: not-found, como qualquer rota que não existe.
+    }
+    return { name: 'not-found' };
+  }
   if (segments.length === 1 && segments[0] === 'exclusoes-permanentes') return { name: 'prospecting-exclusions' };
   return { name: 'not-found' };
 }
@@ -58,16 +95,24 @@ export function buildHash(route) {
       return `#/crm/${CRM_RECORD_SEGMENT}/${encodeURIComponent(route.id)}`;
     case 'approvals':
       return '#/aprovacoes';
+    case 'approval-lead':
+      return `#/aprovacoes/${encodeURIComponent(route.id)}`;
     case 'agents':
       return '#/agentes';
     case 'funnels':
       return '#/funis';
     case 'prospecting':
       return '#/prospeccao';
+    case 'prospecting-run':
+      return `#/prospeccao/execucao/${encodeURIComponent(route.id)}`;
     case 'prospecting-history':
       return '#/prospeccao/historico';
+    case 'prospecting-job':
+      return `#/prospeccao/historico/${encodeURIComponent(route.id)}`;
     case 'rejected-leads':
       return '#/prospeccao/leads-reprovados';
+    case 'rejected-lead':
+      return `#/prospeccao/leads-reprovados/${encodeURIComponent(route.id)}`;
     case 'prospecting-exclusions':
       return '#/exclusoes-permanentes';
     default:
@@ -79,18 +124,18 @@ export function buildHash(route) {
 export function sectionOf(route) {
   const name = route && route.name;
   if (name === 'crm-list' || name === 'crm-new' || name === 'crm-record') return 'crm';
-  if (name === 'approvals') return 'approvals';
+  if (name === 'approvals' || name === 'approval-lead') return 'approvals';
   if (name === 'agents') return 'agents';
   if (name === 'funnels') return 'funnels';
-  if (name === 'prospecting') return 'prospecting';
-  if (name === 'prospecting-history') return 'prospecting-history';
-  if (name === 'rejected-leads') return 'rejected-leads';
+  if (name === 'prospecting' || name === 'prospecting-run') return 'prospecting';
+  if (name === 'prospecting-history' || name === 'prospecting-job') return 'prospecting-history';
+  if (name === 'rejected-leads' || name === 'rejected-lead') return 'rejected-leads';
   if (name === 'prospecting-exclusions') return 'prospecting-exclusions';
   if (name === 'overview') return 'overview';
   return null;
 }
 
-// O adaptador do `window` do navegador: { current(), subscribe(fn), go(hash), replace(hash) }. É a única parte que toca
+// O adaptador do `window` do navegador: { current(), subscribe(fn), go(hash), back(), replace(hash) }. É a única parte que toca
 // no `window`; os testes usam um `window` falso com a mesma forma. `replace` troca a entrada do histórico (um redirecionamento
 // não deve virar uma volta a ser desfeita com o botão "Voltar") e avisa quem assinou.
 export function browserNavigation(win) {
@@ -110,6 +155,10 @@ export function browserNavigation(win) {
     },
     go(hash) {
       win.location.hash = hash;
+    },
+    // voltar uma entrada do histórico (o hashchange chega depois): fechar uma gaveta aberta por clique volta à lista sem deixar entradas repetidas
+    back() {
+      win.history.back();
     },
     replace(hash) {
       win.history.replaceState(null, '', hash);

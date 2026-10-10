@@ -388,5 +388,6 @@ export function createEnrichmentPanel({ document, api, prospectId, canRun = true
   }
 
   render();
-  return { element, load, render, destroy() { destroyed = true; stopPolling(); } };
+  // pause(): para a consulta de estado (a gaveta fechou); load() a retoma se a pesquisa ainda estiver rodando.
+  return { element, load, render, pause: stopPolling, destroy() { destroyed = true; stopPolling(); } };
 }
