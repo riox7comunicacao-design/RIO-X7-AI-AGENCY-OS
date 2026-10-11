@@ -50,6 +50,19 @@ const textoDaTela = (browser) => {
   return texto;
 };
 
+// UX 4.0.6: a ficha é uma GAVETA por cima da lista (os campos e botões de uma escrita estão nela); o título dela é o nome da empresa.
+const gavetaDe = (s) => s.browser.find(s.browser.root, (el) => el.getAttribute('role') === 'dialog' && /drawer/.test(el.className));
+const escopo = (s) => gavetaDe(s) || s.browser.root;
+// Sair de um formulário com texto digitado pergunta antes (UX 4.0.6.3): quem quer mesmo sair confirma o descarte.
+const descartarSePedir = async (s) => {
+  const confirmar = s.browser.find(s.browser.root, (el) => el.getAttribute('data-action') === 'confirm' && el.textContent === 'Descartar alterações');
+  if (confirmar) {
+    s.browser.click(confirmar);
+    await s.browser.flush();
+  }
+};
+const tituloDaFicha = (s) => s.browser.by.cls(s.browser.root, 'overlay-title')[0].textContent;
+
 const ALFA = Object.freeze({ empresa: 'Clínica Alfa Teste', site: 'alfa.example.test', telefone: '24 90000-0001', cidade: 'Petrópolis', estado: 'RJ', nicho: 'Psicologia' });
 const BETA = Object.freeze({ empresa: 'Clínica Beta Teste', site: 'beta.example.test', telefone: '21 90000-0002', cidade: 'Niterói', estado: 'RJ', nicho: 'Odontologia' });
 
@@ -59,14 +72,14 @@ async function preencher(t, valores) {
   for (const [chave, valor] of Object.entries(valores)) {
     const campo = campos.find((entry) => entry.key === chave);
     const rotulo = campo.required ? `${campo.label} (obrigatório)` : campo.label;
-    const controle = t.browser.by.label(t.browser.root, rotulo);
+    const controle = t.browser.by.label(escopo(t), rotulo);
     assert.ok(controle, `campo "${rotulo}" não encontrado`);
     t.browser.type(controle, valor);
   }
 }
 
 const clicar = async (t, texto) => {
-  const botao = t.browser.by.button(t.browser.root, texto);
+  const botao = t.browser.by.button(escopo(t), texto);
   assert.ok(botao, `botão "${texto}" não encontrado`);
   t.browser.click(botao);
   await t.browser.flush();
@@ -82,8 +95,8 @@ const sohAdministrador = (usuario) => ({ userId: usuario.userId, name: usuario.n
 test('[DASH-FULL-1] ADMIN pela interface, contra a API REAL: criar -> editar -> mudar status -> marcar "Não contatar" — cada passo chega ao arquivo do CRM com a identidade do TOKEN (nunca a da tela) e a ficha mostra o que o servidor devolveu', async (t) => {
   const s = await subir(t, { hash: '#/crm/novo' });
   await preencher(s, { empresa: 'Clínica Nova Teste', site: 'nova.example.test', telefone: '24 90000-0003', cidade: 'Petrópolis', valorProposta: '1500,50', responsavel: 'Rafael' });
-  s.browser.choose(s.browser.by.label(s.browser.root, 'Status inicial'), 'QUALIFIED_PROSPECT');
-  s.browser.type(s.browser.by.label(s.browser.root, 'Motivo da entrada (opcional)'), 'Indicação de cliente');
+  s.browser.choose(s.browser.by.label(escopo(s), 'Status inicial'), 'QUALIFIED_PROSPECT');
+  s.browser.type(s.browser.by.label(escopo(s), 'Motivo da entrada (opcional)'), 'Indicação de cliente');
   await clicar(s, 'Criar registro');
 
   // criou, gravou e abriu a ficha do registro
@@ -96,13 +109,13 @@ test('[DASH-FULL-1] ADMIN pela interface, contra a API REAL: criar -> editar -> 
   assert.equal(criado.historico[0].actor, 'HUMAN');
   assert.equal(criado.historico[0].motivo, 'Indicação de cliente');
   assert.equal(s.browser.window.location.hash, `#/crm/registro/${encodeURIComponent(criado.id)}`);
-  assert.equal(s.browser.by.tag(s.browser.root, 'h2')[0].textContent, 'Clínica Nova Teste');
+  assert.equal(tituloDaFicha(s), 'Clínica Nova Teste');
   assert.match(textoDaTela(s.browser), /Registro criado\./);
 
   // editar
   await clicar(s, 'Editar');
-  s.browser.type(s.browser.by.label(s.browser.root, 'Cidade'), 'Teresópolis');
-  s.browser.type(s.browser.by.label(s.browser.root, 'Valor da proposta'), '2000');
+  s.browser.type(s.browser.by.label(escopo(s), 'Cidade'), 'Teresópolis');
+  s.browser.type(s.browser.by.label(escopo(s), 'Valor da proposta'), '2000');
   await clicar(s, 'Salvar alterações');
   assert.match(textoDaTela(s.browser), /Alterações salvas\./);
   const editado = doArquivo(s, criado.id);
@@ -113,8 +126,8 @@ test('[DASH-FULL-1] ADMIN pela interface, contra a API REAL: criar -> editar -> 
 
   // mudar status
   await clicar(s, 'Mudar status');
-  s.browser.choose(s.browser.by.label(s.browser.root, 'Novo status'), 'CONTACTED');
-  s.browser.type(s.browser.by.label(s.browser.root, 'Motivo (opcional)'), 'Primeiro contato feito');
+  s.browser.choose(s.browser.by.label(escopo(s), 'Novo status'), 'CONTACTED');
+  s.browser.type(s.browser.by.label(escopo(s), 'Motivo (opcional)'), 'Primeiro contato feito');
   await clicar(s, 'Confirmar mudança');
   assert.match(textoDaTela(s.browser), /Status alterado para Contacted\./);
   const movido = doArquivo(s, criado.id);
@@ -131,8 +144,8 @@ test('[DASH-FULL-1] ADMIN pela interface, contra a API REAL: criar -> editar -> 
   await clicar(s, 'Confirmar: marcar como Não contatar');
   assert.match(textoDaTela(s.browser), /Confirme que você entende que a ação é terminal/, 'sem a confirmação nada acontece');
   assert.equal(doArquivo(s, criado.id).status, 'CONTACTED');
-  s.browser.check(s.browser.by.label(s.browser.root, 'Entendo que esta ação é terminal e não pode ser desfeita.'));
-  s.browser.type(s.browser.by.label(s.browser.root, 'Motivo (opcional)'), 'Pediu para não ser contatado');
+  s.browser.check(s.browser.by.label(escopo(s), 'Entendo que esta ação é terminal e não pode ser desfeita.'));
+  s.browser.type(s.browser.by.label(escopo(s), 'Motivo (opcional)'), 'Pediu para não ser contatado');
   await clicar(s, 'Confirmar: marcar como Não contatar');
   assert.equal(doArquivo(s, criado.id).status, 'DO_NOT_CONTACT');
   assert.match(textoDaTela(s.browser), /bloqueado como "Não contatar"/);
@@ -149,7 +162,7 @@ test('[DASH-FULL-2] as regras do domínio chegam à tela pela API real: transiç
   s.browser.window.location.hash = `#/crm/registro/${encodeURIComponent(alfa.id)}`;
   await s.browser.flush();
   await clicar(s, 'Mudar status');
-  s.browser.choose(s.browser.by.label(s.browser.root, 'Novo status'), 'PROSPECT');
+  s.browser.choose(s.browser.by.label(escopo(s), 'Novo status'), 'PROSPECT');
   await clicar(s, 'Confirmar mudança');
   assert.match(textoDaTela(s.browser), /Esta mudança de status não é permitida a partir do status atual\./);
   assert.equal(doArquivo(s, alfa.id).status, 'WON');
@@ -165,14 +178,16 @@ test('[DASH-FULL-2] as regras do domínio chegam à tela pela API real: transiç
   await clicar(s, 'Criar registro');
   assert.match(textoDaTela(s.browser), /Esta identidade está bloqueada como "Não contatar"/);
   assert.equal(gravados(s).length, antes, 'nada foi gravado');
-  assert.equal(s.browser.by.label(s.browser.root, 'Empresa (obrigatório)').value, 'Outra Empresa', 'o formulário continua preenchido');
+  assert.equal(s.browser.by.label(escopo(s), 'Empresa (obrigatório)').value, 'Outra Empresa', 'o formulário continua preenchido');
 
   // editar um registro bloqueado por baixo: a API recusa com RECORD_LOCKED e a ficha recarrega mostrando o bloqueio
   s.browser.window.location.hash = `#/crm/registro/${encodeURIComponent(alfa.id)}`;
   await s.browser.flush();
+  assert.ok(s.browser.find(s.browser.root, (el) => el.getAttribute('data-action') === 'confirm'), 'o formulário de novo registro estava preenchido: sair pergunta antes');
+  await descartarSePedir(s);
   await clicar(s, 'Editar');
   await crm.markDoNotContact(s.repositorio, alfa.id, { actor: 'HUMAN', reviewedBy: { userId: 'user-outro', name: 'Outro', role: 'ADMIN' }, motivo: 'por baixo' });
-  s.browser.type(s.browser.by.label(s.browser.root, 'Cidade'), 'Outra cidade');
+  s.browser.type(s.browser.by.label(escopo(s), 'Cidade'), 'Outra cidade');
   await clicar(s, 'Salvar alterações');
   assert.match(textoDaTela(s.browser), /bloqueado como "Não contatar"/);
   assert.equal(doArquivo(s, alfa.id).cidade, ALFA.cidade, 'a edição foi recusada');
@@ -209,13 +224,13 @@ test('[DASH-FULL-4] tudo o que a interface enviou ao servidor tem só campos do 
   await preencher(s, { empresa: 'Auditada Ltda', cidade: 'Niterói' });
   await clicar(s, 'Criar registro');
   await clicar(s, 'Editar');
-  s.browser.type(s.browser.by.label(s.browser.root, 'Nicho'), 'Psicologia');
+  s.browser.type(s.browser.by.label(escopo(s), 'Nicho'), 'Psicologia');
   await clicar(s, 'Salvar alterações');
   await clicar(s, 'Mudar status');
-  s.browser.choose(s.browser.by.label(s.browser.root, 'Novo status'), 'RESPONDED');
+  s.browser.choose(s.browser.by.label(escopo(s), 'Novo status'), 'RESPONDED');
   await clicar(s, 'Confirmar mudança');
   await clicar(s, 'Marcar como Não contatar');
-  s.browser.check(s.browser.by.label(s.browser.root, 'Entendo que esta ação é terminal e não pode ser desfeita.'));
+  s.browser.check(s.browser.by.label(escopo(s), 'Entendo que esta ação é terminal e não pode ser desfeita.'));
   await clicar(s, 'Confirmar: marcar como Não contatar');
 
   const { WRITABLE_KEYS } = await import('../../dashboard/crm-model.mjs');
@@ -243,16 +258,16 @@ test('[DASH-FULL-5] COMMERCIAL_CLOSER pela interface: lista, busca, filtra e abr
   assert.match(textoDaTela(s.browser), /Clínica Alfa Teste/);
   assert.match(textoDaTela(s.browser), /Clínica Beta Teste/);
   assert.equal(s.browser.by.link(s.browser.root, 'Novo registro'), null);
-  s.browser.type(s.browser.by.label(s.browser.root, 'Buscar'), 'beta');
+  s.browser.type(s.browser.by.label(escopo(s), 'Buscar'), 'beta');
   assert.deepEqual(s.browser.by.tag(s.browser.by.tag(s.browser.root, 'tbody')[0], 'tr').map((tr) => tr.children[0].textContent), ['Clínica Beta Teste']);
-  s.browser.type(s.browser.by.label(s.browser.root, 'Buscar'), '');
-  s.browser.choose(s.browser.by.label(s.browser.root, 'Nicho'), 'Odontologia');
+  s.browser.type(s.browser.by.label(escopo(s), 'Buscar'), '');
+  s.browser.choose(s.browser.by.label(escopo(s), 'Nicho'), 'Odontologia');
   assert.equal(s.browser.by.tag(s.browser.by.tag(s.browser.root, 'tbody')[0], 'tr').length, 1);
   s.browser.click(s.browser.by.button(s.browser.root, 'Limpar filtros'));
 
-  s.browser.click(s.browser.by.link(s.browser.root, 'Clínica Alfa Teste'));
+  s.browser.click(s.browser.by.button(s.browser.root, 'Clínica Alfa Teste'));
   await s.browser.flush();
-  assert.equal(s.browser.by.tag(s.browser.root, 'h2')[0].textContent, 'Clínica Alfa Teste');
+  assert.equal(tituloDaFicha(s), 'Clínica Alfa Teste');
   for (const botao of ['Editar', 'Mudar status', 'Marcar como Não contatar']) assert.equal(s.browser.by.button(s.browser.root, botao), null, botao);
   assert.equal(s.fetchImpl.calls.filter((chamada) => chamada.method !== 'GET').length, 0);
 
@@ -271,6 +286,9 @@ test('[DASH-FULL-5] COMMERCIAL_CLOSER pela interface: lista, busca, filtra e abr
   await browserForcado.flush();
   assert.match(browserForcado.root.textContent, /Sua conta não tem permissão para esta ação\./);
   browserForcado.click(browserForcado.by.button(browserForcado.root, 'Cancelar'));
+  await browserForcado.flush();
+  browserForcado.click(browserForcado.by.button(browserForcado.root, 'Descartar alterações')); // cancelar com texto digitado pergunta antes
+  await browserForcado.flush();
   browserForcado.click(browserForcado.by.button(browserForcado.root, 'Marcar como Não contatar'));
   browserForcado.check(browserForcado.by.label(browserForcado.root, 'Entendo que esta ação é terminal e não pode ser desfeita.'));
   browserForcado.click(browserForcado.by.button(browserForcado.root, 'Confirmar: marcar como Não contatar'));
@@ -287,7 +305,7 @@ test('[DASH-FULL-5] COMMERCIAL_CLOSER pela interface: lista, busca, filtra e abr
 // ===========================================================================
 test('[DASH-FULL-6] token que o servidor não reconhece (expirado): a API real responde 401, a renovação devolve o mesmo token, e o painel volta ao login com o aviso — sem dado na tela', async (t) => {
   const s = await subir(t, { token: 'token-expirado-de-teste-nao-real', sementes: [ALFA], hash: '#/crm' });
-  assert.ok(s.browser.by.label(s.browser.root, 'E-mail'), 'voltou ao login');
+  assert.ok(s.browser.by.label(escopo(s), 'E-mail'), 'voltou ao login');
   assert.match(textoDaTela(s.browser), /Sua sessão expirou\. Entre novamente\./);
   assert.doesNotMatch(textoDaTela(s.browser), /Clínica Alfa/);
   assert.ok(s.fetchImpl.responses.every((resposta) => resposta.status === 401));
@@ -305,13 +323,18 @@ test('[DASH-FULL-7] usuário INATIVO: a API real responde 403 em /api/me e o pai
 test('[DASH-FULL-8] logout depois de usar o CRM: a página do login não guarda nenhum dado de CRM, e um novo painel aberto com outro usuário não enxerga a tela do anterior', async (t) => {
   const s = await subir(t, { sementes: [ALFA, BETA], hash: '#/crm' });
   assert.match(textoDaTela(s.browser), /Clínica Alfa Teste/);
-  s.browser.click(s.browser.by.link(s.browser.root, 'Clínica Alfa Teste'));
+  s.browser.click(s.browser.by.button(s.browser.root, 'Clínica Alfa Teste'));
   await s.browser.flush();
+  assert.ok(gavetaDe(s), 'a ficha está aberta numa gaveta');
   assert.match(textoDaTela(s.browser), /Histórico/);
-  await clicar(s, 'Sair');
+  // a sessão acaba COM a ficha aberta (sair em outra aba, expirar...): a gaveta, a lista e os dados saem juntos
+  s.sdk.emit('SIGNED_OUT');
+  await s.browser.flush();
+  assert.equal(gavetaDe(s), null, 'a gaveta saiu');
   const texto = textoDaTela(s.browser);
   for (const dado of ['Clínica Alfa', 'Clínica Beta', 'alfa.example.test', 'Petrópolis', 'Histórico', BRENO.name]) assert.ok(!texto.includes(dado), `"${dado}" sobrou depois do logout`);
   assert.ok(s.browser.by.label(s.browser.root, 'E-mail'));
+  assert.equal(s.browser.findAll(s.browser.root, (el) => el.getAttribute('role') === 'dialog').length, 0, 'nenhuma camada sobrou');
 });
 
 // ===========================================================================
@@ -367,7 +390,7 @@ test('[DASH-FULL-9] o caso relatado, pela interface: Nicho "Clínica", Cidade "P
   for (const [chave, rotulo] of [['nicho', 'Nicho'], ['cidade', 'Cidade'], ['estado', 'Estado (UF)'], ['contato', 'Nome do contato']]) {
     assert.equal(campoDaFicha(s.browser, rotulo), CASO_RELATADO[chave], `ficha: ${rotulo}`);
   }
-  assert.equal(s.browser.by.tag(s.browser.root, 'h2')[0].textContent, CASO_RELATADO.empresa);
+  assert.equal(tituloDaFicha(s), CASO_RELATADO.empresa);
 });
 
 test('[DASH-FULL-10] as camadas de baixo, SEM o Dashboard: o mesmo caso relatado enviado direto à API real (Service, domínio e arquivo reais) volta igual — se a interface estivesse certa e o dado errado, este teste falharia e diria que o problema é do servidor', async (t) => {

@@ -54,3 +54,40 @@ export function roleLabel(role) {
   if (typeof role !== 'string') return '';
   return Object.prototype.hasOwnProperty.call(ROLE_LABELS, role) ? ROLE_LABELS[role] : role;
 }
+
+// ---------------------------------------------------------------------------
+// APRESENTAÇÃO de cidades, estados e localidades (só a EXIBIÇÃO: o valor guardado nunca é alterado nem regravado)
+// ---------------------------------------------------------------------------
+// "petrópolis/rj" -> "Petrópolis/RJ"; "NITERÓI - RJ" -> "Niterói/RJ"; "rio de janeiro" -> "Rio de Janeiro"; "sp" -> "SP". Só muda a caixa e o separador entre cidade e UF
+// (quando o final é uma UF brasileira de verdade); nunca inventa acento nem corrige o nome. É idempotente: o que já está padronizado volta igual.
+const BRAZILIAN_UF = new Set(['AC', 'AL', 'AP', 'AM', 'BA', 'CE', 'DF', 'ES', 'GO', 'MA', 'MT', 'MS', 'MG', 'PA', 'PB', 'PR', 'PE', 'PI', 'RJ', 'RN', 'RS', 'RO', 'RR', 'SC', 'SP', 'SE', 'TO']);
+const LOWERCASE_WORDS = new Set(['de', 'da', 'do', 'das', 'dos', 'e']);
+
+function titleCasePlace(text) {
+  return text
+    .split(' ')
+    .filter((word) => word !== '')
+    .map((word, index) => {
+      const lower = word.toLowerCase();
+      if (index > 0 && LOWERCASE_WORDS.has(lower)) return lower;
+      return lower
+        .split(/([-'’])/)
+        .map((part, at) => (/^[-'’]$/.test(part) || part === '' ? part : at > 0 && LOWERCASE_WORDS.has(part) ? part : part.charAt(0).toUpperCase() + part.slice(1)))
+        .join('');
+    })
+    .join(' ');
+}
+
+export function formatLocation(value) {
+  const raw = textOf(value).replace(/\s+/g, ' ');
+  if (raw === '') return '';
+  if (/^[A-Za-z]{2}$/.test(raw) && BRAZILIAN_UF.has(raw.toUpperCase())) return raw.toUpperCase();
+  const match = /^(.*?)\s*(?:\/|\s-\s|-(?=[A-Za-z]{2}$))\s*([A-Za-z]{2})$/.exec(raw);
+  if (match && match[1] !== '' && BRAZILIAN_UF.has(match[2].toUpperCase())) return `${titleCasePlace(match[1])}/${match[2].toUpperCase()}`;
+  return titleCasePlace(raw);
+}
+
+// Uma lista de localidades (como o briefing guarda) em texto para a tela: "Petrópolis/RJ, Teresópolis/RJ".
+export function formatLocations(list) {
+  return (Array.isArray(list) ? list : []).map(formatLocation).filter(Boolean).join(', ');
+}

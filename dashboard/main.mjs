@@ -46,6 +46,7 @@ const PAGE_TITLES = Object.freeze({
   'prospecting-history': 'Histórico de prospecções',
   'prospecting-job': 'Prospecção · Histórico',
   'prospecting-run': 'Execução · Nova Prospecção',
+  'prospecting-brief': 'Briefing · Nova Prospecção',
   'rejected-leads': 'Leads Reprovados',
   'rejected-lead': 'Lead · Leads Reprovados',
   'prospecting-exclusions': 'Exclusões Permanentes',
@@ -318,7 +319,8 @@ export function startDashboard({ document, root, fetchImpl, sdk, navigation }) {
       const container = () => h(document, 'div', { className: 'view' });
       const crmContainer = container();
       const navigate = (hash) => navigation.go(hash);
-      const crmView = createCrmView({ document, root: crmContainer, api, permissions, navigate });
+      // O CRM é PERSISTENTE na sessão (como a Approval Queue): busca, filtros, ordem, página e rolagem sobrevivem a abrir a ficha (uma gaveta com URL) e a trocar de módulo.
+      const crmView = createCrmView({ document, root: crmContainer, api, permissions, navigate, ui, bus, navigation });
       // A Approval Queue é PERSISTENTE na sessão (como o CRM): busca, filtro, ordem e página sobrevivem a trocar de módulo; a gaveta do lead tem URL (#/aprovacoes/<id>).
       const approvalsContainer = container();
       const approvalsView = createApprovalsView({
@@ -369,12 +371,22 @@ export function startDashboard({ document, root, fetchImpl, sdk, navigation }) {
         }
       }
 
+      // O endereço da tela que está na página: o CRM, com uma edição não salva, pode pedir para voltar a ele (navigation.restore) se a pessoa escolher "Continuar editando".
+      let renderedHash = navigation.current();
+
       function renderRoute(route) {
-        document.title = `${PAGE_TITLES[route.name] || BASE_TITLE} — ${BASE_TITLE}`;
         const section = sectionOf(route);
+        // Sair do CRM com edição não salva (ou salvando): o navegador já mudou o endereço, mas NADA muda na tela até a pessoa decidir. Descartar segue para onde ia; continuar editando volta o endereço.
+        if (currentSection === 'crm' && section !== 'crm' && typeof crmView.leaveState === 'function' && crmView.leaveState() !== null) {
+          crmView.confirmLeave({ discard: () => renderRoute(route), stay: () => navigation.restore(renderedHash) });
+          return;
+        }
+        renderedHash = navigation.current();
+        document.title = `${PAGE_TITLES[route.name] || BASE_TITLE} — ${BASE_TITLE}`;
         setActive(section);
         if (transient && typeof transient.destroy === 'function') transient.destroy();
         transient = null;
+        if (currentSection === 'crm' && section !== 'crm') crmView.hide(); // saiu do CRM: a ficha aberta fecha; busca, filtros e página ficam guardados
         if (currentSection === 'approvals' && section !== 'approvals') approvalsView.hide(); // saiu da fila: as camadas fecham e as consultas param
         if (currentSection === 'rejected-leads' && section !== 'rejected-leads') rejectedView.hide();
         if (currentSection === 'prospecting-history' && section !== 'prospecting-history') historyView.hide();

@@ -72,32 +72,32 @@ async function montarTela(t) {
   return { env, browser, requisicoes, agendadas, tela: () => browser.root.textContent.replace(/\s+/g, ' ') };
 }
 
-async function criarLote(x, { quantidade, maximo }) {
+// o assistente da aba "Nova pesquisa": etapa 1 (nicho) -> Próximo -> etapa 2 (local, quantidade, máximo) -> Próximo -> etapa 3
+async function preencherAssistente(x, { quantidade, maximo }) {
   const raiz = x.browser.root;
   x.browser.type(x.browser.by.id(raiz, 'pros-nicho'), 'Clínicas de estética');
+  x.browser.click(x.browser.by.id(raiz, 'pros-next'));
+  await x.browser.flush(4);
   x.browser.type(x.browser.by.id(raiz, 'pros-locais'), 'Petrópolis');
   x.browser.type(x.browser.by.id(raiz, 'pros-quantidade'), String(quantidade));
   if (maximo !== undefined) x.browser.type(x.browser.by.id(raiz, 'pros-max-candidates'), String(maximo));
-  x.browser.click(x.browser.by.text(raiz, 'Criar briefing', 'button'));
-  await x.browser.flush(12);
+  x.browser.click(x.browser.by.id(raiz, 'pros-next'));
+  await x.browser.flush(4);
 }
 
+// "Iniciar pesquisa…" -> a CONFIRMAÇÃO -> só então: criar o briefing, marcar como pronto e iniciar o job (o briefing nasce RASCUNHO no servidor real)
 async function loteProntoEIniciar(x, opcoes) {
-  await criarLote(x, opcoes);
-  // o lote nasce RASCUNHO no servidor real: o botão da própria tela o marca como pronto para pesquisa
-  x.browser.click(x.browser.by.text(x.browser.root, 'Marcar pronto para pesquisa', 'button'));
-  await x.browser.flush(12);
-  assert.match(x.tela(), /Pronto para pesquisa/);
-  const iniciar = x.browser.by.id(x.browser.root, 'pros-start-job');
-  assert.ok(iniciar, 'o botão "Iniciar prospecção" aparece');
+  await preencherAssistente(x, opcoes);
+  const iniciar = x.browser.by.id(x.browser.root, 'pros-start-wizard');
+  assert.ok(iniciar, 'o botão "Iniciar pesquisa…" aparece na etapa 3');
   x.browser.click(iniciar);
   await x.browser.flush(4);
-  assert.equal(x.requisicoes.filter((r) => r.method === 'POST' && r.path === '/api/prospecting/jobs').length, 0, 'abrir a confirmação não inicia a prospecção');
+  assert.equal(x.requisicoes.filter((r) => r.method === 'POST').length, 0, 'abrir a confirmação não cria nada nem inicia a prospecção');
   x.browser.click(x.browser.find(x.browser.root, (el) => el.getAttribute('data-action') === 'confirm'));
-  await x.browser.flush(12);
+  await x.browser.flush(14);
 }
 
-test('[JOBSTART-1] briefing criado (quantidade 3, máximo 10) -> Iniciar prospecção (com confirmação): o POST /api/prospecting/jobs leva { briefId, maxCandidates: 10 }, é aceito (202) e a mensagem "Envie exatamente" NÃO aparece', async (t) => {
+test('[JOBSTART-1] assistente (quantidade 3, máximo 10) -> Iniciar pesquisa (com confirmação): o briefing é criado, marcado como pronto e o job iniciado: o POST /api/prospecting/jobs leva { briefId, maxCandidates: 10 }, é aceito (202) e a mensagem "Envie exatamente" NÃO aparece', async (t) => {
   const x = await montarTela(t);
   await loteProntoEIniciar(x, { quantidade: 3, maximo: 10 });
 
@@ -133,11 +133,11 @@ test('[JOBSTART-1] briefing criado (quantidade 3, máximo 10) -> Iniciar prospec
   assert.equal(x.env.pedidosAoMotor[0].limit <= 10, true, 'o motor nunca é pedido além do máximo de candidatos');
 });
 
-test('[JOBSTART-2] sem mexer no campo, o padrão 50 chega ao endpoint; e o contrato do servidor continua exato: chave desconhecida recusada, briefId obrigatório', async (t) => {
+test('[JOBSTART-2] sem mexer no campo, o padrão conservador 10 chega ao endpoint; e o contrato do servidor continua exato: chave desconhecida recusada, briefId obrigatório', async (t) => {
   const x = await montarTela(t);
   await loteProntoEIniciar(x, { quantidade: 3 });
   const inicio = x.requisicoes.find((r) => r.method === 'POST' && r.path === '/api/prospecting/jobs');
-  assert.deepEqual(inicio.body.maxCandidates, 50);
+  assert.deepEqual(inicio.body.maxCandidates, 10);
   assert.doesNotMatch(x.tela(), /Envie exatamente/);
   await x.env.prospectingJobService.waitFor((await x.env.prospectingJobService.listJobs(await contextoDe(x.env), {}))[0].id);
 

@@ -308,23 +308,149 @@ test('[DASH-SHELL-13] navegação: cada item do menu abre a sua tela e fica marc
   assert.deepEqual(ativo(t.browser), ['Visão Geral']);
 });
 
-test('[DASH-SHELL-14] link direto: abrir o painel já em #/crm/registro/<id> mostra a ficha; voltar à lista mantém a busca que a pessoa tinha feito', async () => {
+test('[DASH-SHELL-14] link direto: abrir o painel já em #/crm/registro/<id> mostra a ficha numa gaveta por cima da lista; fechar leva à lista, que mantém a busca que a pessoa fez', async () => {
   const t = await iniciar({ session: true, routes: await rotasLogado(), hash: '#/crm/registro/crm%3Aa' });
   assert.deepEqual(ativo(t.browser), ['CRM']);
-  assert.equal(t.browser.by.tag(t.browser.root, 'h2')[0].textContent, 'Clínica Alfa');
-  assert.match(textoDaTela(t.browser), /Histórico/);
+  const gaveta = () => t.browser.find(t.browser.root, (el) => el.getAttribute('role') === 'dialog' && /drawer/.test(el.className));
+  assert.equal(t.browser.by.cls(t.browser.root, 'overlay-title')[0].textContent, 'Clínica Alfa');
+  assert.ok(t.browser.find(gaveta(), (el) => el.getAttribute('role') === 'tab' && el.textContent === 'Histórico'), 'a ficha tem a aba Histórico');
+  assert.equal(t.browser.by.tag(t.browser.root, 'tbody')[0].children.length, 2, 'a lista foi carregada por baixo da ficha');
 
-  t.browser.click(t.browser.by.link(t.browser.root, '← Voltar à lista'));
+  t.browser.click(t.browser.find(gaveta(), (el) => el.getAttribute('data-action') === 'close'));
   await t.browser.flush();
+  assert.equal(gaveta(), null);
+  assert.equal(t.browser.window.location.hash, '#/crm', 'fechar leva à lista');
   const busca = t.browser.by.label(t.browser.root, 'Buscar');
   t.browser.type(busca, 'odonto');
   assert.equal(t.browser.by.tag(t.browser.root, 'tbody')[0].children.length, 1);
-  t.browser.click(t.browser.by.link(t.browser.root, 'Odonto Beta'));
+  t.browser.click(t.browser.by.button(t.browser.root, 'Odonto Beta'));
   await t.browser.flush();
+  assert.ok(gaveta(), 'abrir um registro pela lista');
   t.browser.window.location.hash = '#/crm';
   await t.browser.flush();
+  assert.equal(gaveta(), null, 'a rota da lista fecha a gaveta');
   assert.equal(t.browser.by.label(t.browser.root, 'Buscar').value, 'odonto', 'a busca foi mantida');
   assert.equal(t.browser.by.tag(t.browser.root, 'tbody')[0].children.length, 1);
+});
+
+test('[DASH-SHELL-14b] o CRM é PERSISTENTE no painel: com a ficha aberta, trocar de módulo fecha a gaveta; ao voltar ao CRM a busca e a lista continuam (já prontas, sem "carregando") e a lista se atualiza em silêncio uma vez', async () => {
+  const t = await iniciar({ session: true, routes: await rotasLogado(), hash: '#/crm' });
+  const gaveta = () => t.browser.find(t.browser.root, (el) => el.getAttribute('role') === 'dialog' && /drawer/.test(el.className));
+  const cargasDoCrm = () => chamadasDeApi(t.fetchImpl).filter((chamada) => chamada.method === 'GET' && chamada.path === '/api/crm').length;
+  t.browser.type(t.browser.by.label(t.browser.root, 'Buscar'), 'odonto');
+  assert.equal(t.browser.by.tag(t.browser.root, 'tbody')[0].children.length, 1);
+  t.browser.click(t.browser.by.button(t.browser.root, 'Odonto Beta'));
+  await t.browser.flush();
+  assert.ok(gaveta(), 'a ficha abriu por cima da lista');
+  assert.equal(t.browser.window.location.hash, '#/crm/registro/crm%3Ab');
+
+  t.browser.window.location.hash = '#/aprovacoes';
+  await t.browser.flush();
+  assert.equal(gaveta(), null, 'trocar de módulo fecha a gaveta');
+  assert.deepEqual(ativo(t.browser), ['Approval Queue']);
+  assert.equal(t.browser.window.location.hash, '#/aprovacoes', 'e o endereço é o do módulo novo (nada foi desfeito)');
+  const antes = cargasDoCrm();
+
+  t.browser.window.location.hash = '#/crm';
+  await t.browser.flush();
+  assert.deepEqual(ativo(t.browser), ['CRM']);
+  assert.equal(t.browser.by.label(t.browser.root, 'Buscar').value, 'odonto', 'a busca ficou');
+  assert.equal(t.browser.by.tag(t.browser.root, 'tbody')[0].children.length, 1);
+  assert.equal(t.browser.by.cls(t.browser.root, 'skeleton').length, 0, 'já pronta, sem "carregando"');
+  assert.equal(cargasDoCrm(), antes + 1, 'uma atualização silenciosa ao voltar');
+  assert.equal(gaveta(), null);
+});
+
+test('[DASH-SHELL-14c] TROCA DE MÓDULO com edição não salva no CRM: nada muda até a pessoa decidir; "Continuar editando" devolve o endereço da ficha sem empilhar entradas; "Descartar alterações" segue para o módulo pedido; sem alteração a troca é livre', async () => {
+  const { crmRecord } = await loadFixtures();
+  const itens = [crmRecord({ id: 'crm:a', empresa: 'Clínica Alfa', status: 'CONTACTED', cidade: 'Petrópolis', dataDeEntrada: '2026-09-12T10:00:00.000Z' })];
+  const t = await iniciar({ session: true, routes: await rotasLogado(ME_ADMIN, { 'GET /api/crm': { items: itens }, 'GET /api/crm/crm%3Aa': { item: itens[0] }, 'GET /api/crm/crm%3Aa/history': { historico: itens[0].historico } }), hash: '#/crm' });
+  const win = t.browser.window;
+  const gaveta = () => t.browser.find(t.browser.root, (el) => el.getAttribute('role') === 'dialog' && /drawer/.test(el.className));
+  const pergunta = () => t.browser.find(t.browser.root, (el) => el.getAttribute('role') === 'alertdialog');
+  const escritas = () => chamadasDeApi(t.fetchImpl).filter((chamada) => chamada.method !== 'GET');
+
+  t.browser.click(t.browser.by.button(t.browser.root, 'Clínica Alfa'));
+  await t.browser.flush(10);
+  t.browser.click(t.browser.by.button(gaveta(), 'Editar'));
+  await t.browser.flush(6);
+  win.location.hash = '#/aprovacoes'; // sem digitar nada: a troca é livre (nem a edição aberta, sem alteração, pergunta)
+  await t.browser.flush(10);
+  assert.equal(pergunta(), null);
+  assert.deepEqual(ativo(t.browser), ['Approval Queue']);
+
+  win.location.hash = '#/crm/registro/crm%3Aa';
+  await t.browser.flush(10);
+  t.browser.click(t.browser.by.button(gaveta(), 'Editar'));
+  await t.browser.flush(6);
+  t.browser.type(t.browser.by.label(gaveta(), 'Cidade'), 'Rascunho');
+  const entradas = [...win._entries];
+
+  win.location.hash = '#/aprovacoes';
+  await t.browser.flush(10);
+  assert.ok(pergunta(), 'perguntou');
+  assert.deepEqual(ativo(t.browser), ['CRM'], 'o menu e a tela continuam no CRM');
+  assert.ok(gaveta(), 'a gaveta com a edição continua aberta');
+  assert.equal(t.browser.document.title.startsWith('Registro'), true, 'o título da página também não mudou');
+
+  t.browser.click(t.browser.by.button(pergunta(), 'Continuar editando'));
+  await t.browser.flush(10);
+  assert.equal(win.location.hash, '#/crm/registro/crm%3Aa', 'o endereço voltou à ficha');
+  assert.equal(win.history.length, entradas.length + 1, 'só a entrada que a própria pessoa criou ao ir para as aprovações — nenhuma a mais');
+  assert.equal(t.browser.by.label(gaveta(), 'Cidade').value, 'Rascunho', 'o rascunho continua');
+  assert.deepEqual(ativo(t.browser), ['CRM']);
+
+  win.location.hash = '#/aprovacoes';
+  await t.browser.flush(10);
+  t.browser.click(t.browser.by.button(pergunta(), 'Descartar alterações'));
+  await t.browser.flush(10);
+  assert.deepEqual(ativo(t.browser), ['Approval Queue'], 'descartou e foi para onde pediu');
+  assert.equal(gaveta(), null);
+  assert.equal(win.location.hash, '#/aprovacoes');
+  assert.deepEqual(escritas(), [], 'nada foi gravado');
+
+  win.location.hash = '#/crm';
+  await t.browser.flush(10);
+  assert.deepEqual(ativo(t.browser), ['CRM']);
+  assert.equal(win.fireBeforeUnload().prevented, false, 'sem rascunho, atualizar a página não pede nada');
+});
+
+test('[DASH-SHELL-14d] SALVANDO, sair do CRM é recusado (o endereço volta e a pessoa é avisada); terminado o salvamento a troca é livre', async () => {
+  const { crmRecord } = await loadFixtures();
+  const itens = [crmRecord({ id: 'crm:a', empresa: 'Clínica Alfa', status: 'CONTACTED', cidade: 'Petrópolis', dataDeEntrada: '2026-09-12T10:00:00.000Z' })];
+  let liberar;
+  const espera = new Promise((resolve) => { liberar = resolve; });
+  const t = await iniciar({
+    session: true,
+    routes: await rotasLogado(ME_ADMIN, {
+      'GET /api/crm': { items: itens },
+      'GET /api/crm/crm%3Aa': { item: itens[0] },
+      'GET /api/crm/crm%3Aa/history': { historico: itens[0].historico },
+      'PATCH /api/crm/crm%3Aa': async () => { await espera; return { item: { ...itens[0], cidade: 'Teresópolis' } }; },
+    }),
+    hash: '#/crm/registro/crm%3Aa',
+  });
+  const win = t.browser.window;
+  const gaveta = () => t.browser.find(t.browser.root, (el) => el.getAttribute('role') === 'dialog' && /drawer/.test(el.className));
+  t.browser.click(t.browser.by.button(gaveta(), 'Editar'));
+  await t.browser.flush(6);
+  t.browser.type(t.browser.by.label(gaveta(), 'Cidade'), 'Teresópolis');
+  t.browser.click(t.browser.by.button(gaveta(), 'Salvar alterações'));
+  await t.browser.flush(6);
+  assert.equal(win.fireBeforeUnload().prevented, true, 'fechar a aba durante o salvamento pede o aviso');
+
+  win.location.hash = '#/aprovacoes';
+  await t.browser.flush(10);
+  assert.deepEqual(ativo(t.browser), ['CRM'], 'não saiu');
+  assert.equal(win.location.hash, '#/crm/registro/crm%3Aa', 'o endereço voltou');
+  assert.match(textoDaTela(t.browser), /Aguarde o salvamento terminar antes de sair\./);
+
+  liberar();
+  await t.browser.flush(14);
+  assert.match(textoDaTela(t.browser), /Alterações salvas\./);
+  win.location.hash = '#/aprovacoes';
+  await t.browser.flush(10);
+  assert.deepEqual(ativo(t.browser), ['Approval Queue'], 'depois de salvar a troca é livre');
 });
 
 // ===========================================================================

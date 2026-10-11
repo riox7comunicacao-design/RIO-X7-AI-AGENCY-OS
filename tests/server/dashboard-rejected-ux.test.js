@@ -478,7 +478,7 @@ test('[REJ-UX-12] a JUSTIFICATIVA é OPCIONAL (regra do serviço): vazia envia s
   s.browser.type(s.browser.by.label(s.browser.root, 'Justificativa (opcional)'), 'rascunho da justificativa');
   s.browser.press('Escape');
   assert.ok(confirmacao(s), 'não fechou: perguntou antes');
-  assert.ok(s.browser.find(s.browser.root, (el) => el.localName === 'button' && el.textContent === 'Descartar'));
+  assert.ok(s.browser.find(s.browser.root, (el) => el.localName === 'button' && el.textContent === 'Descartar alterações'));
   await clicar(s, s.browser.find(s.browser.root, (el) => el.localName === 'button' && el.textContent === 'Continuar editando'));
   assert.equal(s.browser.by.label(s.browser.root, 'Justificativa (opcional)').value, 'rascunho da justificativa');
   s.browser.type(s.browser.by.label(s.browser.root, 'Justificativa (opcional)'), '');

@@ -247,6 +247,72 @@ export function sortRecords(items) {
   );
 }
 
+// As ordens da lista: SÓ critérios que existem nos dados do registro (nada de coluna inventada). A ordem padrão é a de sempre.
+export const SORT_OPTIONS = Object.freeze([
+  { value: 'recentes', label: 'Mais recentes' },
+  { value: 'antigos', label: 'Mais antigos' },
+  { value: 'empresa', label: 'Empresa (A–Z)' },
+  { value: 'status', label: 'Status (ordem do funil)' },
+  { value: 'proxima', label: 'Próxima ação (mais próxima)' },
+  { value: 'valor', label: 'Maior valor da proposta' },
+]);
+
+const byCompany = (a, b) => textOf(a.empresa).localeCompare(textOf(b.empresa), 'pt-BR');
+const numberOrNull = (value) => (value === null || value === undefined || value === '' || !Number.isFinite(Number(value)) ? null : Number(value));
+// Quem não tem o dado (sem próxima ação, sem valor) vai sempre para o fim, em qualquer sentido.
+const withValueFirst = (a, b, pick, compare) => {
+  const left = pick(a);
+  const right = pick(b);
+  if (left === null && right === null) return 0;
+  if (left === null) return 1;
+  if (right === null) return -1;
+  return compare(left, right);
+};
+
+export function sortRecordsBy(items, sort = 'recentes') {
+  const comparers = {
+    recentes: (a, b) => textOf(b.dataDeEntrada).localeCompare(textOf(a.dataDeEntrada)) || byCompany(a, b),
+    antigos: (a, b) => textOf(a.dataDeEntrada).localeCompare(textOf(b.dataDeEntrada)) || byCompany(a, b),
+    empresa: (a, b) => byCompany(a, b) || textOf(b.dataDeEntrada).localeCompare(textOf(a.dataDeEntrada)),
+    status: (a, b) => CRM_STATUSES.findIndex((s) => s.value === a.status) - CRM_STATUSES.findIndex((s) => s.value === b.status) || byCompany(a, b),
+    proxima: (a, b) => withValueFirst(a, b, (r) => (textOf(r.dataDaProximaAcao) === '' ? null : textOf(r.dataDaProximaAcao)), (x, y) => x.localeCompare(y)) || byCompany(a, b),
+    valor: (a, b) => withValueFirst(a, b, (r) => numberOrNull(r.valorProposta), (x, y) => y - x) || byCompany(a, b),
+  };
+  return [...items].sort(Object.prototype.hasOwnProperty.call(comparers, sort) ? comparers[sort] : comparers.recentes);
+}
+
+// ---------------------------------------------------------------------------
+// As abas da ficha (gaveta): cada campo existente aparece em UMA aba, em seções que já eram os blocos da ficha. Nenhum campo é inventado.
+// ---------------------------------------------------------------------------
+export const RECORD_TABS = Object.freeze([
+  Object.freeze({
+    key: 'resumo',
+    label: 'Resumo',
+    sections: Object.freeze([
+      Object.freeze({ title: 'Identificação', keys: Object.freeze(['empresa', 'nicho', 'cidade', 'estado', 'origem']) }),
+      Object.freeze({ title: 'Pipeline', keys: Object.freeze(['status', 'dataDeEntrada', 'responsavel', 'ultimaInteracao']) }),
+      Object.freeze({ title: 'Próxima ação', keys: Object.freeze(['proximaAcao', 'dataDaProximaAcao']) }),
+    ]),
+  }),
+  Object.freeze({
+    key: 'contato',
+    label: 'Contato e presença',
+    sections: Object.freeze([
+      Object.freeze({ title: 'Contato', keys: Object.freeze(['contato', 'cargo', 'telefone', 'whatsapp', 'email']) }),
+      Object.freeze({ title: 'Presença digital', keys: Object.freeze(['site', 'instagram', 'facebook', 'googlePerfil']) }),
+    ]),
+  }),
+  Object.freeze({
+    key: 'comercial',
+    label: 'Comercial',
+    sections: Object.freeze([
+      Object.freeze({ title: 'Comercial', keys: Object.freeze(['servicoPotencial', 'temperatura', 'problemaIdentificado', 'raioXDeNicho', 'raioXPersonalizado', 'statusDoDiagnostico', 'linkDoRaioX', 'dataDaAnalise', 'valorProposta', 'valorTotal', 'observacoes']) }),
+      Object.freeze({ title: 'Reunião', keys: Object.freeze(['dataDaReuniao', 'linkDoMeet']) }),
+    ]),
+  }),
+  Object.freeze({ key: 'historico', label: 'Histórico', sections: Object.freeze([]) }),
+]);
+
 // { value, label, tone, count } dos 13 status, na ordem do funil (inclui os de contagem zero).
 export function countByStatus(items) {
   const counts = new Map();

@@ -13,16 +13,21 @@
 
 export function createRoutedDrawer({ document, navigation = null, hashFor, listHash, build, rowButton = () => null, repaint = () => {}, onClosed = () => {} }) {
   const state = { selectedId: null, open: false, routeId: null, openedByPush: false };
+  let lastClosedId = null; // o item da última gaveta fechada: o foco ainda pode precisar voltar à linha dele se a gaveta fechou com uma confirmação por cima
   let handle = null;
   let suppressNav = false;
 
   const hooks = {
-    getReturnFocus: () => (state.selectedId === null ? null : rowButton(state.selectedId)),
+    getReturnFocus: () => {
+      const id = state.selectedId !== null ? state.selectedId : lastClosedId;
+      return id === null ? null : rowButton(id);
+    },
     onClose: () => closed(),
   };
 
   function closed() {
     const id = state.selectedId;
+    lastClosedId = id;
     state.open = false;
     state.selectedId = null;
     handle = null;
@@ -58,6 +63,7 @@ export function createRoutedDrawer({ document, navigation = null, hashFor, listH
   function openOverlay(id) {
     if (state.open && handle) close({ silent: true, reason: 'switch' });
     state.selectedId = id;
+    lastClosedId = null;
     state.open = true;
     handle = build(id, hooks);
     if (!handle) {

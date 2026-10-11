@@ -371,7 +371,7 @@ test('[DASH-PROMO-14] ADMIN, ponta a ponta: aprovar -> Aprovados -> Promover -> 
   assert.equal(link.href, `#/crm/registro/${encodeURIComponent(registros[0].id)}`);
   s.browser.click(link);
   await s.browser.flush();
-  assert.equal(s.browser.by.tag(s.browser.root, 'h2')[0].textContent, 'Consultório Alfa');
+  assert.equal(s.browser.by.cls(s.browser.root, 'overlay-title')[0].textContent, 'Consultório Alfa', 'a ficha abre numa gaveta por cima da lista do CRM');
 
   // de volta às Aprovações: já promovido, sem botão, e nada de novo no CRM
   s.browser.window.location.hash = '#/aprovacoes';

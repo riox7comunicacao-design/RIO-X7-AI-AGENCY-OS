@@ -2,6 +2,9 @@
 // cliente de API falso (tests/helpers/dashboardFixtures.mjs): lista, busca, filtros, ficha, histórico, criação, edição,
 // mudança de status, DO_NOT_CONTACT, bloqueio do COMMERCIAL_CLOSER e o tratamento de 401/403/404/409/500.
 //
+// UX 4.0.6: a lista é PERSISTENTE e a ficha abre numa GAVETA (por cima da lista), com abas; as ações de escrita continuam as de sempre, dentro da gaveta.
+// Estes testes cobrem o comportamento de dados/permissões/escritas; a navegação (URL, ESC, Voltar, foco, contexto, eventos) está em dashboard-crm-ux.test.js.
+//
 // A tela é a mesma do navegador (recebe document, root e api por parâmetro). O que estes testes provam é o COMPORTAMENTO
 // que uma pessoa vê e faz — o que aparece, o que um clique chama na API, o que a API responde e o que a tela mostra
 // depois. A integração com a CRM-API de verdade (servidor, Service e domínio reais) está em dashboard-fullstack.test.js.
@@ -36,6 +39,16 @@ async function montar({ permissions = ADMIN, items = [], api, history } = {}) {
     },
   };
 }
+
+// A gaveta da ficha, a página de "Novo registro" ou, sem nenhuma das duas, a raiz: onde os campos e botões de uma escrita estão.
+const gavetaDe = (t) => t.browser.find(t.root, (el) => el.getAttribute('role') === 'dialog' && /\bdrawer\b/.test(el.className));
+const novaTelaDe = (t) => {
+  const host = t.browser.find(t.root, (el) => /\bcrm-new-host\b/.test(el.className));
+  return host && !host.hidden && host.children.length > 0 ? host : null;
+};
+const escopo = (t) => gavetaDe(t) || novaTelaDe(t) || t.root;
+const tituloFicha = (t) => t.browser.by.cls(t.root, 'overlay-title')[0].textContent;
+const abasEscondidas = (t) => t.browser.by.cls(t.root, 'ficha-tabs')[0].hidden === true;
 
 const LISTA = { name: 'crm-list' };
 const NOVO = { name: 'crm-new' };
@@ -127,7 +140,7 @@ test('[DASH-CRM-1b] a contagem de registros: "1 registro" no singular, "3 regist
   const t = await montar({ items: await registros() });
   await t.mostrar(LISTA);
   assert.equal(contagem(t), '3 registros');
-  t.browser.type(t.browser.by.label(t.root, 'Buscar'), 'alfa');
+  t.browser.type(t.browser.by.label(escopo(t), 'Buscar'), 'alfa');
   assert.equal(contagem(t), '1 de 3 registros');
 });
 
@@ -147,8 +160,9 @@ test('[DASH-CRM-2] cada linha traz os dados do registro (cidade com UF, próxima
   assert.equal(beta[5], '—');
   assert.equal(beta[8], '—');
 
-  const link = t.browser.by.link(t.root, 'Clínica Alfa');
-  assert.equal(link.href, '#/crm/registro/crm%3Aa');
+  const abrir = t.browser.by.button(t.root, 'Clínica Alfa');
+  assert.equal(abrir.getAttribute('data-item'), 'crm:a', 'o nome da empresa é o botão que abre a ficha (a linha inteira também)');
+  assert.equal(t.browser.by.link(t.root, 'Clínica Alfa'), null, 'a ficha não é mais uma página: abre numa gaveta');
   const selo = t.browser.find(t.root, (el) => el.localName === 'span' && el.className.includes('badge') && el.textContent === 'Contacted');
   assert.ok(selo.className.includes('info'));
   // cada célula tem o rótulo da coluna (a tabela vira cartões em telas menores)
@@ -179,12 +193,12 @@ test('[DASH-CRM-4] erro ao carregar: 500 mostra uma frase genérica (nunca o det
   assert.match(textoDaTela(t.browser), /Não foi possível concluir a operação agora/);
   assert.doesNotMatch(textoDaTela(t.browser), /segredo|crm\.json|detalhe interno/);
   assert.equal(t.browser.by.tag(t.root, 'table').length, 0);
-  t.browser.click(t.browser.by.button(t.root, 'Tentar novamente'));
+  t.browser.click(t.browser.by.button(escopo(t), 'Tentar novamente'));
   await t.browser.flush();
   assert.equal(linhasDaTabela(t.root).length, 3);
 
   api.failNext('listCrm', new ApiError(403, 'FORBIDDEN', 'Esta conta não possui acesso a esta área.'));
-  t.browser.click(t.browser.by.button(t.root, 'Atualizar'));
+  t.browser.click(t.browser.by.button(escopo(t), 'Atualizar'));
   await t.browser.flush();
   assert.match(textoDaTela(t.browser), /Sua conta não tem permissão para esta ação\./);
   assert.equal(linhasDaTabela(t.root).length, 3, 'os dados já carregados continuam à vista quando uma atualização falha');
@@ -196,12 +210,12 @@ test('[DASH-CRM-4] erro ao carregar: 500 mostra uma frase genérica (nunca o det
 test('[DASH-CRM-5] busca: filtra enquanto se digita SEM refazer o campo (o mesmo elemento, com foco), conta os resultados, ignora acento e caixa e encontra telefone por dígitos', async () => {
   const t = await montar({ items: await registros() });
   await t.mostrar(LISTA);
-  const busca = t.browser.by.label(t.root, 'Buscar');
+  const busca = t.browser.by.label(escopo(t), 'Buscar');
   busca.focus();
   t.browser.type(busca, 'clinica');
   assert.deepEqual(linhasDaTabela(t.root).map((linha) => linha[0]), ['Clínica Alfa']);
   assert.equal(t.browser.by.cls(t.root, 'crm-count')[0].textContent, '1 de 3 registros');
-  assert.equal(t.browser.by.label(t.root, 'Buscar'), busca, 'o campo de busca não foi recriado');
+  assert.equal(t.browser.by.label(escopo(t), 'Buscar'), busca, 'o campo de busca não foi recriado');
   assert.equal(t.browser.document.activeElement, busca, 'o foco continua no campo');
 
   t.browser.type(busca, '90000-0001');
@@ -216,11 +230,11 @@ test('[DASH-CRM-5] busca: filtra enquanto se digita SEM refazer o campo (o mesmo
 test('[DASH-CRM-6] busca sem resultado: mostra a mensagem e o botão que limpa a busca e os filtros e traz tudo de volta', async () => {
   const t = await montar({ items: await registros() });
   await t.mostrar(LISTA);
-  const busca = t.browser.by.label(t.root, 'Buscar');
+  const busca = t.browser.by.label(escopo(t), 'Buscar');
   t.browser.type(busca, 'zzzz-não-existe');
-  assert.match(textoDaTela(t.browser), /Nenhum registro encontrado para esta busca ou filtro\./);
+  assert.match(textoDaTela(t.browser), /Nenhum registro encontrado.*Nada na lista combina com a busca ou com os filtros/);
   assert.equal(t.browser.by.tag(t.root, 'table').length, 0);
-  t.browser.click(t.browser.by.button(t.root, 'Limpar busca e filtros'));
+  t.browser.click(t.browser.by.button(escopo(t), 'Limpar busca e filtros'));
   assert.equal(busca.value, '', 'o campo de busca foi esvaziado');
   assert.equal(linhasDaTabela(t.root).length, 3);
 });
@@ -228,9 +242,9 @@ test('[DASH-CRM-6] busca sem resultado: mostra a mensagem e o botão que limpa a
 test('[DASH-CRM-7] filtros: status, nicho e responsável (as opções vêm dos dados, sem repetir "Psicologia" e "psicologia"), combinados com a busca; "Limpar filtros" restaura tudo', async () => {
   const t = await montar({ items: await registros() });
   await t.mostrar(LISTA);
-  const status = t.browser.by.label(t.root, 'Status');
-  const nicho = t.browser.by.label(t.root, 'Nicho');
-  const responsavel = t.browser.by.label(t.root, 'Responsável');
+  const status = t.browser.by.label(escopo(t), 'Status');
+  const nicho = t.browser.by.label(escopo(t), 'Nicho');
+  const responsavel = t.browser.by.label(escopo(t), 'Responsável');
   const opcoes = (select) => t.browser.by.tag(select, 'option').map((option) => option.textContent);
 
   assert.equal(opcoes(status).length, 14, 'todos os status + "Todos os status"');
@@ -246,7 +260,7 @@ test('[DASH-CRM-7] filtros: status, nicho e responsável (as opções vêm dos d
   assert.match(textoDaTela(t.browser), /Nenhum registro encontrado/);
   assert.equal(t.browser.by.cls(t.root, 'crm-count')[0].textContent, '0 de 3 registros');
 
-  t.browser.click(t.browser.by.button(t.root, 'Limpar filtros'));
+  t.browser.click(t.browser.by.button(escopo(t), 'Limpar filtros'));
   assert.equal(status.value, '');
   assert.equal(nicho.value, '');
   assert.equal(responsavel.value, '');
@@ -258,33 +272,41 @@ test('[DASH-CRM-7] filtros: status, nicho e responsável (as opções vêm dos d
 test('[DASH-CRM-7b] depois de atualizar, um filtro que aponta para um valor que deixou de existir volta para "todos" (a lista nunca fica vazia por causa de um filtro que não dá mais para ver)', async () => {
   const t = await montar({ items: await registros() });
   await t.mostrar(LISTA);
-  t.browser.choose(t.browser.by.label(t.root, 'Nicho'), 'Odontologia');
+  t.browser.choose(t.browser.by.label(escopo(t), 'Nicho'), 'Odontologia');
   assert.deepEqual(linhasDaTabela(t.root).map((linha) => linha[0]), ['Odonto Beta']);
 
   t.api.store.items = t.api.store.items.filter((item) => item.id !== 'crm:b'); // não existe mais nenhum registro de Odontologia
-  t.browser.click(t.browser.by.button(t.root, 'Atualizar'));
+  t.browser.click(t.browser.by.button(escopo(t), 'Atualizar'));
   await t.browser.flush();
-  assert.equal(t.browser.by.label(t.root, 'Nicho').value, '', 'o filtro voltou para "todos"');
+  assert.equal(t.browser.by.label(escopo(t), 'Nicho').value, '', 'o filtro voltou para "todos"');
   assert.deepEqual(linhasDaTabela(t.root).map((linha) => linha[0]), ['Ótica Gama', 'Clínica Alfa'], 'a lista mostra o que existe');
-  assert.deepEqual(t.browser.by.tag(t.browser.by.label(t.root, 'Nicho'), 'option').map((o) => o.textContent), ['Todos os nichos', 'Psicologia']);
+  assert.deepEqual(t.browser.by.tag(t.browser.by.label(escopo(t), 'Nicho'), 'option').map((o) => o.textContent), ['Todos os nichos', 'Psicologia']);
 });
 
-test('[DASH-CRM-8] uma lista grande mostra 100 por vez com "Mostrar mais"; buscar volta ao começo', async () => {
+test('[DASH-CRM-8] uma lista grande é paginada no navegador (20 por página, mesmo contrato da API): Anterior/Próxima, "Página X de Y"; buscar e filtrar voltam à primeira página', async () => {
   const { crmRecord } = await loadFixtures();
   const muitos = Array.from({ length: 250 }, (_, indice) => crmRecord({ id: `crm:n${indice}`, empresa: `Empresa ${String(indice).padStart(3, '0')}`, dataDeEntrada: `2026-08-${String(1 + (indice % 28)).padStart(2, '0')}T10:00:00.000Z` }));
   const t = await montar({ items: muitos });
   await t.mostrar(LISTA);
-  assert.equal(linhasDaTabela(t.root).length, 100);
-  assert.match(textoDaTela(t.browser), /Mostrando 100 de 250\./);
-  t.browser.click(t.browser.by.button(t.root, 'Mostrar mais'));
-  assert.equal(linhasDaTabela(t.root).length, 200);
-  t.browser.click(t.browser.by.button(t.root, 'Mostrar mais'));
-  assert.equal(linhasDaTabela(t.root).length, 250);
-  assert.equal(t.browser.by.button(t.root, 'Mostrar mais'), null, 'sem o botão quando já mostra tudo');
-  t.browser.click(t.browser.by.button(t.root, 'Mostrar mais') || t.browser.by.button(t.root, 'Atualizar'));
-  const busca = t.browser.by.label(t.root, 'Buscar');
-  t.browser.type(busca, 'Empresa 0');
-  assert.equal(linhasDaTabela(t.root).length, 100, 'buscar volta a mostrar 100');
+  assert.equal(linhasDaTabela(t.root).length, 20);
+  assert.match(textoDaTela(t.browser), /Página 1 de 13 · 1–20 de 250/);
+  assert.equal(t.browser.by.button(t.root, 'Anterior').disabled, true, 'na primeira página não há anterior');
+  t.browser.click(t.browser.by.button(t.root, 'Próxima'));
+  assert.match(textoDaTela(t.browser), /Página 2 de 13 · 21–40 de 250/);
+  assert.equal(linhasDaTabela(t.root).length, 20);
+  t.browser.click(t.browser.by.button(t.root, 'Anterior'));
+  assert.match(textoDaTela(t.browser), /Página 1 de 13/);
+  for (let i = 0; i < 12; i += 1) t.browser.click(t.browser.by.button(t.root, 'Próxima'));
+  assert.match(textoDaTela(t.browser), /Página 13 de 13 · 241–250 de 250/);
+  assert.equal(linhasDaTabela(t.root).length, 10, 'a última página traz o resto');
+  assert.equal(t.browser.by.button(t.root, 'Próxima').disabled, true);
+  t.browser.click(t.browser.by.button(t.root, 'Anterior'));
+  t.browser.click(t.browser.by.button(t.root, 'Anterior'));
+  assert.match(textoDaTela(t.browser), /Página 11 de 13/);
+  const comUm = muitos.filter((registro) => registro.empresa.includes('1')).length;
+  t.browser.type(t.browser.by.label(t.root, 'Buscar'), '1');
+  assert.match(textoDaTela(t.browser), new RegExp(`Página 1 de ${Math.ceil(comUm / 20)} · 1–20 de ${comUm}`), 'buscar volta à primeira página');
+  assert.equal(t.api.callsOf('listCrm').length, 1, 'paginar e buscar não chamam a API: o contrato continua sendo uma lista única');
 });
 
 // ===========================================================================
@@ -293,9 +315,12 @@ test('[DASH-CRM-8] uma lista grande mostra 100 por vez com "Mostrar mais"; busca
 test('[DASH-CRM-9] a ficha mostra os campos em blocos (Identificação, Contato, Presença digital, Comercial, Pipeline, Próxima ação) e o histórico; usa GET do registro e do histórico', async () => {
   const t = await montar({ items: await registros() });
   await t.mostrar(REGISTRO('crm:a'));
-  const titulos = t.browser.by.tag(t.root, 'h3').map((h3) => h3.textContent.trim());
-  assert.deepEqual(titulos, ['Identificação', 'Contato', 'Presença digital', 'Comercial', 'Pipeline', 'Próxima ação', 'Histórico']);
-  assert.equal(t.browser.by.tag(t.root, 'h2')[0].textContent, 'Clínica Alfa');
+  const titulos = t.browser.by.tag(gavetaDe(t), 'h3').map((h3) => h3.textContent.trim());
+  assert.deepEqual(titulos, ['Identificação', 'Pipeline', 'Próxima ação', 'Contato', 'Presença digital', 'Comercial', 'Reunião'], 'as seções estão distribuídas nas abas Resumo, Contato e presença e Comercial');
+  assert.deepEqual(t.browser.by.tag(gavetaDe(t), 'button').filter((b) => b.getAttribute('role') === 'tab').map((b) => b.textContent.trim()), ['Resumo', 'Contato e presença', 'Comercial', 'Histórico']);
+  assert.equal(tituloFicha(t), 'Clínica Alfa');
+  const { FIELD_GROUPS } = await import('../../dashboard/crm-model.mjs');
+  assert.equal(t.browser.by.tag(gavetaDe(t), 'dt').length, FIELD_GROUPS.flatMap((grupo) => grupo.fields).length, 'todos os campos existentes aparecem, e só eles');
 
   assert.equal(valorDe(t.browser, 'Identificação', 'Empresa').textContent, 'Clínica Alfa');
   assert.equal(valorDe(t.browser, 'Identificação', 'Cidade').textContent, 'Petrópolis');
@@ -311,7 +336,7 @@ test('[DASH-CRM-9] a ficha mostra os campos em blocos (Identificação, Contato,
   assert.equal(t.api.callsOf('getCrm').length, 1, 'a ficha busca o registro atual');
   assert.equal(t.api.callsOf('getCrmHistory').length, 1, 'e o histórico em GET /api/crm/:id/history');
   assert.deepEqual(t.api.callsOf('getCrmHistory')[0].args, ['crm:a']);
-  assert.equal(t.browser.by.link(t.root, '← Voltar à lista').href, '#/crm');
+  assert.ok(gavetaDe(t), 'a ficha é uma gaveta');
 });
 
 test('[DASH-CRM-10] o site vira link (com rel="noopener noreferrer"), mas endereço perigoso (javascript:, data:) e texto qualquer nunca viram link', async () => {
@@ -327,7 +352,7 @@ test('[DASH-CRM-10] o site vira link (com rel="noopener noreferrer"), mas endere
   assert.equal(valorDe(t.browser, 'Presença digital', 'Instagram').textContent, 'javascript:alert(1)');
   assert.equal(valorDe(t.browser, 'Presença digital', 'Instagram').localName, 'dd');
   assert.equal(t.browser.by.tag(valorDe(t.browser, 'Presença digital', 'Instagram'), 'a').length, 0);
-  assert.equal(valorDe(t.browser, 'Pipeline', 'Link do Meet').textContent, '@so-um-nome');
+  assert.equal(valorDe(t.browser, 'Reunião', 'Link do Meet').textContent, '@so-um-nome');
 });
 
 test('[DASH-CRM-11] dados hostis nunca viram HTML: texto com marcação aparece como texto puro (nenhum <img>, <script> ou atributo de evento é criado) e campos que não existem no modelo (authUserId, token, permissions) nunca aparecem', async () => {
@@ -364,15 +389,16 @@ test('[DASH-CRM-12] abrir a ficha por link direto (sem a lista carregada) mostra
   const pendente = t.api.hold('getCrm');
   t.view.show(REGISTRO('crm:b'));
   await pendente.arrived;
-  assert.match(textoDaTela(t.browser), /Carregando registro…/);
+  assert.equal(tituloFicha(t), 'Carregando registro…');
+  assert.match(textoDaTela(t.browser), /Carregando o registro…/);
   pendente.release();
   await t.browser.flush();
-  assert.equal(t.browser.by.tag(t.root, 'h2')[0].textContent, 'Odonto Beta');
+  assert.equal(tituloFicha(t), 'Odonto Beta');
 
   await t.mostrar(REGISTRO('crm:nao-existe'));
   assert.match(textoDaTela(t.browser), /Registro não encontrado\./);
-  assert.equal(t.browser.by.link(t.root, '← Voltar à lista').href, '#/crm');
-  assert.equal(t.browser.by.button(t.root, 'Editar'), null, 'sem registro, sem ações');
+  assert.ok(t.browser.find(gavetaDe(t), (el) => el.getAttribute('data-action') === 'close'), 'o caminho de volta é fechar a gaveta (a lista continua por baixo)');
+  assert.equal(t.browser.by.button(escopo(t), 'Editar'), null, 'sem registro, sem ações');
 });
 
 test('[DASH-CRM-13] histórico: vem de GET /api/crm/:id/history, do mais recente para o mais antigo, com quem fez, quando e o motivo; tem estados de carregando, erro (com nova tentativa) e vazio', async () => {
@@ -388,6 +414,7 @@ test('[DASH-CRM-13] histórico: vem de GET /api/crm/:id/history, do mais recente
   const pendente = api.hold('getCrmHistory');
   t.view.show(REGISTRO('crm:h'));
   await pendente.arrived;
+  await t.browser.flush(); // o registro chega; só o histórico fica pendente
   assert.match(textoDaTela(t.browser), /Carregando histórico…/);
   pendente.release();
   await t.browser.flush();
@@ -398,13 +425,16 @@ test('[DASH-CRM-13] histórico: vem de GET /api/crm/:id/history, do mais recente
   assert.match(itens[1], /^Registro criado como Prospect — .*Breno Bento \(Administrador\)/);
 
   api.failNext('getCrmHistory', new ApiError(500, 'INTERNAL', 'x'));
+  await t.mostrar(LISTA); // fecha a gaveta: reabrir a ficha busca tudo de novo
   await t.mostrar(REGISTRO('crm:h'));
   assert.match(textoDaTela(t.browser), /Não foi possível concluir a operação agora/);
-  t.browser.click(t.browser.by.button(t.root, 'Tentar novamente'));
+  t.browser.click(t.browser.by.button(escopo(t), 'Histórico')); // o erro está na aba Histórico: o botão só é alcançável com a aba aberta
+  t.browser.click(t.browser.by.button(escopo(t), 'Tentar novamente'));
   await t.browser.flush();
   assert.equal(t.browser.by.tag(t.browser.by.cls(t.root, 'timeline')[0], 'li').length, 2);
 
   api.store.histories['crm:h'] = [];
+  await t.mostrar(LISTA);
   await t.mostrar(REGISTRO('crm:h'));
   assert.match(textoDaTela(t.browser), /Nenhum evento registrado\./);
 });
@@ -416,18 +446,18 @@ test('[DASH-CRM-14] COMMERCIAL_CLOSER: vê a lista, busca, filtra e abre a ficha
   const t = await montar({ items: await registros(), permissions: CLOSER });
   await t.mostrar(LISTA);
   assert.equal(linhasDaTabela(t.root).length, 3);
-  t.browser.type(t.browser.by.label(t.root, 'Buscar'), 'alfa');
+  t.browser.type(t.browser.by.label(escopo(t), 'Buscar'), 'alfa');
   assert.equal(linhasDaTabela(t.root).length, 1);
   assert.equal(t.browser.by.link(t.root, 'Novo registro'), null);
 
   await t.mostrar(REGISTRO('crm:a'));
-  assert.equal(t.browser.by.tag(t.root, 'h2')[0].textContent, 'Clínica Alfa');
-  for (const botao of ['Editar', 'Mudar status', 'Marcar como Não contatar']) assert.equal(t.browser.by.button(t.root, botao), null, botao);
+  assert.equal(tituloFicha(t), 'Clínica Alfa');
+  for (const botao of ['Editar', 'Mudar status', 'Marcar como Não contatar']) assert.equal(t.browser.by.button(escopo(t), botao), null, botao);
   assert.match(textoDaTela(t.browser), /Seu perfil pode consultar o CRM, mas não pode criar nem alterar registros\./);
 
   await t.mostrar(NOVO);
   assert.match(textoDaTela(t.browser), /Sua conta não pode criar registros no CRM\./);
-  assert.equal(t.browser.by.tag(t.root, 'form').length, 0, 'sem formulário de criação');
+  assert.equal(t.browser.by.tag(escopo(t), 'form').length, 0, 'sem formulário de criação');
   for (const escrita of ['createCrm', 'updateCrm', 'moveCrmStatus', 'markCrmDnc']) assert.equal(t.api.callsOf(escrita).length, 0, `${escrita} nunca foi chamado`);
 });
 
@@ -436,13 +466,13 @@ test('[DASH-CRM-15] se a API recusar uma escrita com 403 (uma conta que passou p
   const t = await montar({ items: await registros() });
   await t.mostrar(REGISTRO('crm:a'));
   t.api.failNext('updateCrm', new ApiError(403, 'FORBIDDEN', 'Esta conta não possui acesso a esta área.'));
-  t.browser.click(t.browser.by.button(t.root, 'Editar'));
-  t.browser.type(t.browser.by.label(t.root, 'Cidade'), 'Outra');
-  t.browser.click(t.browser.by.button(t.root, 'Salvar alterações'));
+  t.browser.click(t.browser.by.button(escopo(t), 'Editar'));
+  t.browser.type(t.browser.by.label(escopo(t), 'Cidade'), 'Outra');
+  t.browser.click(t.browser.by.button(escopo(t), 'Salvar alterações'));
   await t.browser.flush();
   assert.match(textoDaTela(t.browser), /Sua conta não tem permissão para esta ação\./);
-  assert.equal(t.browser.by.button(t.root, 'Salvar alterações').disabled, false, 'o botão volta a funcionar');
-  assert.equal(t.browser.by.label(t.root, 'Cidade').value, 'Outra', 'o que a pessoa digitou continua no formulário');
+  assert.equal(t.browser.by.button(escopo(t), 'Salvar alterações').disabled, false, 'o botão volta a funcionar');
+  assert.equal(t.browser.by.label(escopo(t), 'Cidade').value, 'Outra', 'o que a pessoa digitou continua no formulário');
 });
 
 // ===========================================================================
@@ -453,29 +483,29 @@ test('[DASH-CRM-16] criar: o formulário traz todos os campos gravaveis em bloco
   const { parseRoute } = await import('../../dashboard/router.mjs');
   const t = await montar();
   await t.mostrar(NOVO);
-  assert.equal(t.browser.document.activeElement, t.browser.by.label(t.root, 'Empresa (obrigatório)'), 'o foco já começa no campo da empresa');
+  assert.equal(t.browser.document.activeElement, t.browser.by.label(escopo(t), 'Empresa (obrigatório)'), 'o foco já começa no campo da empresa');
   const controles = t.browser.findAll(t.root, (el) => ['input', 'textarea'].includes(el.localName) && el.getAttribute('name'));
   const nomes = controles.map((el) => el.getAttribute('name'));
   for (const chave of WRITABLE_KEYS) assert.ok(nomes.includes(chave), `falta o campo ${chave}`);
   assert.deepEqual(nomes.filter((nome) => !WRITABLE_KEYS.includes(nome)).sort(), ['reason'], 'o único controle extra é o motivo da entrada');
   for (const proibido of ['userId', 'authUserId', 'role', 'permissions', 'actor', 'reviewedBy', 'id', 'historico']) assert.ok(!nomes.includes(proibido), `nenhum campo ${proibido}`);
   for (const rotulo of ['Valor da proposta', 'Valor total']) {
-    const dinheiro = t.browser.by.label(t.root, rotulo);
+    const dinheiro = t.browser.by.label(escopo(t), rotulo);
     assert.equal(dinheiro.getAttribute('type'), 'text', `${rotulo}: campo de texto (um type="number" devolve vazio para "1.500,50" e, na edição, apagaria o valor sem aviso)`);
     assert.equal(dinheiro.getAttribute('inputmode'), 'decimal', `${rotulo}: teclado numérico no celular`);
   }
-  assert.equal(t.browser.by.label(t.root, 'Status inicial').value, 'PROSPECT');
-  const iniciais = t.browser.by.tag(t.browser.by.label(t.root, 'Status inicial'), 'option').map((o) => o.textContent);
+  assert.equal(t.browser.by.label(escopo(t), 'Status inicial').value, 'PROSPECT');
+  const iniciais = t.browser.by.tag(t.browser.by.label(escopo(t), 'Status inicial'), 'option').map((o) => o.textContent);
   assert.equal(iniciais.length, 12, 'os 13 status, menos "Do Not Contact": um registro nunca nasce bloqueado sem o painel de confirmação');
   assert.ok(!iniciais.includes('Do Not Contact') && iniciais.includes('Won') && iniciais.includes('Prospect'));
   assert.equal(t.browser.by.tag(t.root, 'legend').map((el) => el.textContent).join('|'), 'Identificação|Contato|Presença digital|Comercial|Pipeline|Próxima ação|Entrada no CRM');
 
-  t.browser.type(t.browser.by.label(t.root, 'Empresa (obrigatório)'), '  Clínica Nova  ');
-  t.browser.type(t.browser.by.label(t.root, 'Cidade'), 'Niterói');
-  t.browser.type(t.browser.by.label(t.root, 'Valor da proposta'), '1500,50');
-  t.browser.choose(t.browser.by.label(t.root, 'Status inicial'), 'QUALIFIED_PROSPECT');
-  t.browser.type(t.browser.by.label(t.root, 'Motivo da entrada (opcional)'), 'Indicação de cliente');
-  t.browser.click(t.browser.by.button(t.root, 'Criar registro'));
+  t.browser.type(t.browser.by.label(escopo(t), 'Empresa (obrigatório)'), '  Clínica Nova  ');
+  t.browser.type(t.browser.by.label(escopo(t), 'Cidade'), 'Niterói');
+  t.browser.type(t.browser.by.label(escopo(t), 'Valor da proposta'), '1500,50');
+  t.browser.choose(t.browser.by.label(escopo(t), 'Status inicial'), 'QUALIFIED_PROSPECT');
+  t.browser.type(t.browser.by.label(escopo(t), 'Motivo da entrada (opcional)'), 'Indicação de cliente');
+  t.browser.click(t.browser.by.button(escopo(t), 'Criar registro'));
   await t.browser.flush();
 
   const chamada = t.api.callsOf('createCrm');
@@ -484,7 +514,7 @@ test('[DASH-CRM-16] criar: o formulário traz todos os campos gravaveis em bloco
   assert.deepEqual(t.navegacoes, ['#/crm/registro/crm%3Acreated-1'], 'depois de criar, vai para a ficha do registro criado');
 
   await t.mostrar(parseRoute(t.navegacoes[0]));
-  assert.equal(t.browser.by.tag(t.root, 'h2')[0].textContent, 'Clínica Nova');
+  assert.equal(tituloFicha(t), 'Clínica Nova');
   assert.match(textoDaTela(t.browser), /Registro criado\./);
   assert.equal(valorDe(t.browser, 'Pipeline', 'Status').textContent, 'Qualified Prospect');
 });
@@ -492,18 +522,18 @@ test('[DASH-CRM-16] criar: o formulário traz todos os campos gravaveis em bloco
 test('[DASH-CRM-17] criar sem empresa (ou com valor em dinheiro inválido): a tela aponta o campo, foca nele e NÃO chama a API', async () => {
   const t = await montar();
   await t.mostrar(NOVO);
-  t.browser.click(t.browser.by.button(t.root, 'Criar registro'));
+  t.browser.click(t.browser.by.button(escopo(t), 'Criar registro'));
   await t.browser.flush();
   assert.equal(t.api.callsOf('createCrm').length, 0);
   assert.match(textoDaTela(t.browser), /Informe o nome da empresa\./);
   assert.match(textoDaTela(t.browser), /Corrija os campos destacados\./);
-  const empresa = t.browser.by.label(t.root, 'Empresa (obrigatório)');
+  const empresa = t.browser.by.label(escopo(t), 'Empresa (obrigatório)');
   assert.equal(empresa.getAttribute('aria-invalid'), 'true');
   assert.equal(t.browser.document.activeElement, empresa);
 
   t.browser.type(empresa, 'Ok Ltda');
-  t.browser.type(t.browser.by.label(t.root, 'Valor total'), 'muito dinheiro');
-  t.browser.click(t.browser.by.button(t.root, 'Criar registro'));
+  t.browser.type(t.browser.by.label(escopo(t), 'Valor total'), 'muito dinheiro');
+  t.browser.click(t.browser.by.button(escopo(t), 'Criar registro'));
   await t.browser.flush();
   assert.equal(t.api.callsOf('createCrm').length, 0);
   assert.match(textoDaTela(t.browser), /Informe um valor numérico maior ou igual a zero\./);
@@ -514,19 +544,19 @@ test('[DASH-CRM-18] criar com identidade já existente (409): mostra a frase de 
   const { ApiError } = await loadFixtures();
   const t = await montar();
   await t.mostrar(NOVO);
-  t.browser.type(t.browser.by.label(t.root, 'Empresa (obrigatório)'), 'Repetida Ltda');
-  t.browser.type(t.browser.by.label(t.root, 'Site'), 'repetida.example.test');
+  t.browser.type(t.browser.by.label(escopo(t), 'Empresa (obrigatório)'), 'Repetida Ltda');
+  t.browser.type(t.browser.by.label(escopo(t), 'Site'), 'repetida.example.test');
   t.api.failNext('createCrm', new ApiError(409, 'DUPLICATE_RECORD', 'Já existe um registro com esta identidade.'));
-  t.browser.click(t.browser.by.button(t.root, 'Criar registro'));
+  t.browser.click(t.browser.by.button(escopo(t), 'Criar registro'));
   await t.browser.flush();
   assert.match(textoDaTela(t.browser), /Já existe um registro com esta identidade \(mesmo site, telefone ou Instagram\)/);
-  assert.equal(t.browser.by.label(t.root, 'Empresa (obrigatório)').value, 'Repetida Ltda');
-  assert.equal(t.browser.by.label(t.root, 'Site').value, 'repetida.example.test');
-  assert.equal(t.browser.by.button(t.root, 'Criar registro').disabled, false);
+  assert.equal(t.browser.by.label(escopo(t), 'Empresa (obrigatório)').value, 'Repetida Ltda');
+  assert.equal(t.browser.by.label(escopo(t), 'Site').value, 'repetida.example.test');
+  assert.equal(t.browser.by.button(escopo(t), 'Criar registro').disabled, false);
   assert.deepEqual(t.navegacoes, []);
 
-  t.browser.type(t.browser.by.label(t.root, 'Site'), 'outra.example.test');
-  t.browser.click(t.browser.by.button(t.root, 'Criar registro'));
+  t.browser.type(t.browser.by.label(escopo(t), 'Site'), 'outra.example.test');
+  t.browser.click(t.browser.by.button(escopo(t), 'Criar registro'));
   await t.browser.flush();
   assert.equal(t.api.callsOf('createCrm').length, 2);
   assert.equal(t.navegacoes.length, 1, 'na segunda tentativa deu certo');
@@ -543,8 +573,8 @@ test('[DASH-CRM-19] criar com "possível duplicidade" (mesmo nome e cidade): o r
     return { ...resposta, duplicidade: { status: 'POSSIVEL_DUPLICADO', matchedOn: ['nome+cidade'], matchedRecordId: 'crm:existente' } };
   };
   await t.mostrar(NOVO);
-  t.browser.type(t.browser.by.label(t.root, 'Empresa (obrigatório)'), 'Clínica Alfa');
-  t.browser.click(t.browser.by.button(t.root, 'Criar registro'));
+  t.browser.type(t.browser.by.label(escopo(t), 'Empresa (obrigatório)'), 'Clínica Alfa');
+  t.browser.click(t.browser.by.button(escopo(t), 'Criar registro'));
   await t.browser.flush();
   await t.mostrar(parseRoute(t.navegacoes[0]));
   assert.match(textoDaTela(t.browser), /Registro criado\. Atenção: já existe um registro com o mesmo nome e cidade/);
@@ -557,16 +587,16 @@ test('[DASH-CRM-20] as sugestões dos campos vêm dos dados já carregados (nich
   const sugestoes = (chave) => t.browser.by.id(t.root, `crm-suggest-${chave}`);
   assert.deepEqual(t.browser.by.tag(sugestoes('nicho'), 'option').map((o) => o.getAttribute('value')), ['Odontologia', 'Psicologia']);
   assert.deepEqual(t.browser.by.tag(sugestoes('responsavel'), 'option').map((o) => o.getAttribute('value')), ['Breno', 'Rafael']);
-  assert.equal(t.browser.by.label(t.root, 'Nicho').getAttribute('list'), 'crm-suggest-nicho');
-  assert.equal(t.browser.by.label(t.root, 'Nome do contato').getAttribute('list'), null, 'campo sem sugestões');
+  assert.equal(t.browser.by.label(escopo(t), 'Nicho').getAttribute('list'), 'crm-suggest-nicho');
+  assert.equal(t.browser.by.label(escopo(t), 'Nome do contato').getAttribute('list'), null, 'campo sem sugestões');
   assert.equal(t.api.callsOf('listCrm').length, 1, 'a lista foi carregada em segundo plano ao abrir o formulário');
 
   // O formulário de EDIÇÃO também traz as sugestões (a lista já estava carregada).
   await t.mostrar(LISTA);
   await t.mostrar(REGISTRO('crm:a'));
-  t.browser.click(t.browser.by.button(t.root, 'Editar'));
+  t.browser.click(t.browser.by.button(escopo(t), 'Editar'));
   assert.deepEqual(t.browser.by.tag(sugestoes('nicho'), 'option').map((o) => o.getAttribute('value')), ['Odontologia', 'Psicologia']);
-  assert.equal(t.browser.by.label(t.root, 'Nicho').getAttribute('list'), 'crm-suggest-nicho');
+  assert.equal(t.browser.by.label(escopo(t), 'Nicho').getAttribute('list'), 'crm-suggest-nicho');
 });
 
 // ===========================================================================
@@ -575,28 +605,29 @@ test('[DASH-CRM-20] as sugestões dos campos vêm dos dados já carregados (nich
 test('[DASH-CRM-21] editar: o formulário abre com os valores do registro, envia SÓ o que mudou (PATCH), atualiza a ficha na hora e confirma; sem nenhuma mudança não chama a API', async () => {
   const t = await montar({ items: await registros() });
   await t.mostrar(REGISTRO('crm:a'));
-  t.browser.click(t.browser.by.button(t.root, 'Editar'));
-  assert.equal(t.browser.by.label(t.root, 'Empresa (obrigatório)').value, 'Clínica Alfa');
-  assert.equal(t.browser.by.label(t.root, 'Valor da proposta').value, '1500');
-  assert.equal(t.browser.by.label(t.root, 'Data da próxima ação').value, '2026-10-05');
-  assert.equal(t.browser.by.tag(t.root, 'dl').length, 0, 'enquanto edita, os blocos de leitura saem da frente');
-  assert.equal(t.browser.document.activeElement, t.browser.by.label(t.root, 'Empresa (obrigatório)'), 'o foco vai para o primeiro campo');
+  t.browser.click(t.browser.by.button(escopo(t), 'Editar'));
+  assert.equal(t.browser.by.label(escopo(t), 'Empresa (obrigatório)').value, 'Clínica Alfa');
+  assert.equal(t.browser.by.label(escopo(t), 'Valor da proposta').value, '1500');
+  assert.equal(t.browser.by.label(escopo(t), 'Data da próxima ação').value, '2026-10-05');
+  assert.equal(abasEscondidas(t), true, 'enquanto edita, as abas de leitura saem da frente');
+  assert.equal(t.browser.document.activeElement, t.browser.by.label(escopo(t), 'Empresa (obrigatório)'), 'o foco vai para o primeiro campo');
 
-  t.browser.click(t.browser.by.button(t.root, 'Salvar alterações'));
+  t.browser.click(t.browser.by.button(escopo(t), 'Salvar alterações'));
   await t.browser.flush();
   assert.equal(t.api.callsOf('updateCrm').length, 0, 'nada mudou: nada é enviado');
   assert.match(textoDaTela(t.browser), /Nenhuma alteração para salvar\./);
 
-  t.browser.type(t.browser.by.label(t.root, 'Cidade'), 'Teresópolis');
-  t.browser.type(t.browser.by.label(t.root, 'Valor da proposta'), '2000');
-  t.browser.type(t.browser.by.label(t.root, 'Telefone'), '');
-  t.browser.click(t.browser.by.button(t.root, 'Salvar alterações'));
+  t.browser.type(t.browser.by.label(escopo(t), 'Cidade'), 'Teresópolis');
+  t.browser.type(t.browser.by.label(escopo(t), 'Valor da proposta'), '2000');
+  t.browser.type(t.browser.by.label(escopo(t), 'Telefone'), '');
+  t.browser.click(t.browser.by.button(escopo(t), 'Salvar alterações'));
   await t.browser.flush();
   const chamada = t.api.callsOf('updateCrm');
   assert.equal(chamada.length, 1);
   assert.deepEqual(chamada[0].args, ['crm:a', { cidade: 'Teresópolis', valorProposta: 2000, telefone: null }], 'só o que mudou; campo esvaziado vai como null');
   assert.match(textoDaTela(t.browser), /Alterações salvas\./);
-  assert.equal(t.browser.by.tag(t.root, 'form').length, 0, 'o painel fechou');
+  assert.equal(t.browser.by.tag(escopo(t), 'form').length, 0, 'o painel fechou');
+  assert.equal(abasEscondidas(t), false, 'as abas voltaram');
   assert.equal(valorDe(t.browser, 'Identificação', 'Cidade').textContent, 'Teresópolis');
   assert.equal(nbsp(valorDe(t.browser, 'Comercial', 'Valor da proposta').textContent), 'R$ 2.000,00');
   assert.equal(valorDe(t.browser, 'Contato', 'Telefone').textContent, '—');
@@ -605,18 +636,23 @@ test('[DASH-CRM-21] editar: o formulário abre com os valores do registro, envia
 test('[DASH-CRM-22] editar com a empresa vazia (ou valor inválido): aponta o campo e NÃO chama a API; cancelar descarta o que foi digitado', async () => {
   const t = await montar({ items: await registros() });
   await t.mostrar(REGISTRO('crm:a'));
-  t.browser.click(t.browser.by.button(t.root, 'Editar'));
-  t.browser.type(t.browser.by.label(t.root, 'Empresa (obrigatório)'), '   ');
-  t.browser.click(t.browser.by.button(t.root, 'Salvar alterações'));
+  t.browser.click(t.browser.by.button(escopo(t), 'Editar'));
+  t.browser.type(t.browser.by.label(escopo(t), 'Empresa (obrigatório)'), '   ');
+  t.browser.click(t.browser.by.button(escopo(t), 'Salvar alterações'));
   await t.browser.flush();
   assert.equal(t.api.callsOf('updateCrm').length, 0);
   assert.match(textoDaTela(t.browser), /Informe o nome da empresa\./);
 
-  t.browser.click(t.browser.by.button(t.root, 'Cancelar'));
-  assert.equal(t.browser.by.tag(t.root, 'form').length, 0);
+  t.browser.click(t.browser.by.button(escopo(t), 'Cancelar'));
+  await t.browser.flush();
+  assert.match(textoDaTela(t.browser), /Descartar alterações?/, 'cancelar com texto digitado pergunta antes de descartar');
+  assert.equal(t.api.callsOf('updateCrm').length, 0, 'e nada vai ao servidor');
+  t.browser.click(t.browser.by.button(t.root, 'Descartar alterações'));
+  await t.browser.flush();
+  assert.equal(t.browser.by.tag(escopo(t), 'form').length, 0);
   assert.equal(valorDe(t.browser, 'Identificação', 'Empresa').textContent, 'Clínica Alfa', 'nada foi alterado');
-  t.browser.click(t.browser.by.button(t.root, 'Editar'));
-  assert.equal(t.browser.by.label(t.root, 'Empresa (obrigatório)').value, 'Clínica Alfa', 'reabrir volta aos valores do registro');
+  t.browser.click(t.browser.by.button(escopo(t), 'Editar'));
+  assert.equal(t.browser.by.label(escopo(t), 'Empresa (obrigatório)').value, 'Clínica Alfa', 'reabrir volta aos valores do registro');
 });
 
 test('[DASH-CRM-23] edição concorrente: se outra pessoa mudou um campo enquanto o formulário estava aberto, ele NÃO é sobrescrito — só o que a pessoa mexeu é enviado', async () => {
@@ -626,15 +662,15 @@ test('[DASH-CRM-23] edição concorrente: se outra pessoa mudou um campo enquant
   const pendente = t.api.hold('getCrm');
   t.view.show(REGISTRO('crm:a'));
   await pendente.arrived;
-  t.browser.click(t.browser.by.button(t.root, 'Editar'));
-  assert.equal(t.browser.by.label(t.root, 'Cidade').value, 'Petrópolis');
+  t.browser.click(t.browser.by.button(escopo(t), 'Editar'));
+  assert.equal(t.browser.by.label(escopo(t), 'Cidade').value, 'Petrópolis');
   t.api.store.items.find((item) => item.id === 'crm:a').cidade = 'Teresópolis'; // outra pessoa editou
   pendente.release();
   await t.browser.flush();
-  assert.equal(t.browser.by.label(t.root, 'Cidade').value, 'Petrópolis', 'o formulário aberto não é apagado pela resposta que chegou');
+  assert.equal(t.browser.by.label(escopo(t), 'Cidade').value, 'Petrópolis', 'o formulário aberto não é apagado pela resposta que chegou');
 
-  t.browser.type(t.browser.by.label(t.root, 'Nicho'), 'Psicologia clínica');
-  t.browser.click(t.browser.by.button(t.root, 'Salvar alterações'));
+  t.browser.type(t.browser.by.label(escopo(t), 'Nicho'), 'Psicologia clínica');
+  t.browser.click(t.browser.by.button(escopo(t), 'Salvar alterações'));
   await t.browser.flush();
   assert.deepEqual(t.api.callsOf('updateCrm')[0].args, ['crm:a', { nicho: 'Psicologia clínica' }], 'a cidade que a outra pessoa mudou não foi enviada');
   assert.equal(t.api.store.items.find((item) => item.id === 'crm:a').cidade, 'Teresópolis');
@@ -644,12 +680,12 @@ test('[DASH-CRM-24] erros ao salvar: 400 mostra a frase do servidor, 409 de dupl
   const { ApiError } = await loadFixtures();
   const t = await montar({ items: await registros() });
   await t.mostrar(REGISTRO('crm:a'));
-  t.browser.click(t.browser.by.button(t.root, 'Editar'));
-  t.browser.type(t.browser.by.label(t.root, 'Site'), 'novo.example.test');
+  t.browser.click(t.browser.by.button(escopo(t), 'Editar'));
+  t.browser.type(t.browser.by.label(escopo(t), 'Site'), 'novo.example.test');
 
   const tentar = async (erro) => {
     t.api.failNext('updateCrm', erro);
-    t.browser.click(t.browser.by.button(t.root, 'Salvar alterações'));
+    t.browser.click(t.browser.by.button(escopo(t), 'Salvar alterações'));
     await t.browser.flush();
     return textoDaTela(t.browser);
   };
@@ -658,26 +694,34 @@ test('[DASH-CRM-24] erros ao salvar: 400 mostra a frase do servidor, 409 de dupl
   const generico = await tentar(new ApiError(500, 'INTERNAL', 'detalhe interno C:\\segredo\\crm.json'));
   assert.match(generico, /Não foi possível concluir a operação agora/);
   assert.doesNotMatch(generico, /segredo|crm\.json/);
-  assert.equal(t.browser.by.label(t.root, 'Site').value, 'novo.example.test', 'o que foi digitado continua lá');
-  assert.equal(t.browser.by.button(t.root, 'Salvar alterações').disabled, false);
+  assert.equal(t.browser.by.label(escopo(t), 'Site').value, 'novo.example.test', 'o que foi digitado continua lá');
+  assert.equal(t.browser.by.button(escopo(t), 'Salvar alterações').disabled, false);
 });
 
 test('[DASH-CRM-25] se o registro virou "Não contatar" por baixo (409 RECORD_LOCKED), a tela avisa e recarrega a ficha, que passa a mostrar o bloqueio em vez das ações', async () => {
   const { ApiError } = await loadFixtures();
   const t = await montar({ items: await registros() });
   await t.mostrar(REGISTRO('crm:a'));
-  t.browser.click(t.browser.by.button(t.root, 'Editar'));
-  t.browser.type(t.browser.by.label(t.root, 'Cidade'), 'Outra');
+  t.browser.click(t.browser.by.button(escopo(t), 'Editar'));
+  t.browser.type(t.browser.by.label(escopo(t), 'Cidade'), 'Outra');
   // Enquanto isso, outra pessoa marca o registro como DNC.
   t.api.store.items.find((item) => item.id === 'crm:a').status = 'DO_NOT_CONTACT';
   t.api.failNext('updateCrm', new ApiError(409, 'RECORD_LOCKED', 'Este registro está bloqueado.'));
   const antes = t.api.callsOf('getCrm').length;
-  t.browser.click(t.browser.by.button(t.root, 'Salvar alterações'));
+  t.browser.click(t.browser.by.button(escopo(t), 'Salvar alterações'));
   await t.browser.flush();
   assert.equal(t.api.callsOf('getCrm').length, antes + 1, 'a ficha foi recarregada');
   assert.match(textoDaTela(t.browser), /bloqueado como "Não contatar"/);
-  assert.equal(t.browser.by.button(t.root, 'Editar'), null, 'as ações saíram');
-  assert.equal(t.browser.by.tag(t.root, 'form').length, 0, 'o painel de edição saiu junto: um registro bloqueado não tem mais formulário');
+  assert.equal(t.browser.by.button(escopo(t), 'Editar'), null, 'as ações saíram');
+  // o que foi digitado NÃO some sozinho: o formulário continua à vista, mas sem poder salvar
+  assert.equal(t.browser.by.label(escopo(t), 'Cidade').value, 'Outra', 'o rascunho foi preservado');
+  assert.equal(t.browser.by.button(escopo(t), 'Salvar alterações').disabled, true, 'e não pode mais ser salvo');
+  assert.match(textoDaTela(t.browser), /O que você digitou continua aqui, mas não pode ser salvo/);
+  t.browser.click(t.browser.by.button(escopo(t), 'Cancelar'));
+  await t.browser.flush();
+  t.browser.click(t.browser.by.button(t.root, 'Descartar alterações'));
+  await t.browser.flush();
+  assert.equal(t.browser.by.tag(escopo(t), 'form').length, 0, 'depois de descartar, um registro bloqueado não tem mais formulário');
   assert.ok(secao(t.browser, 'Identificação'), 'os blocos da ficha voltaram');
 });
 
@@ -687,8 +731,8 @@ test('[DASH-CRM-25] se o registro virou "Não contatar" por baixo (409 RECORD_LO
 test('[DASH-CRM-26] mudar status: oferece os outros status (menos "Do Not Contact", que tem painel próprio), exige escolher um, envia o destino e o motivo, atualiza o selo e o histórico — a tela não decide se a mudança vale', async () => {
   const t = await montar({ items: await registros() });
   await t.mostrar(REGISTRO('crm:a'));
-  t.browser.click(t.browser.by.button(t.root, 'Mudar status'));
-  const destino = t.browser.by.label(t.root, 'Novo status');
+  t.browser.click(t.browser.by.button(escopo(t), 'Mudar status'));
+  const destino = t.browser.by.label(escopo(t), 'Novo status');
   const opcoes = t.browser.by.tag(destino, 'option').map((o) => o.textContent);
   assert.equal(opcoes.length, 12, 'o placeholder + os 13 status, menos o atual e menos "Do Not Contact"');
   assert.equal(opcoes[0], 'Escolha o novo status');
@@ -699,19 +743,19 @@ test('[DASH-CRM-26] mudar status: oferece os outros status (menos "Do Not Contac
   assert.match(textoDaTela(t.browser), /Status atual: Contacted\./);
   assert.equal(t.browser.document.activeElement, destino);
 
-  t.browser.click(t.browser.by.button(t.root, 'Confirmar mudança'));
+  t.browser.click(t.browser.by.button(escopo(t), 'Confirmar mudança'));
   await t.browser.flush();
   assert.equal(t.api.callsOf('moveCrmStatus').length, 0);
   assert.match(textoDaTela(t.browser), /Escolha o novo status\./);
 
   t.browser.choose(destino, 'PROPOSAL');
-  t.browser.type(t.browser.by.label(t.root, 'Motivo (opcional)'), 'Enviamos a proposta');
-  t.browser.click(t.browser.by.button(t.root, 'Confirmar mudança'));
+  t.browser.type(t.browser.by.label(escopo(t), 'Motivo (opcional)'), 'Enviamos a proposta');
+  t.browser.click(t.browser.by.button(escopo(t), 'Confirmar mudança'));
   await t.browser.flush();
   assert.deepEqual(t.api.callsOf('moveCrmStatus')[0].args, ['crm:a', 'PROPOSAL', 'Enviamos a proposta']);
   assert.match(textoDaTela(t.browser), /Status alterado para Proposal\./);
   assert.equal(valorDe(t.browser, 'Pipeline', 'Status').textContent, 'Proposal');
-  assert.equal(t.browser.by.tag(t.root, 'h2')[0].parentNode.children[1].textContent, 'Proposal', 'o selo do cabeçalho mudou');
+  assert.equal(t.browser.by.cls(t.root, 'ficha-head')[0].textContent, 'Proposal', 'o selo do cabeçalho mudou');
   assert.equal(t.api.callsOf('getCrmHistory').length, 2, 'o histórico foi buscado de novo');
   const itens = t.browser.by.tag(t.browser.by.cls(t.root, 'timeline')[0], 'li').map((li) => li.textContent);
   assert.match(itens[0], /^Contacted → Proposal/);
@@ -722,15 +766,15 @@ test('[DASH-CRM-27] mudança de status recusada pelo servidor (409 INVALID_TRANS
   const { ApiError } = await loadFixtures();
   const t = await montar({ items: await registros() });
   await t.mostrar(REGISTRO('crm:b')); // WON: o domínio só deixa ir para DO_NOT_CONTACT
-  t.browser.click(t.browser.by.button(t.root, 'Mudar status'));
-  t.browser.choose(t.browser.by.label(t.root, 'Novo status'), 'PROSPECT');
+  t.browser.click(t.browser.by.button(escopo(t), 'Mudar status'));
+  t.browser.choose(t.browser.by.label(escopo(t), 'Novo status'), 'PROSPECT');
   t.api.failNext('moveCrmStatus', new ApiError(409, 'INVALID_TRANSITION', 'Esta mudança de status não é permitida.'));
-  t.browser.click(t.browser.by.button(t.root, 'Confirmar mudança'));
+  t.browser.click(t.browser.by.button(escopo(t), 'Confirmar mudança'));
   await t.browser.flush();
   assert.match(textoDaTela(t.browser), /Esta mudança de status não é permitida a partir do status atual\./);
-  assert.equal(t.browser.by.label(t.root, 'Novo status').value, 'PROSPECT', 'o painel continua aberto, com a escolha');
+  assert.equal(t.browser.by.label(escopo(t), 'Novo status').value, 'PROSPECT', 'o painel continua aberto, com a escolha');
   assert.equal(valorDe(t.browser, 'Pipeline', 'Status').textContent, 'Won');
-  assert.equal(t.browser.by.button(t.root, 'Confirmar mudança').disabled, false);
+  assert.equal(t.browser.by.button(escopo(t), 'Confirmar mudança').disabled, false);
 });
 
 // ===========================================================================
@@ -739,25 +783,25 @@ test('[DASH-CRM-27] mudança de status recusada pelo servidor (409 INVALID_TRANS
 test('[DASH-CRM-28] "Marcar como Não contatar" mostra que é uma ação TERMINAL, exige a confirmação marcada e só então chama a API; depois o registro fica bloqueado e as ações saem', async () => {
   const t = await montar({ items: await registros() });
   await t.mostrar(REGISTRO('crm:a'));
-  t.browser.click(t.browser.by.button(t.root, 'Marcar como Não contatar'));
+  t.browser.click(t.browser.by.button(escopo(t), 'Marcar como Não contatar'));
   const painel = textoDaTela(t.browser);
   assert.match(painel, /ação TERMINAL e não pode ser desfeita/);
   assert.match(painel, /deixa de poder ser editado e de mudar de status/);
   assert.match(painel, /site, o telefone e o Instagram dele ficam bloqueados/);
 
-  t.browser.type(t.browser.by.label(t.root, 'Motivo (opcional)'), 'Pediu para não ser contatado');
-  t.browser.click(t.browser.by.button(t.root, 'Confirmar: marcar como Não contatar'));
+  t.browser.type(t.browser.by.label(escopo(t), 'Motivo (opcional)'), 'Pediu para não ser contatado');
+  t.browser.click(t.browser.by.button(escopo(t), 'Confirmar: marcar como Não contatar'));
   await t.browser.flush();
   assert.equal(t.api.callsOf('markCrmDnc').length, 0, 'sem a confirmação marcada, nada é enviado');
   assert.match(textoDaTela(t.browser), /Confirme que você entende que a ação é terminal/);
 
-  t.browser.check(t.browser.by.label(t.root, 'Entendo que esta ação é terminal e não pode ser desfeita.'));
-  t.browser.click(t.browser.by.button(t.root, 'Confirmar: marcar como Não contatar'));
+  t.browser.check(t.browser.by.label(escopo(t), 'Entendo que esta ação é terminal e não pode ser desfeita.'));
+  t.browser.click(t.browser.by.button(escopo(t), 'Confirmar: marcar como Não contatar'));
   await t.browser.flush();
   assert.deepEqual(t.api.callsOf('markCrmDnc')[0].args, ['crm:a', 'Pediu para não ser contatado']);
   assert.match(textoDaTela(t.browser), /Registro marcado como "Não contatar"\. Ele agora está bloqueado\./);
   assert.equal(valorDe(t.browser, 'Pipeline', 'Status').textContent, 'Do Not Contact');
-  for (const botao of ['Editar', 'Mudar status', 'Marcar como Não contatar']) assert.equal(t.browser.by.button(t.root, botao), null, `${botao} saiu`);
+  for (const botao of ['Editar', 'Mudar status', 'Marcar como Não contatar']) assert.equal(t.browser.by.button(escopo(t), botao), null, `${botao} saiu`);
   assert.match(textoDaTela(t.browser), /Este registro está bloqueado como "Não contatar"\. Ele não pode mais ser editado nem mudar de status\./);
   const itens = t.browser.by.tag(t.browser.by.cls(t.root, 'timeline')[0], 'li').map((li) => li.textContent);
   assert.match(itens[0], /^Contacted → Do Not Contact/);
@@ -766,22 +810,22 @@ test('[DASH-CRM-28] "Marcar como Não contatar" mostra que é uma ação TERMINA
 test('[DASH-CRM-28b] o ÚNICO caminho até "Não contatar" é o painel próprio (com o aviso e a confirmação): nenhum seletor de status da tela oferece "Do Not Contact" — só o FILTRO da lista, para achar os bloqueados', async () => {
   const t = await montar({ items: await registros() });
   await t.mostrar(NOVO);
-  const iniciais = t.browser.by.tag(t.browser.by.label(t.root, 'Status inicial'), 'option');
+  const iniciais = t.browser.by.tag(t.browser.by.label(escopo(t), 'Status inicial'), 'option');
   assert.ok(iniciais.length > 0 && !iniciais.some((o) => o.value === 'DO_NOT_CONTACT'), 'a criação não oferece "Do Not Contact"');
 
   await t.mostrar(REGISTRO('crm:a'));
-  t.browser.click(t.browser.by.button(t.root, 'Mudar status'));
-  const destino = t.browser.by.label(t.root, 'Novo status');
+  t.browser.click(t.browser.by.button(escopo(t), 'Mudar status'));
+  const destino = t.browser.by.label(escopo(t), 'Novo status');
   assert.ok(!t.browser.by.tag(destino, 'option').some((o) => o.value === 'DO_NOT_CONTACT'), 'mudar status não oferece "Do Not Contact"');
   t.browser.choose(destino, 'DO_NOT_CONTACT'); // um valor que não existe no seletor não fica escolhido
-  t.browser.click(t.browser.by.button(t.root, 'Confirmar mudança'));
+  t.browser.click(t.browser.by.button(escopo(t), 'Confirmar mudança'));
   await t.browser.flush();
   assert.equal(t.api.callsOf('moveCrmStatus').length, 0);
   assert.equal(t.api.callsOf('markCrmDnc').length, 0);
   assert.match(textoDaTela(t.browser), /Escolha o novo status\./);
 
   await t.mostrar(LISTA);
-  const filtro = t.browser.by.tag(t.browser.by.label(t.root, 'Status'), 'option');
+  const filtro = t.browser.by.tag(t.browser.by.label(escopo(t), 'Status'), 'option');
   assert.ok(filtro.some((o) => o.value === 'DO_NOT_CONTACT'), 'o filtro da lista continua podendo mostrar os bloqueados');
 });
 
@@ -789,9 +833,9 @@ test('[DASH-CRM-29] um registro que JÁ é "Não contatar" abre bloqueado: nem o
   const { crmRecord } = await loadFixtures();
   const t = await montar({ items: [crmRecord({ id: 'crm:dnc', empresa: 'Bloqueada', status: 'DO_NOT_CONTACT' })] });
   await t.mostrar(REGISTRO('crm:dnc'));
-  for (const botao of ['Editar', 'Mudar status', 'Marcar como Não contatar']) assert.equal(t.browser.by.button(t.root, botao), null, botao);
+  for (const botao of ['Editar', 'Mudar status', 'Marcar como Não contatar']) assert.equal(t.browser.by.button(escopo(t), botao), null, botao);
   assert.match(textoDaTela(t.browser), /bloqueado como "Não contatar"/);
-  assert.equal(t.browser.by.tag(t.root, 'form').length, 0);
+  assert.equal(t.browser.by.tag(escopo(t), 'form').length, 0);
 });
 
 // ===========================================================================
@@ -800,22 +844,22 @@ test('[DASH-CRM-29] um registro que JÁ é "Não contatar" abre bloqueado: nem o
 test('[DASH-CRM-30] a tela nunca envia identidade de autorização: nas quatro escritas, nada além de campos do registro, status, motivo e id (userId, authUserId, role, permissions, actor e reviewedBy nunca aparecem)', async () => {
   const t = await montar({ items: await registros() });
   await t.mostrar(NOVO);
-  t.browser.type(t.browser.by.label(t.root, 'Empresa (obrigatório)'), 'Nova Ltda');
-  t.browser.click(t.browser.by.button(t.root, 'Criar registro'));
+  t.browser.type(t.browser.by.label(escopo(t), 'Empresa (obrigatório)'), 'Nova Ltda');
+  t.browser.click(t.browser.by.button(escopo(t), 'Criar registro'));
   await t.browser.flush();
 
   await t.mostrar(REGISTRO('crm:a'));
-  t.browser.click(t.browser.by.button(t.root, 'Editar'));
-  t.browser.type(t.browser.by.label(t.root, 'Cidade'), 'Outra');
-  t.browser.click(t.browser.by.button(t.root, 'Salvar alterações'));
+  t.browser.click(t.browser.by.button(escopo(t), 'Editar'));
+  t.browser.type(t.browser.by.label(escopo(t), 'Cidade'), 'Outra');
+  t.browser.click(t.browser.by.button(escopo(t), 'Salvar alterações'));
   await t.browser.flush();
-  t.browser.click(t.browser.by.button(t.root, 'Mudar status'));
-  t.browser.choose(t.browser.by.label(t.root, 'Novo status'), 'RESPONDED');
-  t.browser.click(t.browser.by.button(t.root, 'Confirmar mudança'));
+  t.browser.click(t.browser.by.button(escopo(t), 'Mudar status'));
+  t.browser.choose(t.browser.by.label(escopo(t), 'Novo status'), 'RESPONDED');
+  t.browser.click(t.browser.by.button(escopo(t), 'Confirmar mudança'));
   await t.browser.flush();
-  t.browser.click(t.browser.by.button(t.root, 'Marcar como Não contatar'));
-  t.browser.check(t.browser.by.label(t.root, 'Entendo que esta ação é terminal e não pode ser desfeita.'));
-  t.browser.click(t.browser.by.button(t.root, 'Confirmar: marcar como Não contatar'));
+  t.browser.click(t.browser.by.button(escopo(t), 'Marcar como Não contatar'));
+  t.browser.check(t.browser.by.label(escopo(t), 'Entendo que esta ação é terminal e não pode ser desfeita.'));
+  t.browser.click(t.browser.by.button(escopo(t), 'Confirmar: marcar como Não contatar'));
   await t.browser.flush();
 
   const escritas = ['createCrm', 'updateCrm', 'moveCrmStatus', 'markCrmDnc'].flatMap((nome) => t.api.callsOf(nome));
@@ -830,15 +874,15 @@ test('[DASH-CRM-31] enviar duas vezes (clique duplo) faz UMA chamada: os botões
   const { ApiError } = await loadFixtures();
   const t = await montar({ items: await registros() });
   await t.mostrar(REGISTRO('crm:a'));
-  t.browser.click(t.browser.by.button(t.root, 'Editar'));
-  t.browser.type(t.browser.by.label(t.root, 'Cidade'), 'Nova cidade');
+  t.browser.click(t.browser.by.button(escopo(t), 'Editar'));
+  t.browser.type(t.browser.by.label(escopo(t), 'Cidade'), 'Nova cidade');
   const pendente = t.api.hold('updateCrm');
-  const salvar = t.browser.by.button(t.root, 'Salvar alterações');
+  const salvar = t.browser.by.button(escopo(t), 'Salvar alterações');
   t.browser.click(salvar);
   await pendente.arrived;
   assert.equal(salvar.disabled, true, 'desabilitado enquanto envia');
-  assert.equal(t.browser.by.button(t.root, 'Cancelar').disabled, true);
-  t.browser.submit(t.browser.by.tag(t.root, 'form')[0]);
+  assert.equal(t.browser.by.button(escopo(t), 'Cancelar').disabled, true);
+  t.browser.submit(t.browser.by.tag(escopo(t), 'form')[0]);
   t.browser.click(salvar);
   assert.equal(t.api.callsOf('updateCrm').length, 1, 'o segundo envio foi ignorado');
   pendente.fail(new ApiError(500, 'INTERNAL', 'x'));
@@ -856,8 +900,9 @@ test('[DASH-CRM-32] resposta tardia nunca apaga a tela atual: a lista que chega 
   await t.browser.flush();
   lista.release();
   await t.browser.flush();
-  assert.equal(t.browser.by.tag(t.root, 'h2')[0].textContent, 'Odonto Beta');
-  assert.equal(t.browser.by.tag(t.root, 'table').length, 0, 'a lista atrasada não foi desenhada na ficha');
+  assert.equal(tituloFicha(t), 'Odonto Beta');
+  assert.equal(t.browser.by.tag(gavetaDe(t), 'table').length, 0, 'a lista atrasada não foi desenhada dentro da ficha: ela só preenche a lista que está por baixo');
+  assert.equal(linhasDaTabela(t.root).length, 3, 'a lista, ao chegar, preenche o que está por baixo da gaveta');
 
   const a = t.api.hold('getCrm');
   t.view.show(REGISTRO('crm:a'));
@@ -866,7 +911,7 @@ test('[DASH-CRM-32] resposta tardia nunca apaga a tela atual: a lista que chega 
   await t.browser.flush();
   a.release();
   await t.browser.flush();
-  assert.equal(t.browser.by.tag(t.root, 'h2')[0].textContent, 'Ótica Gama', 'só a ficha mais recente vale');
+  assert.equal(tituloFicha(t), 'Ótica Gama', 'só a ficha mais recente vale');
 });
 
 test('[DASH-CRM-32b] duas cargas da lista fora de ordem: a resposta ANTIGA, que chega por último, não sobrescreve a nova (a tela mostra sempre o que a última chamada trouxe)', async () => {
@@ -876,7 +921,7 @@ test('[DASH-CRM-32b] duas cargas da lista fora de ordem: a resposta ANTIGA, que 
   t.view.show(LISTA);
   await antiga.arrived;
   t.api.store.items = [crmRecord({ id: 'crm:novo', empresa: 'Só Depois', dataDeEntrada: '2026-09-20T10:00:00.000Z' })];
-  t.browser.click(t.browser.by.button(t.root, 'Atualizar'));
+  t.browser.click(t.browser.by.button(escopo(t), 'Atualizar'));
   await t.browser.flush();
   assert.deepEqual(linhasDaTabela(t.root).map((linha) => linha[0]), ['Só Depois'], 'a chamada mais nova já desenhou');
 
@@ -896,7 +941,7 @@ test('[DASH-CRM-32c] o histórico da ficha A que chega depois de abrir a ficha B
   await t.browser.flush();
   a.release({ historico: [{ timestamp: '2026-09-12T10:00:00.000Z', from: null, to: 'CONTACTED', actor: 'HUMAN', reviewedBy: { userId: 'user-breno', name: 'Breno Bento', role: 'ADMIN' }, motivo: 'Motivo só da ficha A' }] });
   await t.browser.flush();
-  assert.equal(t.browser.by.tag(t.root, 'h2')[0].textContent, 'Ótica Gama');
+  assert.equal(tituloFicha(t), 'Ótica Gama');
   assert.doesNotMatch(textoDaTela(t.browser), /Motivo só da ficha A/, 'o histórico atrasado da A não entrou na B');
   assert.equal(t.api.callsOf('getCrmHistory').length, 2);
 });
@@ -904,6 +949,7 @@ test('[DASH-CRM-32c] o histórico da ficha A que chega depois de abrir a ficha B
 test('[DASH-CRM-32d] a falha tardia da ficha A (depois de abrir a B) não vira erro na B: nem na B que ainda carrega, nem na B já aberta', async () => {
   const { ApiError } = await loadFixtures();
   const t = await montar({ items: await registros() });
+  t.api.hold('listCrm'); // a lista de fundo nunca chega: a B só pode vir do GET do próprio registro
   const a = t.api.hold('getCrm');
   t.view.show(REGISTRO('crm:a'));
   await a.arrived;
@@ -916,7 +962,7 @@ test('[DASH-CRM-32d] a falha tardia da ficha A (depois de abrir a B) não vira e
   assert.doesNotMatch(textoDaTela(t.browser), /Não foi possível/);
   b.release();
   await t.browser.flush();
-  assert.equal(t.browser.by.tag(t.root, 'h2')[0].textContent, 'Ótica Gama');
+  assert.equal(tituloFicha(t), 'Ótica Gama');
 
   const c = t.api.hold('getCrm');
   t.view.show(REGISTRO('crm:a'));
@@ -925,7 +971,7 @@ test('[DASH-CRM-32d] a falha tardia da ficha A (depois de abrir a B) não vira e
   await t.browser.flush();
   c.fail(new ApiError(500, 'INTERNAL', 'x'));
   await t.browser.flush();
-  assert.equal(t.browser.by.tag(t.root, 'h2')[0].textContent, 'Ótica Gama');
+  assert.equal(tituloFicha(t), 'Ótica Gama');
   assert.doesNotMatch(textoDaTela(t.browser), /Não foi possível/, 'a falha da A não aparece como aviso na B');
 });
 
@@ -939,7 +985,7 @@ test('[DASH-CRM-32e] a falha tardia do histórico da ficha A não aparece no his
   await t.browser.flush();
   a.fail(new ApiError(500, 'INTERNAL', 'x'));
   await t.browser.flush();
-  assert.equal(t.browser.by.tag(t.root, 'h2')[0].textContent, 'Ótica Gama');
+  assert.equal(tituloFicha(t), 'Ótica Gama');
   assert.doesNotMatch(textoDaTela(t.browser), /Não foi possível/, 'a falha da A não virou erro no histórico da B');
   assert.equal(t.browser.by.cls(t.root, 'timeline').length, 1, 'a B mostra o histórico que ela mesma carregou');
 });
@@ -987,9 +1033,9 @@ test('[DASH-CRM-33b] uma lista que chega depois do destroy() (logout com a carga
 test('[DASH-CRM-33c] um registro criado depois do destroy() (logout durante o envio) não volta para a memória nem para a tela, e a tela não navega', async () => {
   const t = await montar();
   await t.mostrar(NOVO);
-  t.browser.type(t.browser.by.label(t.root, 'Empresa (obrigatório)'), 'Criada Tarde Ltda');
+  t.browser.type(t.browser.by.label(escopo(t), 'Empresa (obrigatório)'), 'Criada Tarde Ltda');
   const pendente = t.api.hold('createCrm');
-  t.browser.click(t.browser.by.button(t.root, 'Criar registro'));
+  t.browser.click(t.browser.by.button(escopo(t), 'Criar registro'));
   await pendente.arrived;
   t.view.destroy();
   pendente.release();
@@ -1007,7 +1053,7 @@ test('[DASH-CRM-34] uma resposta malformada da API (lista que não é lista, ite
   assert.deepEqual(linhasDaTabela(t.root).map((linha) => linha[0]), ['Só Esta']);
 
   t.api.listCrm = async () => ({ items: 'não é lista' });
-  t.browser.click(t.browser.by.button(t.root, 'Atualizar'));
+  t.browser.click(t.browser.by.button(escopo(t), 'Atualizar'));
   await t.browser.flush();
   assert.match(textoDaTela(t.browser), /Nenhum registro no CRM ainda\./);
 
@@ -1023,21 +1069,21 @@ test('[DASH-CRM-35] as sugestões dos campos nunca reescrevem o que a pessoa dig
   const lista = t.api.hold('listCrm');
   t.view.show(NOVO); // a lista ainda não chegou: nenhuma sugestão
   await lista.arrived;
-  t.browser.type(t.browser.by.label(t.root, 'Empresa (obrigatório)'), 'TESTE CRM Rio X7');
-  t.browser.type(t.browser.by.label(t.root, 'Nicho'), 'Clínica');
-  t.browser.type(t.browser.by.label(t.root, 'Cidade'), 'Petrópolis');
-  t.browser.type(t.browser.by.label(t.root, 'Estado (UF)'), 'RJ');
-  t.browser.type(t.browser.by.label(t.root, 'Nome do contato'), 'João Teste');
+  t.browser.type(t.browser.by.label(escopo(t), 'Empresa (obrigatório)'), 'TESTE CRM Rio X7');
+  t.browser.type(t.browser.by.label(escopo(t), 'Nicho'), 'Clínica');
+  t.browser.type(t.browser.by.label(escopo(t), 'Cidade'), 'Petrópolis');
+  t.browser.type(t.browser.by.label(escopo(t), 'Estado (UF)'), 'RJ');
+  t.browser.type(t.browser.by.label(escopo(t), 'Nome do contato'), 'João Teste');
 
   lista.release({ items: [crmRecord({ id: 'crm:min', empresa: 'Só minúsculas', nicho: 'clinica', cidade: 'petropolis', estado: 'rj' })] });
   await t.browser.flush();
   const opcoes = (id) => t.browser.by.tag(t.browser.find(t.root, (el) => el.localName === 'datalist' && el.getAttribute('id') === id), 'option').map((o) => o.getAttribute('value'));
   assert.deepEqual(opcoes('crm-suggest-nicho'), ['clinica'], 'as sugestões chegaram');
-  assert.equal(t.browser.by.label(t.root, 'Nicho').value, 'Clínica', 'o campo continua como digitado');
-  assert.equal(t.browser.by.label(t.root, 'Cidade').value, 'Petrópolis');
-  assert.equal(t.browser.by.label(t.root, 'Estado (UF)').value, 'RJ');
+  assert.equal(t.browser.by.label(escopo(t), 'Nicho').value, 'Clínica', 'o campo continua como digitado');
+  assert.equal(t.browser.by.label(escopo(t), 'Cidade').value, 'Petrópolis');
+  assert.equal(t.browser.by.label(escopo(t), 'Estado (UF)').value, 'RJ');
 
-  t.browser.click(t.browser.by.button(t.root, 'Criar registro'));
+  t.browser.click(t.browser.by.button(escopo(t), 'Criar registro'));
   await t.browser.flush();
   assert.deepEqual(t.api.callsOf('createCrm')[0].args[0], { empresa: 'TESTE CRM Rio X7', contato: 'João Teste', nicho: 'Clínica', cidade: 'Petrópolis', estado: 'RJ' });
 });

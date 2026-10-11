@@ -1,4 +1,4 @@
-// A tela NOVA PROSPECÇÃO (dashboard/views/prospecting.mjs) com "Iniciar prospecção" (Fase 2, agora na UX 4.0.4): iniciar (SEMPRE depois da confirmação humana), acompanhar o
+// A tela NOVA PROSPECÇÃO (dashboard/views/prospecting.mjs) com "Iniciar prospecção" (Fase 2, agora nas abas da UX 4.0.5): iniciar (SEMPRE depois da confirmação humana), acompanhar o
 // status, cancelar e ver o resultado — sem JSON técnico para o usuário e sem percentual inventado. A API é um FAKE em memória (nenhuma rede, nenhum Claude); o agendador da
 // consulta de status é manual.
 
@@ -54,6 +54,7 @@ function criar({ briefs = [BRIEF], jobs = [], respostas = [] } = {}) {
       chamadas.push(['cancel', id]);
       return { item: job({ status: 'CANCELAMENTO_SOLICITADO', cancelRequested: true }) };
     },
+    markProspectingBriefReady: async (id) => { chamadas.push(['ready', id]); return { item: {} }; },
     getProspectingBatch: async () => ({ item: { resultados: [] } }),
   };
   const agendadas = [];
@@ -86,14 +87,21 @@ async function montar(opcoes = {}) {
   return { ...ambiente, browser, view, rodarAgendada, tela: () => browser.root.textContent.replace(/\s+/g, ' ') };
 }
 
+// as abas principais: os botões das abas estão sempre à vista; o conteúdo de uma aba escondida não recebe clique
+async function aba(t, chave) {
+  t.browser.click(t.browser.find(t.browser.root, (el) => el.getAttribute('role') === 'tab' && el.getAttribute('data-tab') === chave && /pros-tab-/.test(el.id)));
+  await t.browser.flush(4);
+}
+// "Briefings salvos" -> a linha do briefing abre a GAVETA dele (onde ficam as ações e o início da pesquisa)
 async function selecionar(t) {
+  await aba(t, 'briefings');
   const link = t.browser.by.text(t.browser.root, BRIEF.id, 'button');
   t.browser.click(link);
   await t.browser.flush(8);
 }
 
 const confirmar = (t) => t.browser.find(t.browser.root, (el) => el.getAttribute('data-action') === 'confirm');
-// "Iniciar prospecção…" abre a CONFIRMAÇÃO; só o clique nela inicia o job
+// "Iniciar prospecção…" (na gaveta do briefing) abre a CONFIRMAÇÃO; só o clique nela inicia o job; depois a tela vai para "Em andamento"
 async function iniciar(t) {
   t.browser.click(t.browser.by.id(t.browser.root, 'pros-start-job'));
   await t.browser.flush(4);
@@ -386,13 +394,13 @@ test('[DASH-JOB-REP] reposição (2.2): durante a execução mostra os leads ent
   assert.doesNotMatch(sem.browser.by.id(sem.browser.root, 'pros-job-meta').textContent, /Reposições/, 'sem reposição nada é mostrado');
 });
 
-test('[DASH-JOB-3.0] resultado padronizado (na gaveta), máximo de candidatos (padrão 50, até 100) e REFAZER PROSPECÇÃO só depois de confirmar (sem CANCELAR depois de terminar)', async () => {
+test('[DASH-JOB-3.0] resultado padronizado (na gaveta), máximo de candidatos (padrão conservador 10, até 100) e REFAZER PROSPECÇÃO só depois de confirmar (sem CANCELAR depois de terminar)', async () => {
   const resumo = { solicitados: 3, limiteDeCandidatos: 50, candidatosProcessados: 8, descobertos: 9, novos: 8, repetidos: 1, validados: 4, naoValidados: 4, naApprovalQueue: 3, jaExistentes: 1, dadosInsuficientes: 0, duplicados: 0, dnc: 0, reposicoes: 1, enriquecidos: 3, tempoMs: 98000, custoUsd: 0.31, aprovados: 1, rejeitados: 0, promovidos: 0 };
   const t = await montar({ respostas: [job({ status: 'CONCLUIDO', currentStep: 'FINALIZADO', progress: 100, candidatesDiscovered: 9, candidatesValidated: 4, candidatesRejected: 4, elapsedMs: 98000, resumo, lote: { loteId: 'lote:x', naFila: 3, foraDaFila: 1 } })] });
   await selecionar(t);
   assert.equal(t.browser.by.tag(t.browser.root, 'input').filter((el) => el.id === 'pros-max-candidates').length, 1, 'um único campo de máximo no formulário');
   await iniciar(t);
-  assert.deepEqual(t.chamadas.filter(([nome]) => nome === 'max'), [['max', 50]]);
+  assert.deepEqual(t.chamadas.filter(([nome]) => nome === 'max'), [['max', 10]]);
   await t.rodarAgendada();
 
   t.browser.click(t.browser.by.id(t.browser.root, 'pros-job-details'));
@@ -417,43 +425,51 @@ test('[DASH-JOB-3.0] resultado padronizado (na gaveta), máximo de candidatos (p
   assert.ok(t.browser.by.id(t.browser.root, 'pros-cancel-job'), 'e agora, ativo, pode ser cancelado');
 });
 
-// ---- MÁXIMO DE CANDIDATOS no formulário "Novo briefing" -------------------------------------------------------------------------------------------------------
+// ---- MÁXIMO DE CANDIDATOS no assistente "Nova pesquisa" ---------------------------------------------------------------------------------------------------------
+const campo = (t, id) => t.browser.by.id(t.browser.root, id);
+const proximo = async (t) => { t.browser.click(campo(t, 'pros-next')); await t.browser.flush(4); };
+// preenche as etapas 1 e 2 e chega à etapa 3 (se os campos estiverem certos)
 async function preencher(t, { quantidade, maximo }) {
-  const raiz = t.browser.root;
-  t.browser.type(t.browser.by.id(raiz, 'pros-nicho'), 'Clínicas de estética');
-  t.browser.type(t.browser.by.id(raiz, 'pros-locais'), 'Petrópolis/RJ');
-  if (quantidade !== undefined) t.browser.type(t.browser.by.id(raiz, 'pros-quantidade'), String(quantidade));
-  if (maximo !== undefined) t.browser.type(t.browser.by.id(raiz, 'pros-max-candidates'), String(maximo));
+  t.browser.type(campo(t, 'pros-nicho'), 'Clínicas de estética');
+  await proximo(t);
+  t.browser.type(campo(t, 'pros-locais'), 'Petrópolis/RJ');
+  if (quantidade !== undefined) t.browser.type(campo(t, 'pros-quantidade'), String(quantidade));
+  if (maximo !== undefined) t.browser.type(campo(t, 'pros-max-candidates'), String(maximo));
+  await proximo(t);
 }
-const criarBriefing = async (t) => {
-  t.browser.click(t.browser.by.text(t.browser.root, 'Criar briefing', 'button'));
+const salvarBriefing = async (t) => {
+  t.browser.click(campo(t, 'pros-save'));
   await t.browser.flush(10);
 };
+async function iniciarPeloAssistente(t) {
+  t.browser.click(campo(t, 'pros-start-wizard'));
+  await t.browser.flush(4);
+  t.browser.click(confirmar(t));
+  await t.browser.flush(10);
+}
 
-test('[DASH-MAXCAND-1] o campo MÁXIMO DE CANDIDATOS aparece no formulário, ao lado da quantidade desejada, com mín. 1, máx. 100, padrão 50 e o texto auxiliar', async () => {
+test('[DASH-MAXCAND-1] o campo MÁXIMO DE CANDIDATOS aparece na etapa "Onde e quanto", ao lado da quantidade desejada, com mín. 1, máx. 100, padrão CONSERVADOR 10 e o texto auxiliar', async () => {
   const t = await montar({ briefs: [] });
-  const campo = t.browser.by.id(t.browser.root, 'pros-max-candidates');
-  assert.ok(campo);
-  assert.deepEqual([campo.getAttribute('type'), campo.getAttribute('min'), campo.getAttribute('max'), campo.value], ['number', '1', '100', '50']);
+  const maximo = campo(t, 'pros-max-candidates');
+  assert.ok(maximo);
+  assert.deepEqual([maximo.getAttribute('type'), maximo.getAttribute('min'), maximo.getAttribute('max'), maximo.value], ['number', '1', '100', '10']);
   assert.ok(t.browser.by.text(t.browser.root, 'Máximo de candidatos examinados (1–100)', 'label'));
-  assert.equal(t.browser.by.id(t.browser.root, 'pros-max-candidates-help').textContent, 'Limite de empresas que a pesquisa poderá examinar. Pode terminar antes, quando a quantidade desejada for atingida.');
-  const quantidade = t.browser.by.id(t.browser.root, 'pros-quantidade');
-  assert.equal(quantidade.value, '50', 'a quantidade desejada continua com o seu campo e o seu padrão');
+  assert.equal(campo(t, 'pros-max-candidates-help').textContent, 'Limite de empresas que a pesquisa poderá examinar. Pode terminar antes, quando a quantidade desejada for atingida.');
+  const quantidade = campo(t, 'pros-quantidade');
+  assert.equal(quantidade.value, '3', 'a quantidade desejada continua com o seu campo; o padrão conservador de um formulário novo é 3 leads');
   assert.equal(quantidade.getAttribute('max'), '300', 'e com o seu limite (1–300), diferente do máximo de candidatos');
-  assert.equal(campo.parentNode.parentNode, quantidade.parentNode.parentNode, 'os dois campos ficam lado a lado na mesma grade do formulário');
+  assert.equal(maximo.parentNode.parentNode, quantidade.parentNode.parentNode, 'os dois campos ficam lado a lado na mesma grade');
 });
 
 test('[DASH-MAXCAND-2] quantidade 3 + máximo 10: o briefing é criado só com os campos do brief (quantidade 3) e a prospecção iniciada leva maxCandidates = 10 (quantidade e máximo nunca se confundem)', async () => {
   const t = await montar({ briefs: [] });
   await preencher(t, { quantidade: 3, maximo: 10 });
-  await criarBriefing(t);
+  await iniciarPeloAssistente(t);
   const criacao = t.chamadas.filter(([nome]) => nome === 'create');
   assert.equal(criacao.length, 1);
   assert.equal(criacao[0][1].quantidade, 3);
   assert.equal('maxCandidates' in criacao[0][1], false, 'o brief não conhece maxCandidates (a API de briefs recusa campos desconhecidos)');
   assert.deepEqual(Object.keys(criacao[0][1]).sort(), ['cidades', 'nicho', 'nivelGeografico', 'quantidade']);
-
-  await iniciar(t);
   assert.deepEqual(t.chamadas.filter(([nome]) => nome === 'start'), [['start', 'PROS-20261008-009']]);
   assert.deepEqual(t.chamadas.filter(([nome]) => nome === 'max'), [['max', 10]], 'maxCandidates = 10 chega à API');
 });
@@ -462,28 +478,32 @@ test('[DASH-MAXCAND-3] aceita 1 a 100 (inclusive os limites); 0, 101, vazio e de
   for (const [maximo, esperado] of [[1, 1], [100, 100], [50, 50]]) {
     const t = await montar({ briefs: [] });
     await preencher(t, { quantidade: 3, maximo });
-    await criarBriefing(t);
-    await iniciar(t);
+    await iniciarPeloAssistente(t);
     assert.deepEqual(t.chamadas.filter(([nome]) => nome === 'max'), [['max', esperado]], String(maximo));
   }
   for (const invalido of ['0', '101', '', '7.5', '-3']) {
     const t = await montar({ briefs: [] });
     await preencher(t, { quantidade: 3, maximo: invalido });
-    await criarBriefing(t);
     assert.deepEqual(t.chamadas.filter(([nome]) => nome === 'create'), [], `"${invalido}" não cria o briefing`);
-    assert.match(t.browser.by.id(t.browser.root, 'pros-max-candidates-error').textContent, /número inteiro de 1 a 100 candidatos/);
-    assert.equal(t.browser.document.activeElement.id, 'pros-max-candidates', 'o foco vai ao campo com erro');
+    assert.match(campo(t, 'pros-max-candidates-error').textContent, /número inteiro de 1 a 100 candidatos/);
+    assert.equal(t.browser.document.activeElement.id, 'pros-max-candidates', 'o foco vai ao campo com erro e a etapa não avança');
+    assert.equal(campo(t, 'pros-start-wizard').hidden, true, 'continua na etapa 2');
   }
 });
 
-test('[DASH-MAXCAND-4] sem mexer no campo o padrão 50 é enviado; os demais campos do formulário seguem como antes (nicho, locais, quantidade) e o formulário volta ao padrão depois de criar', async () => {
+test('[DASH-MAXCAND-4] sem mexer no campo o padrão 10 é enviado; os demais campos seguem como antes (nicho, locais, quantidade) e o formulário volta ao padrão depois de criar; um briefing salvo sem máximo escolhido usa o padrão 10 na gaveta', async () => {
   const t = await montar({ briefs: [] });
   await preencher(t, { quantidade: 7 });
-  await criarBriefing(t);
+  await iniciarPeloAssistente(t);
   const [, campos] = t.chamadas.find(([nome]) => nome === 'create');
   assert.deepEqual({ nicho: campos.nicho, nivelGeografico: campos.nivelGeografico, quantidade: campos.quantidade, cidades: campos.cidades }, { nicho: 'Clínicas de estética', nivelGeografico: 'CIDADE', quantidade: 7, cidades: 'Petrópolis/RJ' });
-  await iniciar(t);
-  assert.deepEqual(t.chamadas.filter(([nome]) => nome === 'max'), [['max', 50]]);
-  assert.equal(t.browser.by.id(t.browser.root, 'pros-max-candidates').value, '50', 'o formulário volta ao padrão depois de criar');
-  assert.equal(t.browser.by.id(t.browser.root, 'pros-quantidade').value, '50');
+  assert.deepEqual(t.chamadas.filter(([nome]) => nome === 'max'), [['max', 10]]);
+  assert.equal(campo(t, 'pros-max-candidates').value, '10', 'o formulário volta ao padrão depois de criar');
+  assert.equal(campo(t, 'pros-quantidade').value, '3');
+
+  const salvo = await montar();
+  await selecionar(salvo);
+  assert.equal(campo(salvo, 'pros-start-max').value, '10', 'sem um máximo escolhido para este briefing, o padrão conservador');
+  await iniciar(salvo);
+  assert.deepEqual(salvo.chamadas.filter(([nome]) => nome === 'max'), [['max', 10]]);
 });

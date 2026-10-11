@@ -381,7 +381,7 @@ test('[E2E-4] Dashboard (ADMIN e closer) sobre o estado real: Visão Geral, CRM 
   assert.doesNotMatch(texto, /Clínica Alfa Teste/);
 
   await irPara(admin.browser, `#/crm/registro/${enc(alfaId)}`);
-  assert.equal(admin.browser.by.tag(admin.browser.root, 'h2')[0].textContent, 'Clínica Alfa Teste');
+  assert.equal(admin.browser.by.cls(admin.browser.root, 'overlay-title')[0].textContent, 'Clínica Alfa Teste');
   texto = tela(admin.browser);
   assert.match(texto, /Contacted/);
   assert.match(texto, /Promovido da Approval Queue/);
@@ -411,7 +411,7 @@ test('[E2E-4] Dashboard (ADMIN e closer) sobre o estado real: Visão Geral, CRM 
 
   // ---- COMMERCIAL_CLOSER: lê, não escreve ----
   const closer = await subirPainel(env, RAFAEL, `#/crm/registro/${enc(alfaId)}`);
-  assert.equal(closer.browser.by.tag(closer.browser.root, 'h2')[0].textContent, 'Clínica Alfa Teste');
+  assert.equal(closer.browser.by.cls(closer.browser.root, 'overlay-title')[0].textContent, 'Clínica Alfa Teste');
   for (const botao of ['Editar', 'Mudar status', 'Marcar como Não contatar', 'Novo registro']) assert.equal(closer.browser.by.button(closer.browser.root, botao), null, `closer não vê "${botao}"`);
   await irPara(closer.browser, '#/aprovacoes');
   assert.equal(closer.browser.by.button(closer.browser.root, 'Promover para CRM'), null, 'o closer não vê "Promover para CRM"');

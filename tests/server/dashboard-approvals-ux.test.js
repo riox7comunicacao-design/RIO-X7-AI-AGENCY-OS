@@ -285,7 +285,7 @@ test('[APR-UX-5] REJEITAR: motivo obrigatório (sem ele nada é enviado); erro d
   // ESC com texto digitado: pergunta
   s.browser.press('Escape');
   assert.ok(confirmacao(s), 'não fechou: perguntou antes de descartar');
-  assert.ok(s.browser.find(s.browser.root, (el) => el.localName === 'button' && el.textContent === 'Descartar'));
+  assert.ok(s.browser.find(s.browser.root, (el) => el.localName === 'button' && el.textContent === 'Descartar alterações'));
   await clicar(s, s.browser.find(s.browser.root, (el) => el.localName === 'button' && el.textContent === 'Continuar editando'));
   assert.equal(s.browser.by.label(s.browser.root, 'Motivo (obrigatório)').value, 'Fora do perfil');
 

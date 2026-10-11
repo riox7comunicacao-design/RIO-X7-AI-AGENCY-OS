@@ -9,7 +9,7 @@
 // Dados NÃO CONFIÁVEIS (pesquisa na web): tudo entra por dom.mjs (textContent); só URLs http(s), sempre com rel="noopener noreferrer".
 
 import { h } from '../dom.mjs';
-import { textOf, formatDateTime, safeHttpUrl } from '../format.mjs';
+import { textOf, formatDateTime, safeHttpUrl, formatLocation, formatLocations } from '../format.mjs';
 import { buildHash } from '../router.mjs';
 import { buildJobSummary, LEAD_TYPE_LABELS } from './leadProfile.mjs';
 import { statusBadge, emptyState, kvList, section, selectField, createTabs } from '../ui/index.mjs';
@@ -81,9 +81,10 @@ export function findById(container, id) {
 // A localidade de um brief, em texto; só o que o brief informa.
 export function briefPlace(brief) {
   if (!brief || typeof brief !== 'object') return '';
-  if (brief.nivelGeografico === 'CIDADE') return (Array.isArray(brief.cidades) ? brief.cidades : []).map(textOf).filter(Boolean).join(', ');
-  if (brief.nivelGeografico === 'ESTADO') return (Array.isArray(brief.estados) ? brief.estados : []).map(textOf).filter(Boolean).join(', ');
-  return brief.nivelGeografico ? textOf(brief.pais) || 'Brasil' : '';
+  // só a APRESENTAÇÃO é padronizada (caixa e "Cidade/UF"); o brief guardado nunca é alterado
+  if (brief.nivelGeografico === 'CIDADE') return formatLocations(brief.cidades);
+  if (brief.nivelGeografico === 'ESTADO') return formatLocations(brief.estados);
+  return brief.nivelGeografico ? formatLocation(brief.pais) || 'Brasil' : '';
 }
 
 // Os indicadores REAIS de um job (o que o servidor mediu); `null` = o servidor não informou (a tela mostra "—", nunca um zero inventado).
@@ -274,7 +275,7 @@ export function createJobDetails({ document, getBrief = () => null, liveNote = '
     const informed = link(entry.url, 'endereço informado');
     if (informed && sources.length === 0) sources.push(informed);
     const detail = candidateDetail(entry);
-    const place = [textOf(entry.empresa) !== '' && textOf(entry.empresa) !== name ? textOf(entry.empresa) : '', textOf(entry.nicho), textOf(entry.localizacao)].filter(Boolean).join(' · ');
+    const place = [textOf(entry.empresa) !== '' && textOf(entry.empresa) !== name ? textOf(entry.empresa) : '', textOf(entry.nicho), formatLocation(entry.localizacao)].filter(Boolean).join(' · ');
     const siteStatus = entry.siteOficial && typeof entry.siteOficial === 'object' && entry.siteOficial.status ? (entry.siteOficial.status === 'ENCONTRADO' ? 'encontrado' : 'não encontrado') : '';
     const channels = confirmedChannels(entry.presencaDigital);
     const facts = [textOf(entry.tipoLead) !== '' ? `Tipo: ${LEAD_TYPE_LABELS[entry.tipoLead] || textOf(entry.tipoLead)}` : '', siteStatus ? `Site oficial: ${siteStatus}` : '', channels ? `Canais confirmados: ${channels}` : ''].filter(Boolean);

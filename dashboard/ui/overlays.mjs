@@ -62,6 +62,7 @@ export function createOverlayManager({ document, host, getInertTargets = () => [
   let keyListener = null;
   let destroyed = false;
   const closedLayers = new WeakSet(); // camadas já removidas: nada dentro delas recebe o foco de volta
+  let deferredReturn = null; // para onde o foco volta quando a última camada sair, se uma de baixo fechou antes (ver finishClose)
 
   const body = () => document.body || null;
   const topEntry = () => (stack.length > 0 ? stack[stack.length - 1] : null);
@@ -140,23 +141,40 @@ export function createOverlayManager({ document, host, getInertTargets = () => [
     }
     restoreFocus(entry);
     if (typeof entry.onClose === 'function') entry.onClose(reason);
+    // A camada de baixo fechou enquanto uma confirmação ainda estava por cima (ex.: "Descartar alterações" fecha a gaveta e depois a pergunta): o foco não podia ir para a linha
+    // (o conteúdo estava inerte). Agora que a última camada saiu, devolve o foco a quem ele pertencia.
+    if (stack.length === 0 && deferredReturn) {
+      const deferred = deferredReturn;
+      deferredReturn = null;
+      focusFirst([typeof deferred.getReturnFocus === 'function' ? deferred.getReturnFocus() : null, deferred.opener]);
+    }
     return true;
+  }
+
+  const insideClosed = (node) => {
+    for (let current = node; current; current = current.parentNode) if (closedLayers.has(current)) return true;
+    return false;
+  };
+
+  // tenta o foco em cada candidato (conectado, fora de camadas fechadas); devolve se algum o recebeu
+  function focusFirst(candidates) {
+    for (const candidate of candidates) {
+      if (candidate && typeof candidate.focus === 'function' && candidate.isConnected !== false && !insideClosed(candidate)) {
+        candidate.focus();
+        if (document.activeElement === candidate) return true;
+      }
+    }
+    return false;
   }
 
   function restoreFocus(entry) {
     const candidates = [typeof entry.getReturnFocus === 'function' ? entry.getReturnFocus() : null, entry.opener];
-    const insideClosed = (node) => {
-      for (let current = node; current; current = current.parentNode) if (closedLayers.has(current)) return true;
-      return false;
-    };
-    for (const candidate of candidates) {
-      if (candidate && typeof candidate.focus === 'function' && candidate.isConnected !== false && !insideClosed(candidate)) {
-        candidate.focus();
-        if (document.activeElement === candidate) return;
-      }
-    }
+    if (focusFirst(candidates)) return;
     const below = topEntry();
-    if (below) below.dialog.focus();
+    if (below) {
+      below.dialog.focus();
+      deferredReturn = { getReturnFocus: entry.getReturnFocus, opener: entry.opener };
+    }
   }
 
   // Fecha a camada (ou pergunta antes, se há alteração a perder). Devolve se fechou agora.
@@ -176,7 +194,7 @@ export function createOverlayManager({ document, host, getInertTargets = () => [
       title: 'Descartar alterações?',
       message: 'Há alterações que ainda não foram salvas. Se você fechar agora, elas serão perdidas.',
       tone: 'danger',
-      confirmLabel: 'Descartar',
+      confirmLabel: 'Descartar alterações',
       cancelLabel: 'Continuar editando',
       cancelFirst: true,
       onConfirm: async () => {
@@ -237,6 +255,7 @@ export function createOverlayManager({ document, host, getInertTargets = () => [
       entry.footerEl.append(options.footer);
     }
     host.append(entry.layer);
+    deferredReturn = null; // uma camada nova começou: o retorno pendente de antes já não vale
     stack.push(entry);
     ensureListener();
     if (body()) body().setAttribute('data-overlay-open', '');

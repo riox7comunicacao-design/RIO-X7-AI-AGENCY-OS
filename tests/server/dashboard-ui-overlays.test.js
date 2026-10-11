@@ -176,7 +176,7 @@ test('[UI-OV-4] ALTERAÇÕES NÃO SALVAS: fechar por ESC, X ou fundo pergunta an
     assert.equal(s.kit.overlays.depth(), 1);
   }
   s.browser.press('Escape');
-  s.browser.click(s.browser.find(s.host, (el) => el.localName === 'button' && el.textContent === 'Descartar'));
+  s.browser.click(s.browser.find(s.host, (el) => el.localName === 'button' && el.textContent === 'Descartar alterações'));
   await s.browser.flush();
   assert.equal(h2.isOpen, false, 'Descartar fecha');
   assert.equal(fechou, 'escape');
@@ -265,7 +265,7 @@ test('[UI-OV-6] CONFIRMAÇÃO: campo obrigatório vazio mostra o erro e não env
   s.browser.type(s.browser.find(h2.element, (el) => el.id === 'r2'), 'rascunho');
   s.browser.press('Escape');
   assert.equal(h2.isOpen, true);
-  assert.ok(s.browser.find(s.host, (el) => el.localName === 'button' && el.textContent === 'Descartar'));
+  assert.ok(s.browser.find(s.host, (el) => el.localName === 'button' && el.textContent === 'Descartar alterações'));
   s.browser.click(s.browser.find(s.host, (el) => el.localName === 'button' && el.textContent === 'Continuar editando'));
   s.browser.click(s.browser.find(h2.element, (el) => el.getAttribute('data-action') === 'cancel'));
   assert.equal(h2.isOpen, false, 'Cancelar é uma escolha explícita: fecha');

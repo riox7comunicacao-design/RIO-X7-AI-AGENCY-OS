@@ -279,6 +279,7 @@ class FakeWindow {
   constructor(hash = '') {
     this._hash = hash;
     this._entries = [hash];
+    this._states = [null]; // o history.state de cada entrada (como no navegador: nasce nulo, replaceState grava)
     this._index = 0;
     this._listeners = new Set();
     const win = this;
@@ -291,14 +292,19 @@ class FakeWindow {
         if (next === win._hash) return;
         win._hash = next;
         win._entries.splice(win._index + 1, win._entries.length, next); // uma navegação nova descarta o "avançar"
+        win._states.splice(win._index + 1, win._states.length, null);
         win._index += 1;
         queueMicrotask(() => win._emitHashChange());
       },
     };
     this.history = {
-      replaceState(_state, _title, url) {
+      replaceState(state, _title, url) {
         win._hash = String(url);
         win._entries[win._index] = win._hash;
+        win._states[win._index] = state === undefined ? null : state;
+      },
+      get state() {
+        return win._states[win._index];
       },
       // voltar/avançar do navegador: move na pilha e avisa (hashchange assíncrono), se a entrada mudou
       go(delta) {
@@ -323,10 +329,27 @@ class FakeWindow {
 
   addEventListener(type, listener) {
     if (type === 'hashchange') this._listeners.add(listener);
+    else {
+      if (!this._others) this._others = new Map();
+      if (!this._others.has(type)) this._others.set(type, new Set());
+      this._others.get(type).add(listener);
+    }
   }
 
   removeEventListener(type, listener) {
     if (type === 'hashchange') this._listeners.delete(listener);
+    else if (this._others && this._others.has(type)) this._others.get(type).delete(listener);
+  }
+
+  listenerCount(type) {
+    return type === 'hashchange' ? this._listeners.size : this._others && this._others.has(type) ? this._others.get(type).size : 0;
+  }
+
+  // Dispara `beforeunload` como o navegador (atualizar/fechar a aba) e devolve o que os ouvintes pediram: { prevented, returnValue }.
+  fireBeforeUnload() {
+    const event = { type: 'beforeunload', defaultPrevented: false, returnValue: undefined, preventDefault() { this.defaultPrevented = true; } };
+    for (const listener of [...((this._others && this._others.get('beforeunload')) || [])]) listener(event);
+    return { prevented: event.defaultPrevented, returnValue: event.returnValue };
   }
 
   _emitHashChange() {

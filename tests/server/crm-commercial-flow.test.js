@@ -135,6 +135,9 @@ async function subirPainel(env, usuario, hash = '') {
   await browser.flush(12);
   return { browser, fetchImpl };
 }
+// UX 4.0.6: a ficha é uma GAVETA por cima da lista: os campos e botões de uma escrita estão nela, e o título dela é o nome da empresa.
+const gavetaDe = (s) => s.browser.find(s.browser.root, (el) => el.getAttribute('role') === 'dialog' && /drawer/.test(el.className));
+const escopo = (s) => gavetaDe(s) || s.browser.root;
 const tela = (painel) => {
   const texto = painel.browser.root.textContent.replace(/\s+/g, ' ');
   assert.doesNotMatch(texto, /\bnull\b|\bundefined\b|\[object Object\]|\bNaN\b/, 'a tela nunca mostra null, undefined, [object Object] ou NaN');
@@ -156,13 +159,13 @@ test('[FLUXO-4] funil completo pela interface: cada "Mudar status" aparece na fi
   const a = ambiente(t);
   const id = await novoLead(a);
   const s = await subirPainel(a.env, BRENO, `#/crm/registro/${enc(id)}`);
-  assert.equal(s.browser.by.tag(s.browser.root, 'h2')[0].textContent, 'Clínica Funil Teste');
+  assert.equal(s.browser.by.cls(s.browser.root, 'overlay-title')[0].textContent, 'Clínica Funil Teste');
 
   for (let i = 1; i < FUNIL_COMPLETO.length; i += 1) {
     const para = FUNIL_COMPLETO[i];
     await clicar(s, 'Mudar status');
-    s.browser.choose(s.browser.by.label(s.browser.root, 'Novo status'), para);
-    s.browser.type(s.browser.by.label(s.browser.root, 'Motivo (opcional)'), `Motivo do passo ${i}`);
+    s.browser.choose(s.browser.by.label(escopo(s), 'Novo status'), para);
+    s.browser.type(s.browser.by.label(escopo(s), 'Motivo (opcional)'), `Motivo do passo ${i}`);
     await clicar(s, 'Confirmar mudança');
     assert.match(tela(s), new RegExp(`Status alterado para ${CRM_STATUS_LABEL[para]}\\.`), para);
     const itens = linhasDoHistorico(s);
@@ -195,7 +198,7 @@ test('[FLUXO-5] pela interface: um lead Won ou Lost não pode voltar ao funil �
   const s = await subirPainel(a.env, BRENO, `#/crm/registro/${enc(id)}`);
   const antes = linhasDoHistorico(s).length;
   await clicar(s, 'Mudar status');
-  s.browser.choose(s.browser.by.label(s.browser.root, 'Novo status'), 'PROSPECT');
+  s.browser.choose(s.browser.by.label(escopo(s), 'Novo status'), 'PROSPECT');
   await clicar(s, 'Confirmar mudança');
   assert.match(tela(s), /Esta mudança de status não é permitida a partir do status atual./);
   assert.equal(a.lidos()[0].status, 'LOST');
@@ -236,7 +239,7 @@ async function preencher(s, valores) {
   const campos = FIELD_GROUPS.flatMap((grupo) => grupo.fields);
   for (const [chave, valor] of Object.entries(valores)) {
     const campo = campos.find((entry) => entry.key === chave);
-    const controle = s.browser.by.label(s.browser.root, campo.required ? `${campo.label} (obrigatório)` : campo.label);
+    const controle = s.browser.by.label(escopo(s), campo.required ? `${campo.label} (obrigatório)` : campo.label);
     assert.ok(controle, `campo "${campo.label}" não encontrado`);
     s.browser.type(controle, valor);
   }
