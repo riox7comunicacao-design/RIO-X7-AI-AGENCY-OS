@@ -19,6 +19,8 @@ import { h } from './dom.mjs';
 import { createApiClient } from './api.mjs';
 import { roleLabel } from './format.mjs';
 import { parseRoute, buildHash, sectionOf } from './router.mjs';
+import { NAV_TREE, visibleTree, menuItemOf } from './nav.mjs';
+import { PAGE_TITLES, SHELL_TEXT } from './i18n/pt-BR.mjs';
 import { permissionsOf } from './crm-model.mjs';
 import { createAgentsView } from './views/agents.mjs';
 import { createApprovalsView } from './views/approvals.mjs';
@@ -29,80 +31,21 @@ import { createProspectingExclusionsView } from './views/prospectingExclusions.m
 import { createProspectingHistoryView } from './views/prospectingHistory.mjs';
 import { createRejectedLeadsView } from './views/rejectedLeads.mjs';
 import { createOverviewView } from './views/overview.mjs';
+import { createComingSoonView } from './views/comingSoon.mjs';
 import { createUi, createDataBus } from './ui/index.mjs';
+import { createSidebar, browserViewport, iconNode } from './ui/sidebar.mjs';
 
 const NO_ACCESS = 'Esta conta não possui acesso a esta área.';
 const BASE_TITLE = 'Rio X7 AI Agency OS';
-const PAGE_TITLES = Object.freeze({
-  overview: 'Visão Geral',
-  'crm-list': 'CRM',
-  'crm-new': 'Novo registro · CRM',
-  'crm-record': 'Registro · CRM',
-  approvals: 'Aprovações',
-  'approval-lead': 'Lead · Aprovações',
-  agents: 'Agentes IA',
-  funnels: 'Funis',
-  prospecting: 'Nova Prospecção',
-  'prospecting-history': 'Histórico de prospecções',
-  'prospecting-job': 'Prospecção · Histórico',
-  'prospecting-run': 'Execução · Nova Prospecção',
-  'prospecting-brief': 'Briefing · Nova Prospecção',
-  'rejected-leads': 'Leads Reprovados',
-  'rejected-lead': 'Lead · Leads Reprovados',
-  'prospecting-exclusions': 'Exclusões Permanentes',
-  'not-found': 'Página não encontrada',
-});
-
-// O menu: as seções, na ordem. `needs` é a permissão (de /api/me) que a conta precisa ter para o item aparecer — só para
-// não mostrar um caminho que levaria a um 403; o servidor continua decidindo.
-//
-// O menu lateral é agrupado. Um item COM `route` é uma área que existe; um item SEM `route` (`soon`) é uma área ainda não
-// implementada e aparece desabilitado, marcado "Em desenvolvimento" — nunca um link para uma rota que não existe.
-const SOON = 'Em desenvolvimento';
-const NAV_GROUPS = Object.freeze([
-  {
-    title: 'Operacional',
-    items: [
-      { section: 'overview', label: 'Visão Geral', route: { name: 'overview' } },
-      { section: 'crm', label: 'CRM', route: { name: 'crm-list' }, needs: 'canReadCrm' },
-      { label: 'Agenda' },
-    ],
-  },
-  {
-    // O submenu PROSPECÇÃO (Implementação 3.0): criar, acompanhar o histórico, revisar na Approval Queue e consultar/reaprovar os reprovados.
-    title: 'Prospecção',
-    items: [
-      { section: 'prospecting', label: 'Nova Prospecção', route: { name: 'prospecting' }, needs: 'canProposeLead' },
-      { section: 'prospecting-history', label: 'Histórico', route: { name: 'prospecting-history' }, needs: 'canProposeLead' },
-      { section: 'approvals', label: 'Approval Queue', route: { name: 'approvals' } },
-      { section: 'rejected-leads', label: 'Leads Reprovados', route: { name: 'rejected-leads' }, needs: 'canReview' },
-    ],
-  },
-  {
-    title: 'Comercial',
-    items: [
-      { label: 'Leads' },
-      { section: 'funnels', label: 'Funis', route: { name: 'funnels' }, needs: 'canReadCrm' },
-      { label: 'Conversas' },
-      { label: 'Reuniões' },
-      { label: 'Propostas' },
-    ],
-  },
-  { title: 'Agentes IA', items: [{ section: 'agents', label: 'Central de Agentes', route: { name: 'agents' } }] },
-  {
-    title: 'Gestão',
-    items: [
-      { section: 'prospecting-exclusions', label: 'Exclusões Permanentes', route: { name: 'prospecting-exclusions' }, needs: 'canManageProspectingExclusions' },
-      { label: 'Relatórios' },
-      { label: 'Configurações' },
-    ],
-  },
-]);
+// Os títulos de cada rota (i18n/pt-BR.mjs) e a estrutura do menu lateral com as permissões de cada entrada (nav.mjs).
+// Uma entrada do menu COM rota e `soon` abre uma página EM DESENVOLVIMENTO; uma SEM rota é uma área que ainda não existe e aparece desabilitada — nunca um link para uma rota inexistente.
 
 // document/root: onde desenhar. fetchImpl: o fetch do navegador. sdk: o SDK do Supabase (globalThis.supabase).
 // navigation: { current(), subscribe(fn), go(hash), replace(hash) } (router.mjs). Devolve uma promessa que termina
 // quando a primeira tela (login ou painel) está desenhada.
-export function startDashboard({ document, root, fetchImpl, sdk, navigation }) {
+// preferences: { getSidebarCollapsed(), setSidebarCollapsed(bool) } (preferences.mjs) — a ÚNICA preferência visual lembrada: menu recolhido ou expandido. Sem ela, vale só enquanto a página está aberta.
+// viewport: { isMobile(), subscribe(fn) } — quando a largura é de celular (padrão: window.matchMedia, se existir).
+export function startDashboard({ document, root, fetchImpl, sdk, navigation, preferences = null, viewport = null }) {
   function mount(...children) {
     root.replaceChildren(...children.filter(Boolean));
   }
@@ -236,30 +179,25 @@ export function startDashboard({ document, root, fetchImpl, sdk, navigation }) {
       email.focus();
     }
 
-    // A moldura do painel: a barra de cima (nome, menu, Sair) e a área principal. `nav` só existe com /api/me carregado.
-    function shell(me, main, nav) {
+    // O bloco de baixo do menu: quem está logado e "Sair".
+    function whoBlock(me) {
       const role = me ? roleLabel(me.role) : '';
       return h(
         document,
         'div',
-        { className: 'shell' },
-        h(
-          document,
-          'aside',
-          { className: 'sidebar' },
-          brandBlock(),
-          nav,
-          h(
-            document,
-            'div',
-            { className: 'who' },
-            me ? h(document, 'span', { className: 'who-name', text: typeof me.name === 'string' ? me.name : '' }) : null,
-            role ? h(document, 'span', { className: 'badge neutral', text: role }) : null,
-            h(document, 'button', { type: 'button', className: 'btn secondary', text: 'Sair', onclick: logout })
-          )
-        ),
-        main
+        { className: 'who' },
+        me ? h(document, 'span', { className: 'who-name', text: typeof me.name === 'string' ? me.name : '' }) : null,
+        role ? h(document, 'span', { className: 'badge neutral', text: role }) : null,
+        h(document, 'button', { type: 'button', className: 'btn secondary logout', 'data-tip': SHELL_TEXT.logout, onclick: logout }, h(document, 'span', { className: 'logout-icon', 'aria-hidden': 'true' }, iconNode(document, 'logout')), h(document, 'span', { className: 'logout-label', text: SHELL_TEXT.logout }))
       );
+    }
+
+    // A moldura do painel: o menu lateral (ou, antes de /api/me, só a marca e "Sair") e a área principal. `sidebar` só existe com /api/me carregado.
+    function shell(me, main, sidebar) {
+      const parts = sidebar
+        ? [sidebar.topbar, sidebar.backdrop, sidebar.aside]
+        : [h(document, 'aside', { className: 'sidebar' }, h(document, 'div', { className: 'sidebar-head' }, brandBlock()), whoBlock(me))];
+      return h(document, 'div', { className: 'shell', 'data-sidebar': 'expanded', 'data-nav-open': 'false' }, ...parts, main);
     }
 
     function brandBlock() {
@@ -282,33 +220,19 @@ export function startDashboard({ document, root, fetchImpl, sdk, navigation }) {
 
       const permissions = permissionsOf(me);
       const main = h(document, 'main', { className: 'content', id: 'main' });
-      const navLinks = new Map();
-      const nav = h(
+      const win = document.defaultView || null;
+      const sidebar = createSidebar({
         document,
-        'nav',
-        { className: 'nav', 'aria-label': 'Navegação principal' },
-        ...NAV_GROUPS.map((group) => {
-          const items = group.items.filter((item) => !item.needs || permissions[item.needs]);
-          if (items.length === 0) return null;
-          return h(
-            document,
-            'div',
-            { className: 'nav-group' },
-            h(document, 'p', { className: 'nav-title', text: group.title }),
-            ...items.map((item) => {
-              if (!item.route) {
-                // área ainda não implementada: desabilitada e marcada, sem link e sem rota
-                return h(document, 'span', { className: 'nav-link soon', 'aria-disabled': 'true' }, h(document, 'span', { text: item.label }), h(document, 'span', { className: 'nav-soon', text: SOON }));
-              }
-              const link = h(document, 'a', { className: 'nav-link', href: buildHash(item.route), text: item.label });
-              navLinks.set(item.section, link);
-              return link;
-            })
-          );
-        })
-      );
+        tree: visibleTree(NAV_TREE, permissions),
+        brand: brandBlock,
+        footer: whoBlock(me),
+        preferences,
+        viewport: viewport || browserViewport(win),
+      });
+      sidebar.build((route) => buildHash(route));
       // A moldura e, ao lado dela, o lugar das CAMADAS (gaveta/modal/confirmação) e dos AVISOS: enquanto há uma camada aberta, a moldura fica inert.
-      const shellEl = shell(me, main, nav);
+      const shellEl = shell(me, main, sidebar);
+      sidebar.bindShell(shellEl, main);
       const overlayHost = h(document, 'div', { className: 'overlay-host' });
       mount(shellEl, overlayHost);
       const ui = createUi({ document, host: overlayHost, getInertTargets: () => [shellEl] });
@@ -336,19 +260,10 @@ export function startDashboard({ document, root, fetchImpl, sdk, navigation }) {
         navigation,
       });
       // o contador do menu acompanha a fila: quem muda a fila avisa pelo barramento (sem recarregar a página)
-      const approvalsLink = navLinks.get('approvals');
-      const stopCounts = bus.subscribe('approvals:counts', ({ pending }) => {
-        if (!approvalsLink) return;
-        if (Number.isInteger(pending) && pending > 0) {
-          approvalsLink.setAttribute('data-count', String(pending));
-          approvalsLink.setAttribute('aria-label', `Approval Queue, ${pending} ${pending === 1 ? 'pendente' : 'pendentes'}`);
-        } else {
-          approvalsLink.removeAttribute('data-count');
-          approvalsLink.removeAttribute('aria-label');
-        }
-      });
+      // (o menu soma a contagem no grupo "Prospecção", para o número não ficar escondido com o grupo recolhido)
+      const stopCounts = bus.subscribe('approvals:counts', ({ pending }) => sidebar.setBadge('approvals', pending));
       // Leads Reprovados também é PERSISTENTE (filtro, busca, ordem e página sobrevivem a trocar de módulo; a gaveta do lead tem URL). Reconsiderar devolve o lead à fila:
-      // o barramento avisa e a Approval Queue se atualiza em silêncio (uma leitura), para o contador do menu acompanhar.
+      // o barramento avisa e a Fila de Aprovação se atualiza em silêncio (uma leitura), para o contador do menu acompanhar.
       const rejectedContainer = container();
       const rejectedView = createRejectedLeadsView({ document, root: rejectedContainer, api, permissions, ui, bus, navigation });
       const stopReconsider = bus.subscribe('approvals:changed', ({ action }) => {
@@ -364,13 +279,6 @@ export function startDashboard({ document, root, fetchImpl, sdk, navigation }) {
       let currentSection = null;
       let transient = null; // a tela sem estado guardado (Visão Geral, Aprovações) que está na página agora
 
-      function setActive(section) {
-        for (const [name, link] of navLinks) {
-          if (name === section) link.setAttribute('aria-current', 'page');
-          else link.removeAttribute('aria-current');
-        }
-      }
-
       // O endereço da tela que está na página: o CRM, com uma edição não salva, pode pedir para voltar a ele (navigation.restore) se a pessoa escolher "Continuar editando".
       let renderedHash = navigation.current();
 
@@ -383,7 +291,7 @@ export function startDashboard({ document, root, fetchImpl, sdk, navigation }) {
         }
         renderedHash = navigation.current();
         document.title = `${PAGE_TITLES[route.name] || BASE_TITLE} — ${BASE_TITLE}`;
-        setActive(section);
+        sidebar.setActive(menuItemOf(route));
         if (transient && typeof transient.destroy === 'function') transient.destroy();
         transient = null;
         if (currentSection === 'crm' && section !== 'crm') crmView.hide(); // saiu do CRM: a ficha aberta fecha; busca, filtros e página ficam guardados
@@ -400,6 +308,16 @@ export function startDashboard({ document, root, fetchImpl, sdk, navigation }) {
           }
           main.replaceChildren(crmContainer);
           crmView.show(route);
+        } else if (section === 'crm-future') {
+          // Dashboard Comercial, Metas e Configurações do CRM: páginas EM DESENVOLVIMENTO, sem dado nenhum
+          if (!permissions.canReadCrm) {
+            main.replaceChildren(h(document, 'p', { className: 'message error', role: 'alert', text: NO_ACCESS }));
+            return;
+          }
+          const target = container();
+          main.replaceChildren(target);
+          transient = createComingSoonView({ document, root: target, pageName: route.name, canReadCrm: permissions.canReadCrm });
+          transient.render();
         } else if (section === 'approvals') {
           main.replaceChildren(approvalsContainer);
           approvalsView.show(route);
@@ -469,7 +387,7 @@ export function startDashboard({ document, root, fetchImpl, sdk, navigation }) {
       const stopRouting = navigation.subscribe(() => renderRoute(parseRoute(navigation.current())));
       session = {
         stopRouting,
-        views: [crmView, approvalsView, rejectedView, historyView, prospectingView, { destroy: stopReconsider }, { destroy: () => transient && typeof transient.destroy === 'function' && transient.destroy() }, { destroy: stopCounts }, { destroy: () => ui.destroy() }],
+        views: [{ destroy: () => sidebar.destroy() }, crmView, approvalsView, rejectedView, historyView, prospectingView, { destroy: stopReconsider }, { destroy: () => transient && typeof transient.destroy === 'function' && transient.destroy() }, { destroy: stopCounts }, { destroy: () => ui.destroy() }],
       };
       renderRoute(parseRoute(navigation.current()));
     }

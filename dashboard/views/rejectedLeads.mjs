@@ -30,10 +30,10 @@ export const FILTERS = Object.freeze([
   ['REPROVADOS', 'Reprovados'],
   ['DADOS_INSUFICIENTES', 'Dados insuficientes'],
   ['DUPLICADOS', 'Duplicados'],
-  ['DNC', 'DNC'],
+  ['DNC', 'Não Contatar'],
   ['EXPIRADOS', 'Expirados'],
 ]);
-const STATE_LABELS = Object.freeze({ REJEITADO: 'Reprovado', DADOS_INSUFICIENTES: 'Dados insuficientes', DUPLICADO: 'Duplicado', DNC: 'DNC', EXPIRADO: 'Expirado' });
+const STATE_LABELS = Object.freeze({ REJEITADO: 'Reprovado', DADOS_INSUFICIENTES: 'Dados insuficientes', DUPLICADO: 'Duplicado', DNC: 'Não Contatar', EXPIRADO: 'Expirado' });
 const STATE_TONES = Object.freeze({ REJEITADO: 'bad', DADOS_INSUFICIENTES: 'warn', DUPLICADO: 'warn', DNC: 'bad', EXPIRADO: 'neutral' });
 const SORTS = Object.freeze([
   { value: 'decisao-desc', label: 'Decisão mais recente' },
@@ -43,7 +43,7 @@ const SORTS = Object.freeze([
 ]);
 const PAGE_SIZE = 15;
 const GENERIC_ERROR = 'Não foi possível concluir agora. Tente novamente em instantes.';
-const RECONSIDERED_NOTE = 'Devolve o lead à Approval Queue (aguardando revisão). Não pesquisa de novo, não aprova e não cria registro no CRM: um humano ainda precisa aprovar e promover.';
+const RECONSIDERED_NOTE = 'Devolve o lead à Fila de Aprovação (aguardando revisão). Não pesquisa de novo, não aprova e não cria registro no CRM: um humano ainda precisa aprovar e promover.';
 
 const messageFor = (error) => (error && typeof error.serverMessage === 'string' && error.serverMessage !== '' ? error.serverMessage : GENERIC_ERROR);
 const cityUf = (snapshot) => [textOf(snapshot.cidade), textOf(snapshot.estadoUf)].filter(Boolean).join('/');
@@ -152,7 +152,7 @@ export function createRejectedLeadsView({ document, root, api, permissions, sche
       document,
       'section',
       { className: 'approvals', id: 'rejected-leads', 'aria-labelledby': 'rejected-title' },
-      pageHeader(document, { title: 'Leads Reprovados', titleId: 'rejected-title', subtitle: 'Nada é apagado: aqui ficam os leads que passaram pela Approval Queue e saíram dela, com tudo o que já foi pesquisado. Candidatos descartados durante a prospecção ficam no Histórico de prospecções.', actions: [refreshButton] }),
+      pageHeader(document, { title: 'Leads Reprovados', titleId: 'rejected-title', subtitle: 'Nada é apagado: aqui ficam os leads que passaram pela Fila de Aprovação e saíram dela, com tudo o que já foi pesquisado. Candidatos descartados durante a prospecção ficam no Histórico de prospecções.', actions: [refreshButton] }),
       h(
         document,
         'div',
@@ -382,7 +382,7 @@ export function createRejectedLeadsView({ document, root, api, permissions, sche
       h(document, 'p', { className: reason === '' ? 'decision-reason muted' : 'decision-reason', text: reason === '' ? 'Motivo não registrado.' : reason }),
       kvList(document, [
         field('Decidido por', h(document, 'span', { text: deciderText(item) })),
-        field('Job de origem', textValue(item.jobOrigem)),
+        field('Prospecção de origem', textValue(item.jobOrigem)),
         field('Reconsiderações anteriores', h(document, 'span', { text: String(Number.isInteger(item.reaprovacoes) ? item.reaprovacoes : 0) })),
       ])
     );
@@ -396,7 +396,7 @@ export function createRejectedLeadsView({ document, root, api, permissions, sche
       textOf(identityStatus(snapshot.statusIdentidade)) === '' ? null : indicator('Verificação', badge(identityText(snapshot.statusIdentidade, { withReason: true }), 'neutral')),
       textOf(snapshot.statusDados) === '' ? null : indicator('Dados', badge(dataText(snapshot.statusDados), 'neutral')),
       textOf(snapshot.statusDuplicidade) === '' ? null : indicator('Duplicidade', badge(duplicityText(snapshot.statusDuplicidade, snapshot.matchedOn), 'neutral')),
-      textOf(snapshot.statusDNC) === '' ? null : indicator('DNC', badge(dncText(snapshot.statusDNC), 'neutral')),
+      textOf(snapshot.statusDNC) === '' ? null : indicator('Não Contatar', badge(dncText(snapshot.statusDNC), 'neutral')),
     ].filter(Boolean);
     const notes = kvList(document, [field('Hipótese de oportunidade', textValue(snapshot.hipoteseDeOportunidade)), field('Observações', textValue(snapshot.observacoes))]);
 
@@ -500,7 +500,7 @@ export function createRejectedLeadsView({ document, root, api, permissions, sche
   // O rodapé fixo da gaveta: a ação humana (reconsiderar) ou a explicação de por que ela não existe. Nada começa sozinho.
   function buildDrawerFooter(item) {
     if (item.estado === 'DNC') {
-      return h(document, 'p', { className: 'notice bad', role: 'note', text: 'Este contato está em DNC (restrição de contato). Não é uma rejeição comercial e não pode ser reconsiderado.' });
+      return h(document, 'p', { className: 'notice bad', role: 'note', text: 'Este contato está como Não Contatar (restrição de contato). Não é uma rejeição comercial e não pode ser reconsiderado.' });
     }
     if (!item.reaprovavel) return h(document, 'p', { className: 'muted', text: 'Só um lead reprovado por um humano pode ser reconsiderado.' });
     if (!canReview) return h(document, 'p', { className: 'muted', text: 'Sua conta não pode reconsiderar leads.' });
@@ -567,7 +567,7 @@ export function createRejectedLeadsView({ document, root, api, permissions, sche
     }
     // confirmado pelo servidor: só agora há sucesso para mostrar
     state.busy = false;
-    notify('success', `${textOf(item.empresa) || 'O lead'} voltou para a Approval Queue (aguardando revisão). Nada foi enviado ao CRM.`);
+    notify('success', `${textOf(item.empresa) || 'O lead'} voltou para a Fila de Aprovação (aguardando revisão). Nada foi enviado ao CRM.`);
     if (bus) bus.publish('approvals:changed', { action: 'reconsider', prospectId: item.prospectId });
     state.items = state.items.filter((entry) => entry.prospectId !== item.prospectId);
     closeDrawer({ silent: false, reason: 'decided' });
@@ -607,7 +607,7 @@ export function createRejectedLeadsView({ document, root, api, permissions, sche
       return;
     }
     if (total === 0) {
-      fill(listRegion, h(document, 'div', { id: 'rejected-empty' }, emptyState(document, { title: 'Nenhum lead nesta categoria.', text: 'Esta área reúne os leads que passaram pela Approval Queue e saíram dela: reprovados por uma pessoa, expirados ou bloqueados. Quando isso acontecer, eles aparecem aqui. Candidatos que a prospecção descartou ANTES de chegar à fila (não validados, dados insuficientes, duplicados ou DNC) ficam no Histórico de prospecções, não aqui.', action: h(document, 'a', { className: 'btn secondary', id: 'rejected-empty-history', href: buildHash({ name: 'prospecting-history' }), text: 'Ver o Histórico de prospecções' }) })));
+      fill(listRegion, h(document, 'div', { id: 'rejected-empty' }, emptyState(document, { title: 'Nenhum lead nesta categoria.', text: 'Esta área reúne os leads que passaram pela Fila de Aprovação e saíram dela: reprovados por uma pessoa, expirados ou bloqueados. Quando isso acontecer, eles aparecem aqui. Candidatos que a prospecção descartou ANTES de chegar à fila (não validados, dados insuficientes, duplicados ou Não Contatar) ficam no Histórico de prospecções, não aqui.', action: h(document, 'a', { className: 'btn secondary', id: 'rejected-empty-history', href: buildHash({ name: 'prospecting-history' }), text: 'Ver o Histórico de prospecções' }) })));
       fill(pagerRegion);
       return;
     }

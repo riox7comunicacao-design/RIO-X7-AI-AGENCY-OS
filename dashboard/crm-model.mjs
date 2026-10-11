@@ -17,6 +17,7 @@
 // mudar um status, um rótulo ou um campo, a suíte quebra aqui em vez de a tela mostrar algo defasado.
 
 import { textOf, formatDate, formatDateTime } from './format.mjs';
+import { STATUS_LABELS, localizeStoredText } from './i18n/pt-BR.mjs';
 
 // ---------------------------------------------------------------------------
 // Status (13) — a mesma ordem do funil em src/crm/constants.js. Os rótulos são os de CRM_STATUS_LABEL (os mesmos nomes
@@ -24,19 +25,19 @@ import { textOf, formatDate, formatDateTime } from './format.mjs';
 // ---------------------------------------------------------------------------
 export const CRM_STATUSES = Object.freeze(
   [
-    { value: 'PROSPECT', label: 'Prospect', tone: 'neutral' },
-    { value: 'RESEARCH', label: 'Research', tone: 'neutral' },
-    { value: 'QUALIFIED_PROSPECT', label: 'Qualified Prospect', tone: 'neutral' },
-    { value: 'CONTACTED', label: 'Contacted', tone: 'info' },
-    { value: 'RESPONDED', label: 'Responded', tone: 'info' },
-    { value: 'QUALIFICATION', label: 'Qualification', tone: 'info' },
-    { value: 'MEETING_SCHEDULED', label: 'Meeting Scheduled', tone: 'info' },
-    { value: 'MEETING_COMPLETED', label: 'Meeting Completed', tone: 'info' },
-    { value: 'PROPOSAL', label: 'Proposal', tone: 'warn' },
-    { value: 'NEGOTIATION', label: 'Negotiation', tone: 'warn' },
-    { value: 'WON', label: 'Won', tone: 'ok' },
-    { value: 'LOST', label: 'Lost', tone: 'neutral' },
-    { value: 'DO_NOT_CONTACT', label: 'Do Not Contact', tone: 'bad' },
+    { value: 'PROSPECT', label: STATUS_LABELS.PROSPECT, tone: 'neutral' },
+    { value: 'RESEARCH', label: STATUS_LABELS.RESEARCH, tone: 'neutral' },
+    { value: 'QUALIFIED_PROSPECT', label: STATUS_LABELS.QUALIFIED_PROSPECT, tone: 'neutral' },
+    { value: 'CONTACTED', label: STATUS_LABELS.CONTACTED, tone: 'info' },
+    { value: 'RESPONDED', label: STATUS_LABELS.RESPONDED, tone: 'info' },
+    { value: 'QUALIFICATION', label: STATUS_LABELS.QUALIFICATION, tone: 'info' },
+    { value: 'MEETING_SCHEDULED', label: STATUS_LABELS.MEETING_SCHEDULED, tone: 'info' },
+    { value: 'MEETING_COMPLETED', label: STATUS_LABELS.MEETING_COMPLETED, tone: 'info' },
+    { value: 'PROPOSAL', label: STATUS_LABELS.PROPOSAL, tone: 'warn' },
+    { value: 'NEGOTIATION', label: STATUS_LABELS.NEGOTIATION, tone: 'warn' },
+    { value: 'WON', label: STATUS_LABELS.WON, tone: 'ok' },
+    { value: 'LOST', label: STATUS_LABELS.LOST, tone: 'neutral' },
+    { value: 'DO_NOT_CONTACT', label: STATUS_LABELS.DO_NOT_CONTACT, tone: 'bad' },
   ].map((status) => Object.freeze(status))
 );
 
@@ -104,12 +105,12 @@ export const FIELD_GROUPS = Object.freeze([
     field('valorTotal', 'Valor total', 'number'),
     field('observacoes', 'Observações', 'textarea'),
   ]),
-  group('pipeline', 'Pipeline', [
+  group('pipeline', 'Funil de Vendas', [
     field('status', 'Status', 'status', { managed: true }),
     field('dataDeEntrada', 'Data de entrada', 'datetime', { managed: true }),
     field('responsavel', 'Responsável'),
     field('dataDaReuniao', 'Data da reunião', 'date'),
-    field('linkDoMeet', 'Link do Meet', 'url'),
+    field('linkDoMeet', 'Link do Google Meet', 'url'),
     field('ultimaInteracao', 'Última interação', 'date'),
   ]),
   group('proxima', 'Próxima ação', [
@@ -290,7 +291,7 @@ export const RECORD_TABS = Object.freeze([
     label: 'Resumo',
     sections: Object.freeze([
       Object.freeze({ title: 'Identificação', keys: Object.freeze(['empresa', 'nicho', 'cidade', 'estado', 'origem']) }),
-      Object.freeze({ title: 'Pipeline', keys: Object.freeze(['status', 'dataDeEntrada', 'responsavel', 'ultimaInteracao']) }),
+      Object.freeze({ title: 'Funil de Vendas', keys: Object.freeze(['status', 'dataDeEntrada', 'responsavel', 'ultimaInteracao']) }),
       Object.freeze({ title: 'Próxima ação', keys: Object.freeze(['proximaAcao', 'dataDaProximaAcao']) }),
     ]),
   }),
@@ -410,7 +411,7 @@ export function describeHistory(entries, roleName = (role) => role) {
         when: formatDateTime(entry.timestamp),
         transition: textOf(entry.from) === '' ? `Registro criado como ${to}` : `${statusLabel(entry.from)} → ${to}`,
         who,
-        reason: textOf(entry.motivo),
+        reason: localizeStoredText(textOf(entry.motivo)), // só a exibição: o motivo guardado não muda
       };
     })
     .reverse();
@@ -458,8 +459,8 @@ export const GENERIC_ERROR = 'Não foi possível concluir a operação agora. Te
 
 const CONFLICT_MESSAGES = Object.freeze({
   DUPLICATE_RECORD: 'Já existe um registro com esta identidade (mesmo site, telefone ou Instagram). Confira antes de criar outro.',
-  DNC_BLOCKED: 'Esta identidade está bloqueada como "Não contatar": o cadastro não pode usar estes dados.',
-  RECORD_LOCKED: 'Este registro está bloqueado como "Não contatar" e não pode mais ser alterado.',
+  DNC_BLOCKED: 'Esta identidade está bloqueada como "Não Contatar": o cadastro não pode usar estes dados.',
+  RECORD_LOCKED: 'Este registro está bloqueado como "Não Contatar" e não pode mais ser alterado.',
   INVALID_TRANSITION: 'Esta mudança de status não é permitida a partir do status atual.',
   // Integridade CRM ↔ Card (Etapa "Funis 2 — correção final"): excluir é recusado enquanto o registro tiver Cards
   // ativos em algum Funil — a regra é sempre do servidor (seção 8); esta tela só mostra a explicação.

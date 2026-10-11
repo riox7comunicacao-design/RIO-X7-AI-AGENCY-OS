@@ -59,7 +59,7 @@ export const PAGE_SIZE = 20;
 const MAX_LINE = '500';
 const MAX_TEXT = '4000';
 
-const DNC_LABEL = 'Não contatar';
+const DNC_LABEL = 'Não Contatar';
 const FIELD_BY_KEY = new Map(FIELD_GROUPS.flatMap((entry) => entry.fields).map((entry) => [entry.key, entry]));
 
 // document/root: onde desenhar. api: o cliente de api.mjs (listCrm, getCrm, getCrmHistory, createCrm, updateCrm, moveCrmStatus, markCrmDnc, deleteCrm).
@@ -102,7 +102,8 @@ export function createCrmView({ document, root, api, permissions, navigate = () 
   const el = (tag, props, ...children) => h(document, tag, props, ...children);
   const statusBadge = (value) => uiStatusBadge(document, statusLabel(value), statusTone(value));
   const anchor = (href, text, className) => el('a', { href, className, text });
-  const listHash = buildHash({ name: 'crm-list' });
+  // O endereço da LISTA: a rota antiga (#/crm) e a nova (#/crm/clientes) mostram a mesma tela; fechar a ficha volta ao endereço pelo qual a pessoa chegou à lista.
+  let listHash = buildHash({ name: 'crm-list' });
 
   // ---- estrutura estável (montada UMA vez; as regiões é que mudam) --------------------------
   const content = el('div', { className: 'approvals-view crm-view' });
@@ -160,7 +161,7 @@ export function createCrmView({ document, root, api, permissions, navigate = () 
     'section',
     { className: 'approvals crm', id: 'crm-list', 'aria-labelledby': 'crm-title' },
     pageHeader(document, {
-      title: 'CRM',
+      title: 'Clientes',
       titleId: 'crm-title',
       subtitle: 'Os registros comerciais. Clique em uma linha para abrir a ficha sem sair da lista.',
       actions: [refreshButton, canWrite ? anchor(buildHash({ name: 'crm-new' }), 'Novo registro', 'btn primary') : null].filter(Boolean),
@@ -335,7 +336,7 @@ export function createCrmView({ document, root, api, permissions, navigate = () 
       fill(listRegion,
         el('div', { id: 'crm-empty' }, emptyState(document, {
           title: 'Nenhum registro no CRM ainda.',
-          text: canWrite ? 'Os registros aparecem aqui assim que forem criados ou promovidos da Approval Queue.' : 'Os registros aparecem aqui assim que forem criados ou promovidos da Approval Queue.',
+          text: canWrite ? 'Os registros aparecem aqui assim que forem criados ou promovidos da Fila de Aprovação.' : 'Os registros aparecem aqui assim que forem criados ou promovidos da Fila de Aprovação.',
           action: canWrite ? anchor(buildHash({ name: 'crm-new' }), 'Criar o primeiro registro', 'btn primary') : null,
         }))
       );
@@ -397,7 +398,7 @@ export function createCrmView({ document, root, api, permissions, navigate = () 
     document,
     navigation,
     hashFor: (id) => buildHash({ name: 'crm-record', id }),
-    listHash,
+    listHash: () => listHash,
     rowButton: rowButtonOf,
     repaint: () => paintResults(),
     build: (id, hooks) => openFicha(id, hooks),
@@ -1389,6 +1390,8 @@ export function createCrmView({ document, root, api, permissions, navigate = () 
         return;
       }
     }
+    if (route.name === 'crm-clients') listHash = buildHash({ name: 'crm-clients' });
+    else if (route.name === 'crm-list') listHash = buildHash({ name: 'crm-list' });
     const entering = !state.visible;
     state.visible = true;
     state.route = route;

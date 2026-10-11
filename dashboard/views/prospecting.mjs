@@ -43,7 +43,7 @@ const STATUS_LABELS = Object.freeze({
 const STATUS_TONES = Object.freeze({ RASCUNHO: 'neutral', PRONTO_PARA_PESQUISA: 'info', PESQUISANDO: 'warn', AGUARDANDO_REVISAO: 'warn', CONCLUIDO: 'ok', CANCELADO: 'bad' });
 
 const RESULT_STATUS_LABELS = Object.freeze({
-  DNC: 'Não contatar (DNC)',
+  DNC: 'Não Contatar',
   DUPLICADO: 'Duplicado',
   DADOS_INSUFICIENTES: 'Dados insuficientes',
   REPETIDO_NA_SUBMISSAO: 'Repetido nesta submissão',
@@ -83,10 +83,10 @@ const STEP_ORDER = Object.freeze({ PREPARANDO: 0, DESCOBRINDO: 1, VALIDANDO: 2, 
 const FINISH_TITLES = Object.freeze({ CONCLUIDO: 'PROSPECÇÃO CONCLUÍDA', PARCIAL: 'PROSPECÇÃO PARCIAL', CANCELADO: 'PROSPECÇÃO CANCELADA', ERRO: 'A PROSPECÇÃO FALHOU' });
 const START_NOTES = Object.freeze([
   'A pesquisa usa o Claude Code instalado neste computador e pode consumir o seu limite de uso.',
-  'Iniciar uma prospecção não aprova leads, não promove nada ao CRM e não inicia nenhum contato: os leads encontrados só chegam à Approval Queue, onde uma pessoa decide.',
+  'Iniciar uma prospecção não aprova leads, não promove nada ao CRM e não inicia nenhum contato: os leads encontrados só chegam à Fila de Aprovação, onde uma pessoa decide.',
   'Só uma prospecção roda por vez. Você pode cancelá-la enquanto ela ainda não estiver enviando os leads para a aprovação.',
 ]);
-const QUANTITY_EXPLANATION = 'Leads desejados são os NOVOS leads que você quer receber na Approval Queue. Candidatos examinados são as empresas que a pesquisa analisa para encontrá-los: o máximo limita esse esforço, e a pesquisa pode parar antes se a quantidade desejada for atingida.';
+const QUANTITY_EXPLANATION = 'Leads desejados são os NOVOS leads que você quer receber na Fila de Aprovação. Candidatos examinados são as empresas que a pesquisa analisa para encontrá-los: o máximo limita esse esforço, e a pesquisa pode parar antes se a quantidade desejada for atingida.';
 
 // ---------------------------------------------------------------------------
 // Funções puras (exportadas para teste)
@@ -291,7 +291,7 @@ export function createProspectingView({ document, root, api, permissions, schedu
   fieldOf.nivelGeografico = formField(document, { id: 'pros-nivel', label: 'Abrangência geográfica', control: nivelSelect, required: true, help: 'Onde procurar: uma ou mais cidades, estados ou o país todo.' });
   fieldOf.locais = formField(document, { id: 'pros-locais', label: 'Cidade(s) — separadas por vírgula', control: locaisInput, required: true, help: 'Use vírgula para mais de um local.' });
   fieldOf.pais = formField(document, { id: 'pros-pais', label: 'País', control: paisInput, help: 'Se ficar em branco, vale Brasil.' });
-  fieldOf.quantidade = formField(document, { id: 'pros-quantidade', label: `Quantidade de leads novos desejados (${BRIEF_LIMITS.QUANTIDADE_MIN}–${BRIEF_LIMITS.QUANTIDADE_MAX})`, control: quantidadeInput, required: true, help: 'Quantos NOVOS leads você quer receber na Approval Queue. Não é o número de candidatos examinados.' });
+  fieldOf.quantidade = formField(document, { id: 'pros-quantidade', label: `Quantidade de leads novos desejados (${BRIEF_LIMITS.QUANTIDADE_MIN}–${BRIEF_LIMITS.QUANTIDADE_MAX})`, control: quantidadeInput, required: true, help: 'Quantos NOVOS leads você quer receber na Fila de Aprovação. Não é o número de candidatos examinados.' });
   fieldOf.maxCandidates = formField(document, { id: 'pros-max-candidates', label: `Máximo de candidatos examinados (${MAX_CANDIDATES_MIN}–${MAX_CANDIDATES_MAX})`, control: maxInput, required: true, help: 'Limite de empresas que a pesquisa poderá examinar. Pode terminar antes, quando a quantidade desejada for atingida.' });
   fieldOf.observacoes = formField(document, { id: 'pros-observacoes', label: 'Observações / objetivo (opcional)', control: observacoesInput, help: 'Contexto que ajuda a pesquisa (público, restrições, o que evitar).' });
   fieldOf.observacoes.element.append(counterEl);
@@ -775,8 +775,8 @@ export function createProspectingView({ document, root, api, permissions, schedu
   async function onJobFinished(job) {
     if (bus) bus.publish('prospecting:changed', { action: 'finish', jobId: job.id });
     const queued = jobIndicators(job).naFila;
-    if (job.status === 'CONCLUIDO') toasts.success(`Prospecção concluída${queued !== null ? `: ${queued} lead(s) chegaram à Approval Queue` : ''}.`, { key: 'pros-feedback' });
-    else if (job.status === 'PARCIAL') toasts.warning(`Prospecção parcial: a quantidade pedida não foi atingida${queued !== null ? ` (${queued} lead(s) na Approval Queue)` : ''}.`, { key: 'pros-feedback' });
+    if (job.status === 'CONCLUIDO') toasts.success(`Prospecção concluída${queued !== null ? `: ${queued} lead(s) chegaram à Fila de Aprovação` : ''}.`, { key: 'pros-feedback' });
+    else if (job.status === 'PARCIAL') toasts.warning(`Prospecção parcial: a quantidade pedida não foi atingida${queued !== null ? ` (${queued} lead(s) na Fila de Aprovação)` : ''}.`, { key: 'pros-feedback' });
     else if (job.status === 'CANCELADO') toasts.warning('Prospecção cancelada.', { key: 'pros-feedback' });
     else if (job.status === 'ERRO') toasts.error('A prospecção falhou. Veja os detalhes da execução.', { key: 'pros-feedback' });
     try {
@@ -931,7 +931,7 @@ export function createProspectingView({ document, root, api, permissions, schedu
       key: `pros-cancel-brief:${brief.id}`,
       title: 'Cancelar briefing',
       message: `Briefing ${brief.id}`,
-      detail: 'O briefing passa a Cancelado e não poderá ser usado para uma nova pesquisa. O que já foi entregue à Approval Queue continua lá.',
+      detail: 'O briefing passa a Cancelado e não poderá ser usado para uma nova pesquisa. O que já foi entregue à Fila de Aprovação continua lá.',
       tone: 'danger',
       confirmLabel: 'Cancelar briefing',
       cancelLabel: 'Voltar',
@@ -1205,7 +1205,7 @@ export function createProspectingView({ document, root, api, permissions, schedu
       'div',
       { className: 'pros-start-card', id: 'pros-auto-start' },
       el('h3', { text: 'Iniciar a pesquisa' }),
-      el('p', { className: 'muted', text: 'A prospecção automática procura empresas na web, confere a página de cada uma e envia só as comprovadas para a Approval Queue. Você confirma antes de começar; nada é aprovado nem enviado ao CRM.' }),
+      el('p', { className: 'muted', text: 'A prospecção automática procura empresas na web, confere a página de cada uma e envia só as comprovadas para a Fila de Aprovação. Você confirma antes de começar; nada é aprovado nem enviado ao CRM.' }),
       maxField.element,
       el('div', { className: 'actions' }, el('button', { type: 'button', className: 'btn primary', id: 'pros-start-job', disabled: state.busy, onclick: onStartClick, text: 'Iniciar prospecção…' }))
     );
@@ -1222,7 +1222,7 @@ export function createProspectingView({ document, root, api, permissions, schedu
       el('td', { text: entry.empresa || '—' }),
       el('td', { text: statusTexto || '—' }),
       el('td', {}, ...(podeDecidir
-        ? [actionButton('Aprovar', () => runAction(() => api.approve(entry.prospectId)), 'secondary'), actionButton('Rejeitar', () => runAction(() => api.reject(entry.prospectId, 'rejeitado pelo Workbench de Prospecção')), 'danger')]
+        ? [actionButton('Aprovar', () => runAction(() => api.approve(entry.prospectId)), 'secondary'), actionButton('Rejeitar', () => runAction(() => api.reject(entry.prospectId, 'rejeitado pela Nova Prospecção')), 'danger')]
         : [el('span', { className: 'muted', text: 'sem ação (já decidido pelo sistema)' })]))
     );
   }
@@ -1333,8 +1333,8 @@ export function createProspectingView({ document, root, api, permissions, schedu
         { className: 'indicator-grid' },
         indicatorTile('Encontrados', ind.encontrados, 'candidatos trazidos pela descoberta'),
         indicatorTile('Validados', ind.validados, 'comprovados pela página'),
-        indicatorTile('Entregues à fila', ind.naFila, ind.solicitados === null ? 'na Approval Queue' : `de ${ind.solicitados} solicitados`),
-        indicatorTile('Retidos fora da fila', ind.retidos, 'dados insuficientes, DNC ou duplicado'),
+        indicatorTile('Entregues à fila', ind.naFila, ind.solicitados === null ? 'na Fila de Aprovação' : `de ${ind.solicitados} solicitados`),
+        indicatorTile('Retidos fora da fila', ind.retidos, 'dados insuficientes, Não Contatar ou duplicado'),
         indicatorTile('Não validados', ind.naoValidados, 'a página não comprovou')
       )
     );
@@ -1356,8 +1356,8 @@ export function createProspectingView({ document, root, api, permissions, schedu
     const naFila = Number.isInteger(lote.naFila) ? lote.naFila : ind.naFila || 0;
     const foraDaFila = Number.isInteger(lote.foraDaFila) ? lote.foraDaFila : 0;
     const validated = Number(job.candidatesValidated) || 0;
-    const out = [el('p', { text: naFila > 0 ? `${naFila} de ${job.requestedQuantity} lead(s) solicitado(s) chegaram à Approval Queue.` : validated > 0 ? 'Nenhum lead chegou à Approval Queue.' : 'Nenhuma empresa pôde ser comprovada pela página; nada foi enviado para a aprovação.' })];
-    if (foraDaFila > 0) out.push(el('p', { className: 'muted', text: `${validated} empresa(s) comprovada(s) pela pesquisa, mas ${foraDaFila} não foi(ram) entregue(s) à fila (dados insuficientes, DNC ou duplicado).` }));
+    const out = [el('p', { text: naFila > 0 ? `${naFila} de ${job.requestedQuantity} lead(s) solicitado(s) chegaram à Fila de Aprovação.` : validated > 0 ? 'Nenhum lead chegou à Fila de Aprovação.' : 'Nenhuma empresa pôde ser comprovada pela página; nada foi enviado para a aprovação.' })];
+    if (foraDaFila > 0) out.push(el('p', { className: 'muted', text: `${validated} empresa(s) comprovada(s) pela pesquisa, mas ${foraDaFila} não foi(ram) entregue(s) à fila (dados insuficientes, Não Contatar ou duplicado).` }));
     if (job.status === 'PARCIAL' && validated > 0) out.push(el('p', { className: 'muted', text: 'A quantidade pedida não foi atingida: nenhuma empresa fraca foi incluída para completar.' }));
     return out;
   }
@@ -1367,7 +1367,7 @@ export function createProspectingView({ document, root, api, permissions, schedu
     buttons.push(el('button', { type: 'button', className: 'btn secondary', id: 'pros-job-details', 'data-item': job.id, text: 'Ver detalhes da execução', onclick: () => runCtl.open(job.id) }));
     if (active && job.currentStep !== 'INGERINDO' && canPropose) buttons.push(el('button', { type: 'button', className: 'btn danger', id: 'pros-cancel-job', disabled: state.busy || job.status === 'CANCELAMENTO_SOLICITADO', onclick: () => onCancelJob(job), text: 'Cancelar prospecção' }));
     if (!active && canPropose) buttons.push(el('button', { type: 'button', className: 'btn secondary', id: 'pros-redo-job', disabled: state.busy, onclick: () => openRedo(job), text: 'Refazer prospecção' }));
-    if (!active && ind.naFila !== null && ind.naFila > 0 && (job.status === 'CONCLUIDO' || job.status === 'PARCIAL')) buttons.push(el('a', { className: 'btn secondary', id: 'pros-open-approvals', href: buildHash({ name: 'approvals' }), text: 'Abrir a Approval Queue' }));
+    if (!active && ind.naFila !== null && ind.naFila > 0 && (job.status === 'CONCLUIDO' || job.status === 'PARCIAL')) buttons.push(el('a', { className: 'btn secondary', id: 'pros-open-approvals', href: buildHash({ name: 'approvals' }), text: 'Abrir a Fila de Aprovação' }));
     buttons.push(el('a', { className: 'btn secondary', href: buildHash({ name: 'prospecting-job', id: job.id }), text: 'Ver no Histórico' }));
     return el('div', { className: 'actions exec-actions' }, ...buttons);
   }
@@ -1375,7 +1375,7 @@ export function createProspectingView({ document, root, api, permissions, schedu
   // ---- a página ----------------------------------------------------------------
 
   if (!canPropose) {
-    content.append(el('section', { className: 'prospecting', id: 'prospecting' }, pageHeader(document, { title: 'Nova Prospecção' }), el('p', { className: 'muted', text: 'Seu perfil não pode usar o Workbench de Prospecção.' })));
+    content.append(el('section', { className: 'prospecting', id: 'prospecting' }, pageHeader(document, { title: 'Nova Prospecção' }), el('p', { className: 'muted', text: 'Seu perfil não pode usar a Nova Prospecção.' })));
   } else {
     content.append(
       el(

@@ -50,7 +50,7 @@ test('[DASH-LEADS-1] Leads Reprovados: filtros, dados comerciais completos (sem 
   await browser.flush();
   const tela = () => browser.root.textContent.replace(/\s+/g, ' ');
   assert.deepEqual(chamadas, [['lista', 'TODOS']]);
-  for (const rotulo of ['Todos', 'Reprovados', 'Dados insuficientes', 'Duplicados', 'DNC', 'Expirados']) assert.ok(browser.by.text(browser.root, rotulo, 'button'), rotulo);
+  for (const rotulo of ['Todos', 'Reprovados', 'Dados insuficientes', 'Duplicados', 'Não Contatar', 'Expirados']) assert.ok(browser.by.text(browser.root, rotulo, 'button'), rotulo);
   assert.match(tela(), /Clínica Alfa/);
   assert.match(tela(), /Sem fit/);
 
@@ -71,11 +71,11 @@ test('[DASH-LEADS-1] Leads Reprovados: filtros, dados comerciais completos (sem 
   browser.click(browser.by.button(browser.root, 'Reconsiderar'));
   await browser.flush(8);
   assert.deepEqual(chamadas.slice(1, 3), [['reaprovar', 'pid-alfa', 'Cliente pediu'], ['lista', 'TODOS']]);
-  assert.match(tela(), /voltou para a Approval Queue/);
+  assert.match(tela(), /voltou para a Fila de Aprovação/);
   assert.equal(porAttr(browser, 'data-prospect', 'pid-alfa'), null, 'o lead reaprovado saiu da lista');
 
   // DNC: sem botão de reaprovar, com a explicação
-  browser.click(browser.by.text(browser.root, 'DNC', 'button'));
+  browser.click(browser.by.text(browser.root, 'Não Contatar', 'button'));
   await browser.flush(8);
   assert.deepEqual(chamadas.at(-1), ['lista', 'DNC']);
   browser.click(porAttr(browser, 'data-open', 'pid-dnc'));
@@ -130,7 +130,7 @@ test('[DASH-LEADS-3] Histórico: cada prospecção com o resumo padronizado; REF
   browser.click(porAttr(browser, 'data-open', 'JOB-20261007-001'));
   await browser.flush(8);
   const tela = browser.root.textContent.replace(/\s+/g, ' ');
-  for (const rotulo of ['Solicitados', 'Candidatos processados', 'Validados', 'Na Approval Queue', 'Já existentes', 'Dados insuficientes', 'Duplicados', 'DNC', 'Reposições', 'Tempo', 'Repetidos', 'Descoberta', 'Validação', 'Enriquecimento', 'Aprovados', 'Rejeitados', 'Promovidos']) assert.ok(tela.includes(rotulo), rotulo);
+  for (const rotulo of ['Solicitados', 'Candidatos processados', 'Validados', 'Na Fila de Aprovação', 'Já existentes', 'Dados insuficientes', 'Duplicados', 'Não Contatar', 'Reposições', 'Tempo', 'Repetidos', 'Descoberta', 'Validação', 'Enriquecimento', 'Aprovados', 'Rejeitados', 'Promovidos']) assert.ok(tela.includes(rotulo), rotulo);
   assert.match(tela, /01:38/);
   assert.match(tela, /41.5s/);
   assert.match(tela, /30s/);
@@ -155,7 +155,7 @@ test('[DASH-LEADS-3] Histórico: cada prospecção com o resumo padronizado; REF
   assert.ok(ativo.by.link(ativo.root, 'Acompanhar na Nova Prospecção'));
 });
 
-test('[DASH-LEADS-4] Approval Queue: ao abrir um lead, a análise comercial (perfil) aparece; sem perfil, um aviso honesto; quem não revisa não busca o perfil', async () => {
+test('[DASH-LEADS-4] Fila de Aprovação: ao abrir um lead, a análise comercial (perfil) aparece; sem perfil, um aviso honesto; quem não revisa não busca o perfil', async () => {
   const { createApprovalsView } = await import('../../dashboard/views/approvals.mjs');
   const item = (id, empresa) => ({ prospectId: id, empresa, estado: 'AGUARDANDO_REVISAO', discoverySnapshot: { empresa, cidade: 'Petrópolis', estadoUf: 'RJ' }, historico: [] });
   const buscas = [];

@@ -1,4 +1,4 @@
-// CRM na UX 4.0.6 (mesmo padrão da Approval Queue e do Histórico): a lista PERSISTENTE (busca, filtros, ordem, página e rolagem sobrevivem a abrir a ficha e a trocar de módulo),
+// CRM na UX 4.0.6 (mesmo padrão da Fila de Aprovação e do Histórico): a lista PERSISTENTE (busca, filtros, ordem, página e rolagem sobrevivem a abrir a ficha e a trocar de módulo),
 // a FICHA numa gaveta com URL e abas (somente leitura), a atualização por EVENTOS (crm:changed) e pelo botão Atualizar — sem polling — e as ações de escrita de sempre
 // (editar, mudar status, não contatar, excluir) ainda acessíveis dentro da gaveta. DOM de teste e API falsa: nenhum navegador, nenhuma rede, nenhum registro real.
 // As regras de dados, permissões e escritas continuam cobertas por dashboard-crm-view.test.js, dashboard-fullstack.test.js e crm-api.test.js.
@@ -101,9 +101,9 @@ const rotulos = (s, el) => s.browser.by.tag(el, 'dt').map((dt) => dt.textContent
 // A LISTA
 // ---------------------------------------------------------------------------------------------------------------------------------------------
 
-test('[CRM-UX-1] a lista no padrão da Approval Queue: cabeçalho, busca, filtros de status/nicho/responsável, ordenação, Atualizar e Novo registro; linhas "queue-row" com o nome da empresa como botão; só LÊ ao abrir', async () => {
+test('[CRM-UX-1] a lista no padrão da Fila de Aprovação: cabeçalho, busca, filtros de status/nicho/responsável, ordenação, Atualizar e Novo registro; linhas "queue-row" com o nome da empresa como botão; só LÊ ao abrir', async () => {
   const s = await abrir();
-  assert.equal(s.browser.by.tag(s.root, 'h2')[0].textContent, 'CRM');
+  assert.equal(s.browser.by.tag(s.root, 'h2')[0].textContent, 'Clientes');
   assert.match(textoDaTela(s), /Os registros comerciais\. Clique em uma linha para abrir a ficha sem sair da lista\./);
   for (const rotulo of ['Buscar', 'Status', 'Nicho', 'Responsável', 'Ordenar por']) assert.ok(s.browser.by.label(s.root, rotulo), `campo "${rotulo}"`);
   assert.ok(botao(s, 'Atualizar'));
@@ -128,7 +128,7 @@ test('[CRM-UX-2] ORDENAÇÃO só por critérios que existem nos dados: mais rece
   const ordem = async (valor) => { s.browser.choose(sorter, valor); return nomes(s); };
   assert.deepEqual(await ordem('antigos'), ['Zeta Estética', 'Clínica Alfa', 'Ótica Gama', 'Odonto Beta']);
   assert.deepEqual(await ordem('empresa'), ['Clínica Alfa', 'Odonto Beta', 'Ótica Gama', 'Zeta Estética']);
-  assert.deepEqual(await ordem('status'), ['Ótica Gama', 'Clínica Alfa', 'Zeta Estética', 'Odonto Beta'], 'Prospect, Contacted, Negotiation, Won');
+  assert.deepEqual(await ordem('status'), ['Ótica Gama', 'Clínica Alfa', 'Zeta Estética', 'Odonto Beta'], 'Lead em Prospecção, Contatado, Em Negociação, Fechada');
   assert.deepEqual(await ordem('proxima'), ['Ótica Gama', 'Clínica Alfa', 'Odonto Beta', 'Zeta Estética'], 'a data mais próxima primeiro; sem data, no fim (por empresa)');
   assert.deepEqual(await ordem('valor'), ['Ótica Gama', 'Clínica Alfa', 'Zeta Estética', 'Odonto Beta'], 'maior valor primeiro; sem valor, no fim');
   assert.equal(conta(s, 'listCrm'), 1, 'ordenar é do navegador: nenhuma chamada nova');
@@ -259,7 +259,7 @@ test('[CRM-UX-7] a ficha abre numa GAVETA por cima da lista (a lista continua po
   await clicar(s, botao(s, 'Clínica Alfa'));
   const g = gaveta(s);
   assert.equal(titulo(s), 'Clínica Alfa');
-  assert.equal(s.browser.by.cls(g, 'ficha-head')[0].textContent, 'Contacted', 'o selo do status');
+  assert.equal(s.browser.by.cls(g, 'ficha-head')[0].textContent, 'Contatado', 'o selo do status');
   assert.equal(s.browser.by.tag(s.root, 'table').length, 1, 'a lista continua na página, por baixo');
   assert.equal(s.browser.by.tag(s.root, 'tbody')[0].children.length, 4);
   assert.deepEqual(s.browser.by.tag(g, 'button').filter((b) => b.getAttribute('role') === 'tab').map((b) => b.textContent), ['Resumo', 'Contato e presença', 'Comercial', 'Histórico']);
@@ -268,7 +268,7 @@ test('[CRM-UX-7] a ficha abre numa GAVETA por cima da lista (a lista continua po
 
   assert.deepEqual(rotulos(s, painelDaAba(s, 'resumo')), ['Empresa', 'Nicho', 'Cidade', 'Estado (UF)', 'Origem', 'Status', 'Data de entrada', 'Responsável', 'Última interação', 'Próxima ação', 'Data da próxima ação']);
   assert.deepEqual(rotulos(s, painelDaAba(s, 'contato')), ['Nome do contato', 'Cargo', 'Telefone', 'WhatsApp', 'E-mail', 'Site', 'Instagram', 'Facebook', 'Perfil no Google']);
-  assert.deepEqual(rotulos(s, painelDaAba(s, 'comercial')), ['Serviço potencial', 'Temperatura', 'Problema identificado', 'Raio-X de nicho', 'Raio-X personalizado', 'Status do diagnóstico', 'Link do Raio-X', 'Data da análise', 'Valor da proposta', 'Valor total', 'Observações', 'Data da reunião', 'Link do Meet']);
+  assert.deepEqual(rotulos(s, painelDaAba(s, 'comercial')), ['Serviço potencial', 'Temperatura', 'Problema identificado', 'Raio-X de nicho', 'Raio-X personalizado', 'Status do diagnóstico', 'Link do Raio-X', 'Data da análise', 'Valor da proposta', 'Valor total', 'Observações', 'Data da reunião', 'Link do Google Meet']);
   const todos = FIELD_GROUPS.flatMap((grupo) => grupo.fields.map((campo) => campo.label));
   assert.deepEqual(s.browser.by.tag(g, 'dt').map((dt) => dt.textContent.trim()).sort(), [...todos].sort(), 'só campos que existem, todos');
   const valor = (chave, rotulo) => { const dt = s.browser.find(painelDaAba(s, chave), (e) => e.localName === 'dt' && e.textContent.trim() === rotulo); return dt.parentNode.children[dt.parentNode.children.indexOf(dt) + 1].textContent; };
@@ -295,7 +295,7 @@ test('[CRM-UX-8] ABAS acessíveis: tablist/tab/tabpanel, só a ativa está no fo
   await teclar(s, 'End');
   assert.equal(abaSelecionada(s), 'historico');
   assert.equal(painelDaAba(s, 'resumo').hidden, true, 'a aba inativa fica escondida');
-  assert.match(painelDaAba(s, 'historico').textContent, /Registro criado como Prospect/);
+  assert.match(painelDaAba(s, 'historico').textContent, /Registro criado como Lead em Prospecção/);
   await teclar(s, 'Home');
   assert.equal(abaSelecionada(s), 'resumo');
   await aba(s, 'comercial');
@@ -386,7 +386,7 @@ test('[CRM-UX-11] LINK DIRETO: abre a ficha com a lista carregada por baixo (uma
   assert.equal(inexistente.browser.window.location.hash, '#/crm');
 });
 
-test('[CRM-UX-12] o endereço do registro é o mesmo de sempre (Approval Queue, Visão Geral e Funis continuam apontando para ele) e ids com caracteres especiais fazem ida e volta', async () => {
+test('[CRM-UX-12] o endereço do registro é o mesmo de sempre (Fila de Aprovação, Visão Geral e Funis continuam apontando para ele) e ids com caracteres especiais fazem ida e volta', async () => {
   const { buildHash, parseRoute } = await loadRouter();
   for (const id of ['crm:a', 'crm:3f2a-9b', 'crm:com espaço/barra', 'crm:ç?#']) {
     const hash = buildHash({ name: 'crm-record', id });
@@ -454,7 +454,7 @@ test('[CRM-UX-14] abrir "Novo registro" e voltar também preserva o contexto da 
 // EVENTOS: crm:changed e Atualizar — sem polling
 // ---------------------------------------------------------------------------------------------------------------------------------------------
 
-test('[CRM-UX-15] EVENTO crm:changed de outra tela (ex.: promoção na Approval Queue): a lista se atualiza em silêncio, com a gaveta aberta a ficha acompanha, e o botão Atualizar faz o mesmo à mão', async () => {
+test('[CRM-UX-15] EVENTO crm:changed de outra tela (ex.: promoção na Fila de Aprovação): a lista se atualiza em silêncio, com a gaveta aberta a ficha acompanha, e o botão Atualizar faz o mesmo à mão', async () => {
   const { crmRecord } = await loadFixtures();
   const s = await abrir();
   assert.equal(nomes(s).length, 4);
@@ -522,7 +522,7 @@ test('[CRM-UX-17] fora de cena, o evento só marca a lista como desatualizada (n
   s.browser.choose(s.browser.by.label(gaveta(s), 'Novo status'), 'PROPOSAL');
   await clicar(s, botao(s, 'Confirmar mudança'));
   assert.equal(s.eventos.at(-1).action, 'status');
-  assert.equal(celula(s, 'crm:a', 'Status').textContent, 'Proposal', 'o selo da lista acompanha');
+  assert.equal(celula(s, 'crm:a', 'Status').textContent, 'Proposta Enviada', 'o selo da lista acompanha');
 
   assert.equal(s.bus.listenerCount('crm:changed'), 2, 'a tela e o espião do teste');
   s.view.destroy();
@@ -555,12 +555,12 @@ test('[CRM-UX-19] as ações de escrita continuam ACESSÍVEIS na gaveta, no roda
   const rodape = (s) => s.browser.by.tag(s.browser.find(gaveta(s), (el) => el.localName === 'footer'), 'button').map((b) => b.textContent);
   const admin = await abrir();
   await clicar(admin, botao(admin, 'Clínica Alfa'));
-  assert.deepEqual(rodape(admin), ['Editar', 'Mudar status', 'Marcar como Não contatar']);
+  assert.deepEqual(rodape(admin), ['Editar', 'Mudar status', 'Marcar como Não Contatar']);
   assert.equal(admin.browser.find(gaveta(admin), (el) => el.localName === 'footer').hidden, false);
 
   const completo = await abrir({ permissions: ADMIN_DELETE });
   await clicar(completo, botao(completo, 'Clínica Alfa'));
-  assert.deepEqual(rodape(completo), ['Editar', 'Mudar status', 'Marcar como Não contatar', 'Excluir registro']);
+  assert.deepEqual(rodape(completo), ['Editar', 'Mudar status', 'Marcar como Não Contatar', 'Excluir registro']);
 
   const soExcluir = await abrir({ permissions: SO_EXCLUIR });
   await clicar(soExcluir, botao(soExcluir, 'Clínica Alfa'));
@@ -576,7 +576,7 @@ test('[CRM-UX-19] as ações de escrita continuam ACESSÍVEIS na gaveta, no roda
   const bloqueado = await abrir({ items: [crmRecord({ id: 'crm:dnc', empresa: 'Bloqueada', status: 'DO_NOT_CONTACT' })], permissions: ADMIN_DELETE });
   await clicar(bloqueado, botao(bloqueado, 'Bloqueada'));
   assert.deepEqual(rodape(bloqueado), ['Excluir registro'], 'DNC é terminal: sem editar nem mudar status, mas excluir continua possível');
-  assert.match(textoDaTela(bloqueado), /bloqueado como "Não contatar"/);
+  assert.match(textoDaTela(bloqueado), /bloqueado como "Não Contatar"/);
   const bloqueadoSemExcluir = await abrir({ items: [crmRecord({ id: 'crm:dnc', empresa: 'Bloqueada', status: 'DO_NOT_CONTACT' })], permissions: ADMIN });
   await clicar(bloqueadoSemExcluir, botao(bloqueadoSemExcluir, 'Bloqueada'));
   assert.equal(bloqueadoSemExcluir.browser.find(gaveta(bloqueadoSemExcluir), (el) => el.localName === 'footer').hidden, true);
@@ -670,17 +670,17 @@ test('[CRM-UX-22] EXCLUIR dentro da gaveta (só com DELETE:CRM): exige motivo e 
 test('[CRM-UX-23] MUDAR STATUS e NÃO CONTATAR continuam como antes na gaveta: o servidor decide; a lista e o selo acompanham sem F5; DNC deixa o registro bloqueado e a linha com o novo status', async () => {
   const s = await abrir();
   await clicar(s, botao(s, 'Clínica Alfa'));
-  await clicar(s, botao(s, 'Marcar como Não contatar'));
+  await clicar(s, botao(s, 'Marcar como Não Contatar'));
   s.browser.check(s.browser.by.label(gaveta(s), 'Entendo que esta ação é terminal e não pode ser desfeita.'));
-  await clicar(s, botao(s, 'Confirmar: marcar como Não contatar'));
+  await clicar(s, botao(s, 'Confirmar: marcar como Não Contatar'));
   assert.equal(conta(s, 'markCrmDnc'), 1);
-  assert.equal(celula(s, 'crm:a', 'Status').textContent, 'Do Not Contact');
-  assert.match(textoDaTela(s), /Registro marcado como "Não contatar"\. Ele agora está bloqueado\./);
+  assert.equal(celula(s, 'crm:a', 'Status').textContent, 'Não Contatar');
+  assert.match(textoDaTela(s), /Registro marcado como "Não Contatar"\. Ele agora está bloqueado\./);
   assert.equal(botao(s, 'Editar'), null);
   assert.equal(botao(s, 'Mudar status'), null);
   assert.equal(s.eventos.at(-1).action, 'dnc');
   const historico = painelDaAba(s, 'historico').textContent;
-  assert.match(historico, /Contacted → Do Not Contact/);
+  assert.match(historico, /Contatado → Não Contatar/);
 });
 
 test('[CRM-UX-24] ESTÁTICO: a tela não usa innerHTML/eval/fetch/localStorage nem estilo inline, o CSS traz a gaveta, as abas e os cartões em telas pequenas, e o shell chama show/hide do CRM', async () => {

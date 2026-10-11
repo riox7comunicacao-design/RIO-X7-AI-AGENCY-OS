@@ -36,25 +36,25 @@ async function iniciar({ hash = '', me = ME_ADMIN, itens } = {}) {
 const apiCalls = (t) => t.fetchImpl.calls.filter((chamada) => chamada.path.startsWith('/api/')).map((chamada) => `${chamada.method || 'GET'} ${chamada.path}`);
 const tela = (browser) => browser.root.textContent.replace(/\s+/g, ' ');
 
-test('[DASH-CENTRAL-1] o menu lateral é agrupado (Operacional, Prospecção, Comercial, Agentes IA, Gestão), leva a marca e o usuário, e só as áreas que existem são links', async () => {
+test('[DASH-CENTRAL-1] o menu lateral é hierárquico (Visão Geral, CRM, Prospecção, Agentes IA, Gestão), leva a marca e o usuário, e só as áreas que existem são links', async () => {
   const t = await iniciar();
   const lateral = t.browser.by.tag(t.browser.root, 'aside')[0];
   assert.ok(lateral, 'existe um menu lateral');
   assert.equal(t.browser.by.cls(lateral, 'brand-name')[0].textContent, 'RIO X7');
   assert.equal(t.browser.by.cls(lateral, 'brand-sub')[0].textContent, 'AI AGENCY OS');
   assert.deepEqual(
-    t.browser.by.cls(lateral, 'nav-title').map((el) => el.textContent),
-    ['Operacional', 'Prospecção', 'Comercial', 'Agentes IA', 'Gestão']
+    t.browser.by.cls(lateral, 'nav-item').filter((li) => li.className.includes('depth-0')).map((li) => t.browser.by.cls(li, 'nav-label')[0].textContent),
+    ['Visão Geral', 'CRM', 'Prospecção', 'Agentes IA', 'Gestão']
   );
 
   const nav = t.browser.by.tag(lateral, 'nav')[0];
-  assert.deepEqual(t.browser.by.tag(nav, 'a').map((link) => link.textContent), ['Visão Geral', 'CRM', 'Nova Prospecção', 'Histórico', 'Approval Queue', 'Leads Reprovados', 'Funis', 'Central de Agentes', 'Exclusões Permanentes']);
+  assert.deepEqual(t.browser.by.tag(nav, 'a').map((link) => link.textContent), ['Visão Geral', 'CRM', 'Dashboard Comercial', 'Clientes', 'Funis de Vendas', 'Metas e Indicadores', 'Configurações do CRM', 'Serviços', 'Nichos e Cores', 'Gestão de Funis e Etapas', 'Origens dos Leads', 'Nova Prospecção', 'Histórico', 'Fila de Aprovação', 'Leads Reprovados', 'Central de Agentes', 'Exclusões Permanentes']);
 
   // as áreas ainda não implementadas: desabilitadas, marcadas, sem link e sem rota
   const emBreve = t.browser.by.cls(nav, 'soon');
   assert.deepEqual(
     emBreve.map((el) => el.children[0].textContent),
-    ['Agenda', 'Leads', 'Conversas', 'Reuniões', 'Propostas', 'Relatórios', 'Configurações']
+    ['Agenda', 'Conversas', 'Reuniões', 'Propostas', 'Relatórios', 'Configurações gerais']
   );
   for (const item of emBreve) {
     assert.equal(item.localName, 'span', 'não é um link');
@@ -85,7 +85,7 @@ test('[DASH-CENTRAL-2] a Central de Agentes mostra os 14 especialistas, todos "E
   const cartoes = t.browser.by.cls(t.browser.root, 'agent-card');
   assert.deepEqual(
     cartoes.map((cartao) => t.browser.by.tag(cartao, 'h3')[0].textContent),
-    ['Prospector', 'SDR', 'Raio-X Digital', 'Closer', 'Gestor de Tráfego', 'Copywriter', 'Designer', 'Editor de Vídeo', 'Web Developer', 'Administrativo', 'Financeiro', 'Jurídico', 'Customer Success', 'COO / Orquestrador']
+    ['Prospecção', 'Pré-vendas (SDR)', 'Raio-X Digital', 'Fechamento Comercial', 'Gestor de Tráfego', 'Redação Publicitária', 'Design', 'Editor de Vídeo', 'Desenvolvimento Web', 'Administrativo', 'Financeiro', 'Jurídico', 'Sucesso do Cliente', 'Orquestrador']
   );
   for (const cartao of cartoes) {
     assert.equal(t.browser.by.cls(cartao, 'badge')[0].textContent, 'Em desenvolvimento');
@@ -135,9 +135,9 @@ test('[DASH-CENTRAL-4] a atividade recente são os eventos REAIS do histórico d
   assert.equal(linhas.length, 2);
   assert.equal(t.browser.by.tag(linhas[0], 'a')[0].href, '#/crm/registro/crm%3Az');
   assert.match(linhas[0].textContent, /Clínica Zeta/);
-  assert.match(linhas[0].textContent, /Prospecção → Contatado/);
+  assert.match(linhas[0].textContent, /Lead em Prospecção → Contatado/);
   assert.match(linhas[0].textContent, /Breno Bento/);
-  assert.match(linhas[1].textContent, /Registro criado como Prospecção/);
+  assert.match(linhas[1].textContent, /Registro criado como Lead em Prospecção/);
 });
 
 test('[DASH-CENTRAL-5] nenhum dado sensível na tela: nem o token da sessão, nem o authUserId, nem chaves — no painel inteiro e na Central de Agentes', async () => {

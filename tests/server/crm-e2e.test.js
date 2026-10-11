@@ -1,6 +1,6 @@
 // CRM ponta a ponta, num só encadeamento, sobre o código REAL (sem doubles de serviço):
 //
-//   POST /api/prospecting/submit -> lote + Approval Queue -> aprovação/rejeição humana -> promoção -> CRM -> status -> histórico -> DNC
+//   POST /api/prospecting/submit -> lote + Fila de Aprovação -> aprovação/rejeição humana -> promoção -> CRM -> status -> histórico -> DNC
 //
 // O que este arquivo acrescenta aos testes por rota (prospecting-api, promotion-api, crm-api, dashboard-*) e ao funil comercial
 // (crm-commercial-flow): os passos ENCADEADOS. Cada rota já é provada sozinha; aqui o que sai de um passo é a entrada do seguinte, no mesmo
@@ -134,7 +134,7 @@ test('[E2E-1] submit -> fila -> aprovação -> promoção -> CRM -> status -> hi
   assert.deepEqual(Object.keys(naFila()).sort(), [alfa, beta, gama].sort(), 'só os elegíveis entraram na fila (DNC, duplicado e dados insuficientes não)');
   for (const id of [alfa, beta, gama]) assert.equal(naFila()[id].estado, 'AGUARDANDO_REVISAO');
 
-  // --- 3. Approval Queue: leitura e decisão humana -----------------------------------------------------------------------------------
+  // --- 3. Fila de Aprovação: leitura e decisão humana -----------------------------------------------------------------------------------
   r = await chamar(RAFAEL, 'GET', '/api/approvals');
   assert.equal(r.status, 200, 'o closer lê a fila (revisão faz parte do papel dele)');
   assert.equal(r.json.items.length, 3);
@@ -183,7 +183,7 @@ test('[E2E-1] submit -> fila -> aprovação -> promoção -> CRM -> status -> hi
   assert.equal(lead.historico.length, 1);
   assert.deepEqual([lead.historico[0].from, lead.historico[0].to, lead.historico[0].actor], [null, 'PROSPECT', 'HUMAN']);
   assert.equal(lead.historico[0].reviewedBy.userId, BRENO.userId, 'quem promoveu é o dono do token');
-  assert.match(lead.historico[0].motivo, /Promovido da Approval Queue/);
+  assert.match(lead.historico[0].motivo, /Promovido da Approval Queue/); // o texto GUARDADO não é traduzido
   assert.equal(naFila()[alfa].estado, 'APROVADO_PARA_CRM');
   assert.equal(naFila()[alfa].promocao.crmRecordId, alfaCrmId, 'a fila guarda a ligação com o registro');
 
@@ -383,14 +383,14 @@ test('[E2E-4] Dashboard (ADMIN e closer) sobre o estado real: Visão Geral, CRM 
   await irPara(admin.browser, `#/crm/registro/${enc(alfaId)}`);
   assert.equal(admin.browser.by.cls(admin.browser.root, 'overlay-title')[0].textContent, 'Clínica Alfa Teste');
   texto = tela(admin.browser);
-  assert.match(texto, /Contacted/);
-  assert.match(texto, /Promovido da Approval Queue/);
+  assert.match(texto, /Contatado/);
+  assert.match(texto, /Promovido da Fila de Aprovação/);
   assert.match(texto, /Primeiro contato \(teste\)/);
-  for (const botao of ['Editar', 'Mudar status', 'Marcar como Não contatar']) assert.ok(admin.browser.by.button(admin.browser.root, botao), `ADMIN vê "${botao}"`);
+  for (const botao of ['Editar', 'Mudar status', 'Marcar como Não Contatar']) assert.ok(admin.browser.by.button(admin.browser.root, botao), `ADMIN vê "${botao}"`);
 
   await irPara(admin.browser, `#/crm/registro/${enc(bloq.json.item.id)}`);
-  assert.match(tela(admin.browser), /bloqueado como "Não contatar"/);
-  for (const botao of ['Editar', 'Mudar status', 'Marcar como Não contatar']) assert.equal(admin.browser.by.button(admin.browser.root, botao), null, `DNC não mostra "${botao}"`);
+  assert.match(tela(admin.browser), /bloqueado como "Não Contatar"/);
+  for (const botao of ['Editar', 'Mudar status', 'Marcar como Não Contatar']) assert.equal(admin.browser.by.button(admin.browser.root, botao), null, `DNC não mostra "${botao}"`);
 
   await irPara(admin.browser, '#/aprovacoes');
   texto = tela(admin.browser);
@@ -412,7 +412,7 @@ test('[E2E-4] Dashboard (ADMIN e closer) sobre o estado real: Visão Geral, CRM 
   // ---- COMMERCIAL_CLOSER: lê, não escreve ----
   const closer = await subirPainel(env, RAFAEL, `#/crm/registro/${enc(alfaId)}`);
   assert.equal(closer.browser.by.cls(closer.browser.root, 'overlay-title')[0].textContent, 'Clínica Alfa Teste');
-  for (const botao of ['Editar', 'Mudar status', 'Marcar como Não contatar', 'Novo registro']) assert.equal(closer.browser.by.button(closer.browser.root, botao), null, `closer não vê "${botao}"`);
+  for (const botao of ['Editar', 'Mudar status', 'Marcar como Não Contatar', 'Novo registro']) assert.equal(closer.browser.by.button(closer.browser.root, botao), null, `closer não vê "${botao}"`);
   await irPara(closer.browser, '#/aprovacoes');
   assert.equal(closer.browser.by.button(closer.browser.root, 'Promover para CRM'), null, 'o closer não vê "Promover para CRM"');
 

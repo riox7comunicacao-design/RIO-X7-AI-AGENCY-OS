@@ -1,4 +1,4 @@
-// Approval Queue na UX 4.0 (primeira tela de referência): gaveta do lead, busca/ordem/paginação, decisões por confirmação humana, URL do lead
+// Fila de Aprovação na UX 4.0 (primeira tela de referência): gaveta do lead, busca/ordem/paginação, decisões por confirmação humana, URL do lead
 // (link direto, Voltar/Avançar), atualização sem F5 (lista, contadores, menu), erros que preservam o digitado, cliques duplos, processos em segundo
 // plano e o módulo persistente na sessão. DOM de teste e API falsa — nenhum navegador, nenhuma rede, nenhum Claude.
 
@@ -226,7 +226,7 @@ test('[APR-UX-3] sem permissão de revisão a gaveta abre só para LEITURA: nenh
   assert.ok(d);
   assert.equal(botaoDe(d, 'Aprovar'), null);
   assert.equal(botaoDe(d, 'Rejeitar'), null);
-  assert.match(d.textContent, /Sua conta não pode aprovar ou rejeitar prospects\./);
+  assert.match(d.textContent, /Sua conta não pode aprovar ou rejeitar leads\./);
   assert.deepEqual(s.browser.findAll(d, (el) => el.getAttribute('role') === 'tab').map((el) => el.getAttribute('data-tab')), ['resumo', 'contatos', 'fontes', 'historico'], 'sem a aba da pesquisa comercial');
   assert.equal(contagem(s, 'perfil'), 0);
   assert.equal(contagem(s, 'pesquisa'), 0);
@@ -243,7 +243,7 @@ test('[APR-UX-4] APROVAR: nada acontece sem a confirmação; três cliques segui
   await clicar(s, botaoDe(gaveta(s), 'Aprovar'));
   assert.equal(contagem(s, 'approve'), 0, 'abrir a confirmação não aprova nada');
   const c = confirmacao(s);
-  assert.match(c.textContent, /Confirmar aprovação.*Prospect: Empresa 01.*triagem interna/);
+  assert.match(c.textContent, /Confirmar aprovação.*Lead: Empresa 01.*triagem interna/);
   assert.equal(s.browser.document.activeElement.id, 'reason-input');
   const motivo = s.browser.by.label(s.browser.root, 'Motivo (opcional)');
   s.browser.type(motivo, 'Perfil aderente');
@@ -255,8 +255,8 @@ test('[APR-UX-4] APROVAR: nada acontece sem a confirmação; três cliques segui
   assert.deepEqual(s.api.chamadas.filter(([n]) => n === 'approve'), [['approve', 'pid-01', 'Perfil aderente']], 'uma única aprovação');
   assert.equal(confirmacao(s), null);
   assert.equal(gaveta(s), null, 'a gaveta fechou (o lead saiu da lista de pendentes)');
-  assert.deepEqual(avisos(s), ['Prospect aprovado.']);
-  assert.equal(s.browser.by.cls(s.browser.root, 'message')[0].textContent, 'Prospect aprovado.');
+  assert.deepEqual(avisos(s), ['Lead aprovado.']);
+  assert.equal(s.browser.by.cls(s.browser.root, 'message')[0].textContent, 'Lead aprovado.');
   assert.equal(linha(s, 'Empresa 01'), null, 'a lista foi atualizada sem F5');
   assert.match(s.browser.root.textContent, /2 pendentes/, 'o contador também');
   assert.equal(contagem(s, 'list'), 2, 'uma requisição de atualização (sem recarregar a página)');
@@ -280,7 +280,7 @@ test('[APR-UX-5] REJEITAR: motivo obrigatório (sem ele nada é enviado); erro d
   assert.match(confirmacao(s).textContent, /Não foi possível concluir a operação agora/);
   assert.equal(s.browser.by.label(s.browser.root, 'Motivo (obrigatório)').value, 'Fora do perfil', 'o motivo digitado foi preservado');
   assert.ok(gaveta(s), 'a gaveta continua aberta');
-  assert.equal(avisos(s).includes('Prospect rejeitado.'), false, 'nenhum sucesso antes da confirmação do servidor');
+  assert.equal(avisos(s).includes('Lead rejeitado.'), false, 'nenhum sucesso antes da confirmação do servidor');
 
   // ESC com texto digitado: pergunta
   s.browser.press('Escape');
@@ -294,7 +294,7 @@ test('[APR-UX-5] REJEITAR: motivo obrigatório (sem ele nada é enviado); erro d
   assert.equal(contagem(s, 'reject'), 2);
   assert.equal(confirmacao(s), null);
   assert.equal(gaveta(s), null);
-  assert.ok(avisos(s).includes('Prospect rejeitado.'));
+  assert.ok(avisos(s).includes('Lead rejeitado.'));
   assert.match(s.browser.root.textContent, /1 pendente(?!s)/);
 });
 
@@ -308,7 +308,7 @@ test('[APR-UX-6] 409/404 (o lead já foi decidido por outra pessoa): erro claro,
   assert.ok(avisos(s).includes('Este item já foi decidido. A lista foi atualizada.'));
   assert.equal(linha(s, 'Empresa 01'), null);
   assert.equal(contagem(s, 'list'), 2);
-  assert.equal(avisos(s).includes('Prospect aprovado.'), false);
+  assert.equal(avisos(s).includes('Lead aprovado.'), false);
 });
 
 test('[APR-UX-7] PROMOVER (aprovados): confirmação humana, clique duplo envia UMA vez, sucesso só depois da resposta; a gaveta continua aberta e passa a mostrar "Ver no CRM"; o CRM é avisado; erro 409 mostra o motivo fixo do servidor', async () => {
@@ -318,7 +318,7 @@ test('[APR-UX-7] PROMOVER (aprovados): confirmação humana, clique duplo envia 
   assert.equal(botaoDe(gaveta(s), 'Aprovar'), null);
   await clicar(s, botaoDe(gaveta(s), 'Promover para CRM'));
   assert.equal(contagem(s, 'promote'), 0);
-  assert.match(confirmacao(s).textContent, /Este prospect será incluído no CRM e poderá entrar no pipeline comercial\./);
+  assert.match(confirmacao(s).textContent, /Este lead será incluído no CRM e poderá entrar no funil de vendas\./);
   const promover = botaoDe(confirmacao(s), 'Promover');
   s.browser.click(promover);
   s.browser.click(promover);
@@ -328,7 +328,7 @@ test('[APR-UX-7] PROMOVER (aprovados): confirmação humana, clique duplo envia 
   assert.ok(gaveta(s), 'a gaveta segue aberta para mostrar o resultado');
   const ver = s.browser.by.link(gaveta(s), 'Ver no CRM');
   assert.equal(ver.href, `#/crm/registro/${encodeURIComponent('crm:11111111-1111-1111-1111-111111111111')}`);
-  assert.ok(avisos(s).includes('Prospect promovido para o CRM.'));
+  assert.ok(avisos(s).includes('Lead promovido para o CRM.'));
   assert.deepEqual(s.eventos.filter(([tipo]) => tipo !== 'counts').map(([tipo, a]) => [tipo, a]), [['changed', 'promote'], ['crm', 'pid-07']]);
 
   const bloqueado = await abrir({ api: apiFalsa({ aprovados: [aprovado], promover: () => { throw Object.assign(new Error('x'), { status: 409, code: 'PROMOTION_DUPLICATE', serverMessage: 'Este prospect parece já existir no CRM. A promoção foi bloqueada para não duplicar o registro.' }); } }), filtro: 'Aprovados' });
@@ -488,13 +488,13 @@ async function painel({ hash = '#/aprovacoes', itens }) {
   return { browser, fetchImpl, lista };
 }
 const chamadasLista = (t) => t.fetchImpl.calls.filter((c) => c.method === 'GET' && c.path.startsWith('/api/approvals')).length;
-const linkAprovacoes = (t) => t.browser.by.link(t.browser.root, 'Approval Queue');
+const linkAprovacoes = (t) => t.browser.by.link(t.browser.root, 'Fila de Aprovação');
 
 test('[APR-UX-13] NO PAINEL: o menu mostra o contador de pendentes (sem mudar o texto do link) e o atualiza sozinho depois de aprovar; a gaveta abre por URL e, ao trocar de módulo, fecha sem deixar nada inert; busca e página sobrevivem a sair e voltar', async () => {
   const t = await painel({ itens: [lead(1), lead(2), lead(3)] });
-  assert.equal(linkAprovacoes(t).textContent, 'Approval Queue', 'o texto do link não muda');
+  assert.equal(linkAprovacoes(t).textContent, 'Fila de Aprovação', 'o texto do link não muda');
   assert.equal(linkAprovacoes(t).getAttribute('data-count'), '3');
-  assert.equal(linkAprovacoes(t).getAttribute('aria-label'), 'Approval Queue, 3 pendentes');
+  assert.equal(linkAprovacoes(t).getAttribute('aria-label'), 'Fila de Aprovação, 3 pendentes');
   const campo = t.browser.by.label(t.browser.root, 'Buscar lead');
   t.browser.type(campo, 'empresa 0');
 
@@ -511,7 +511,7 @@ test('[APR-UX-13] NO PAINEL: o menu mostra o contador de pendentes (sem mudar o 
   t.browser.click(t.browser.by.button(t.browser.root, 'Confirmar aprovação'));
   await t.browser.flush(10);
   assert.equal(linkAprovacoes(t).getAttribute('data-count'), '2');
-  assert.equal(linkAprovacoes(t).getAttribute('aria-label'), 'Approval Queue, 2 pendentes');
+  assert.equal(linkAprovacoes(t).getAttribute('aria-label'), 'Fila de Aprovação, 2 pendentes');
   assert.equal(t.browser.window.location.hash, '#/aprovacoes', 'o endereço voltou à lista');
 
   // sair para o CRM e voltar: a busca fica; a lista é atualizada em silêncio (uma requisição)

@@ -1,5 +1,5 @@
-// Histórico de prospecções na UX 4.0.3 (mesmo padrão da Approval Queue e de Leads Reprovados): lista com busca/filtro/ordem/paginação e linha inteira clicável,
-// gaveta da prospecção (Resumo, Candidatos, Resultados e Auditoria) com URL, candidatos descartados SEPARADOS dos leads entregues à Approval Queue, REFAZER só
+// Histórico de prospecções na UX 4.0.3 (mesmo padrão da Fila de Aprovação e de Leads Reprovados): lista com busca/filtro/ordem/paginação e linha inteira clicável,
+// gaveta da prospecção (Resumo, Candidatos, Resultados e Auditoria) com URL, candidatos descartados SEPARADOS dos leads entregues à Fila de Aprovação, REFAZER só
 // depois de uma confirmação humana e atualização em segundo plano apenas enquanto há uma prospecção em andamento. DOM de teste e API falsa — nenhum navegador, nenhuma
 // rede, nenhum Claude, nenhuma prospecção real, nenhum dado real.
 
@@ -314,7 +314,7 @@ test('[HIST-UX-5] a gaveta abre na própria tela com as QUATRO abas; o RESUMO mo
   assert.match(resumo.textContent, /Observações do briefingSó clínicas com site/);
   assert.match(resumo.textContent, /Iniciada por.*Rafael Closer \(COMMERCIAL_CLOSER\)/);
   assert.match(resumo.textContent, /Duração01:35/);
-  assert.equal(s.browser.by.link(resumo, 'Abrir a Approval Queue').href, '#/aprovacoes');
+  assert.equal(s.browser.by.link(resumo, 'Abrir a Fila de Aprovação').href, '#/aprovacoes');
   assert.equal(s.browser.by.link(resumo, 'Ver em Leads Reprovados').href, '#/prospeccao/leads-reprovados');
   s.browser.click(s.browser.find(d, (el) => el.getAttribute('data-action') === 'close'));
   await s.browser.flush(4);
@@ -355,7 +355,7 @@ test('[HIST-UX-6] CANDIDATOS: cada um em UM grupo (entregue, já existia, retido
 
   // filtro por grupo, com contagens, lembrado ao reconstruir
   const filtro = s.browser.by.label(painel, 'Mostrar');
-  assert.deepEqual(s.browser.findAll(filtro, (el) => el.localName === 'option').map((el) => el.textContent), ['Todos (6)', 'Entregues à Approval Queue (1)', 'Já estavam na fila (1)', 'Validados, retidos fora da fila (1)', 'Não validados (2)', 'Descartados por exclusão permanente (1)']);
+  assert.deepEqual(s.browser.findAll(filtro, (el) => el.localName === 'option').map((el) => el.textContent), ['Todos (6)', 'Entregues à Fila de Aprovação (1)', 'Já estavam na fila (1)', 'Validados, retidos fora da fila (1)', 'Não validados (2)', 'Descartados por exclusão permanente (1)']);
   s.browser.choose(filtro, 'NAO_VALIDADO');
   await s.browser.flush(4);
   const filtrado = painelDaAba(s, 'candidatos');
@@ -364,19 +364,19 @@ test('[HIST-UX-6] CANDIDATOS: cada um em UM grupo (entregue, já existia, retido
   assert.equal(s.browser.document.activeElement.id, 'jobd-group', 'o foco fica no filtro');
 });
 
-test('[HIST-UX-7] RESULTADOS: o que foi ENTREGUE à Approval Queue, o que foi validado mas RETIDO (e por quê), o que já existia, e o resumo padronizado; nenhuma criação de lead', async () => {
+test('[HIST-UX-7] RESULTADOS: o que foi ENTREGUE à Fila de Aprovação, o que foi validado mas RETIDO (e por quê), o que já existia, e o resumo padronizado; nenhuma criação de lead', async () => {
   const s = await abrir({ api: apiFalsa() });
   await abrirJob(s, J1);
   const painel = await aba(s, 'resultados');
   const titulos = s.browser.findAll(painel, (el) => el.localName === 'h3').map((el) => el.textContent);
-  assert.deepEqual(titulos, ['Entregues à Approval Queue (1)', 'Validados, mas retidos fora da fila (1)', 'Já estavam na fila (1)', 'Resumo padronizado']);
+  assert.deepEqual(titulos, ['Entregues à Fila de Aprovação (1)', 'Validados, mas retidos fora da fila (1)', 'Já estavam na fila (1)', 'Resumo padronizado']);
   const secao = (titulo) => s.browser.find(painel, (el) => el.localName === 'section' && el.textContent.startsWith(titulo));
   assert.match(secao('Entregues').textContent, /Clínica Alfa/);
   assert.doesNotMatch(secao('Entregues').textContent, /Clínica Beta|Clínica Delta/);
   assert.match(secao('Validados, mas retidos').textContent, /Clínica Beta — Dados insuficientes/);
   assert.match(secao('Validados, mas retidos').textContent, /Não viraram lead/);
   assert.match(secao('Já estavam').textContent, /Clínica Gama/);
-  for (const rotulo of ['Solicitados', 'Candidatos processados', 'Na Approval Queue', 'Já existentes', 'Dados insuficientes', 'Tempo', 'Descoberta', 'Validação']) assert.ok(painel.textContent.includes(rotulo), rotulo);
+  for (const rotulo of ['Solicitados', 'Candidatos processados', 'Na Fila de Aprovação', 'Já existentes', 'Dados insuficientes', 'Tempo', 'Descoberta', 'Validação']) assert.ok(painel.textContent.includes(rotulo), rotulo);
   assert.match(painel.textContent, /US\$ 0\.31/);
   assert.deepEqual(s.api.chamadas.map(([n]) => n).filter((n) => !['jobs', 'briefs'].includes(n)), [], 'nenhum lead foi criado, aprovado, rejeitado ou pesquisado');
 
@@ -393,7 +393,7 @@ test('[HIST-UX-8] AUDITORIA: tempos, motor, contagens do pipeline, limites, even
   await abrirJob(s, J1);
   const painel = await aba(s, 'auditoria');
   const titulos = s.browser.findAll(painel, (el) => el.localName === 'h3').map((el) => el.textContent);
-  assert.deepEqual(titulos, ['Tempos', 'Motor de pesquisa', 'Contagens do pipeline', 'Limites da execução', 'Eventos registrados', 'Identificação']);
+  assert.deepEqual(titulos, ['Tempos', 'Motor de pesquisa', 'Contagens da prospecção', 'Limites da execução', 'Eventos registrados', 'Identificação']);
   const t = painel.textContent;
   assert.match(t, /Descoberta41\.5s/);
   assert.match(t, /Custo informado pelo motor.*US\$ 0\.31/);
@@ -516,7 +516,7 @@ test('[HIST-UX-12] GAVETA ABERTA durante a atualização: o conteúdo muda SÓ s
   assert.match(linha(s, J1).textContent, /Concluída/);
   await aba(s, 'resumo');
   assert.doesNotMatch(painelDaAba(s, 'resumo').textContent, /Esta lista se atualiza sozinha/);
-  assert.ok(s.browser.by.link(painelDaAba(s, 'resumo'), 'Abrir a Approval Queue'));
+  assert.ok(s.browser.by.link(painelDaAba(s, 'resumo'), 'Abrir a Fila de Aprovação'));
 
   api.mem.jobs = [job(2)];
   await s.view.refresh();

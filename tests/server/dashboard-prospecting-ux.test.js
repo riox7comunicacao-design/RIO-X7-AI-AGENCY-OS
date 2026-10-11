@@ -354,7 +354,7 @@ test('[PROS-UX-7] a ETAPA 3 (Revisar e iniciar): resumo legível das escolhas, a
   assert.match(resumo, /Leads novos desejados4/);
   assert.match(resumo, /Máximo de candidatos examinados12/);
   assert.match(resumo, /ObservaçõesSó com site/);
-  assert.match(porId(s, 'pros-explain').textContent, /Leads desejados são os NOVOS leads que você quer receber na Approval Queue\. Candidatos examinados são as empresas que a pesquisa analisa/);
+  assert.match(porId(s, 'pros-explain').textContent, /Leads desejados são os NOVOS leads que você quer receber na Fila de Aprovação\. Candidatos examinados são as empresas que a pesquisa analisa/);
   assert.match(porId(s, 'pros-consumption').textContent, /Claude Code instalado neste computador e pode consumir o seu limite de uso/);
   assert.match(painelAba(s, 'nova').textContent, /não aprova leads, não promove nada ao CRM e não inicia nenhum contato/);
   // voltar, mudar e avançar: o resumo reflete
@@ -786,7 +786,7 @@ test('[PROS-UX-20] EM ANDAMENTO mostra SÓ execuções realmente ativas: sem exe
   assert.ok(porId(sessao, 'pros-run-empty'), 'terminou: o vazio diz que nada está em andamento');
   assert.equal(sessao.browser.by.cls(sessao.browser.root, 'run-last-title')[0].textContent, 'Execução finalizada nesta sessão');
   assert.match(tela(sessao), /PROSPECÇÃO CONCLUÍDA/);
-  assert.match(tela(sessao), /1 de 3 lead\(s\) solicitado\(s\) chegaram à Approval Queue/);
+  assert.match(tela(sessao), /1 de 3 lead\(s\) solicitado\(s\) chegaram à Fila de Aprovação/);
   assert.equal(porId(sessao, 'pros-open-approvals').getAttribute('href'), '#/aprovacoes');
   assert.equal(sessao.ag.pendentes().length, 0, 'terminada: nada a acompanhar');
   await clicar(sessao, porId(sessao, 'pros-run-dismiss'));
@@ -835,7 +835,7 @@ test('[PROS-UX-22] o ACOMPANHAMENTO só roda para job em andamento, com a tela �
   await s.ag.rodar();
   await s.browser.flush(10);
   assert.match(tela(s), /PROSPECÇÃO CONCLUÍDA/);
-  assert.ok(avisos(s).some((t) => /Prospecção concluída: 1 lead\(s\) chegaram à Approval Queue/.test(t)));
+  assert.ok(avisos(s).some((t) => /Prospecção concluída: 1 lead\(s\) chegaram à Fila de Aprovação/.test(t)));
   assert.equal(s.ag.pendentes().length, 0, 'terminou: o acompanhamento parou');
   assert.equal(abaBotao(s, 'andamento').textContent, 'Em andamento', 'o contador da aba voltou a zero');
   assert.ok(conta(s, 'briefs') > briefsAntes, 'a lista de briefings foi atualizada ao terminar');
@@ -1041,7 +1041,7 @@ test('[PROS-UX-28] NADA começa sozinho e as PERMISSÕES: abrir, trocar de aba, 
   assert.equal(s.ag.pendentes().length, 0);
 
   const sem = await abrir({ api: apiFalsa(), canPropose: false });
-  assert.match(tela(sem), /Seu perfil não pode usar o Workbench de Prospecção\./);
+  assert.match(tela(sem), /Seu perfil não pode usar a Nova Prospecção\./);
   assert.equal(porId(sem, 'pros-form'), null);
   assert.equal(conta(sem, 'briefs'), 0, 'sem permissão nada é pedido');
 });

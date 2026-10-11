@@ -40,7 +40,7 @@ export const ESTADO_LABELS = Object.freeze({
   APROVADO_PARA_CRM: 'Aprovado (triagem)',
   REJEITADO: 'Rejeitado',
   DUPLICADO: 'Duplicado',
-  DNC: 'Não contatar (DNC)',
+  DNC: 'Não Contatar',
   DADOS_INSUFICIENTES: 'Dados insuficientes',
   EXPIRADO: 'Expirado',
 });
@@ -62,7 +62,7 @@ const DUPLICITY_LABELS = Object.freeze({
 });
 const DNC_LABELS = Object.freeze({
   NAO_ENCONTRADO: 'Não encontrado no CRM',
-  BLOQUEADO: 'Bloqueado (não contatar)',
+  BLOQUEADO: 'Bloqueado (Não Contatar)',
   NAO_VERIFICADO: 'Não verificado (CRM indisponível)',
 });
 
@@ -145,17 +145,17 @@ export function messageForError(error) {
 const PROMOTION_DONE = Object.freeze(['CRIADO', 'RECONCILIADO']);
 const PROMOTION_ALREADY = 'JA_PROMOVIDO';
 
-export const PROMOTED_MESSAGE = 'Prospect promovido para o CRM.';
-export const ALREADY_PROMOTED_MESSAGE = 'Este prospect já foi promovido para o CRM.';
-export const PROMOTE_CONFIRM_TEXT = 'Este prospect será incluído no CRM e poderá entrar no pipeline comercial.';
+export const PROMOTED_MESSAGE = 'Lead promovido para o CRM.';
+export const ALREADY_PROMOTED_MESSAGE = 'Este lead já foi promovido para o CRM.';
+export const PROMOTE_CONFIRM_TEXT = 'Este lead será incluído no CRM e poderá entrar no funil de vendas.';
 
 // A mensagem de uma promoção que falhou. Os 409 trazem uma mensagem FIXA do servidor (duplicidade, restrição de contato,
 // não aprovado...), só usada quando o código é de promoção — nada de texto interno. 401 devolve null (o login cuida).
 export function promotionMessageForError(error) {
   const status = error && typeof error.status === 'number' ? error.status : 0;
   if (status === 401) return null;
-  if (status === 403) return 'Sua conta não pode promover prospects para o CRM.';
-  if (status === 404) return 'Este prospect não foi encontrado. A lista foi atualizada.';
+  if (status === 403) return 'Sua conta não pode promover leads para o CRM.';
+  if (status === 404) return 'Este lead não foi encontrado. A lista foi atualizada.';
   if (status === 409) {
     const fromServer = error && typeof error.code === 'string' && error.code.startsWith('PROMOTION_') ? textOf(error.serverMessage) : '';
     return fromServer || 'A promoção foi bloqueada.';
@@ -550,7 +550,7 @@ export function createApprovalsView({ document, root, api, canReview, canPromote
           indicator('Verificação', badge(identityText(snapshot.statusIdentidade, { withReason: true }), TONES.identity[identityStatus(snapshot.statusIdentidade)])),
           indicator('Dados', badge(dataText(snapshot.statusDados), TONES.data[textOf(snapshot.statusDados)])),
           indicator('Duplicidade', badge(duplicityText(snapshot.statusDuplicidade, snapshot.matchedOn), TONES.duplicity[textOf(snapshot.statusDuplicidade)])),
-          indicator('DNC', badge(dncText(snapshot.statusDNC), TONES.dnc[textOf(snapshot.statusDNC)]))
+          indicator('Não Contatar', badge(dncText(snapshot.statusDNC), TONES.dnc[textOf(snapshot.statusDNC)]))
         )
       ),
       section(document, 'Responsável', ownerCard(ownerLine)),
@@ -677,13 +677,13 @@ export function createApprovalsView({ document, root, api, canReview, canPromote
         h(document, 'p', { className: 'muted note', text: 'Aprovar é uma triagem interna: não cria registro no CRM nem autoriza contato.' })
       );
     }
-    if (pending) return h(document, 'p', { className: 'muted', text: 'Sua conta não pode aprovar ou rejeitar prospects.' });
+    if (pending) return h(document, 'p', { className: 'muted', text: 'Sua conta não pode aprovar ou rejeitar leads.' });
     if (item.estado === APPROVED_ESTADO) {
       const recordId = promotedRecordId(item);
       if (recordId !== null) {
         return h(document, 'div', { className: 'promotion' }, h(document, 'p', { className: 'muted', text: ALREADY_PROMOTED_MESSAGE }), canReadCrm ? h(document, 'a', { className: 'btn secondary', href: buildHash({ name: 'crm-record', id: recordId }), text: 'Ver no CRM' }) : null);
       }
-      if (!canPromote) return h(document, 'p', { className: 'muted', text: 'Sua conta não pode promover prospects para o CRM.' });
+      if (!canPromote) return h(document, 'p', { className: 'muted', text: 'Sua conta não pode promover leads para o CRM.' });
       return h(document, 'div', { className: 'actions' }, h(document, 'button', { type: 'button', className: 'btn primary', text: 'Promover para CRM', disabled: state.busy, onclick: () => openPromotion() }));
     }
     return h(document, 'p', { className: 'muted', text: 'Este item já foi decidido ou está bloqueado.' });
@@ -700,7 +700,7 @@ export function createApprovalsView({ document, root, api, canReview, canPromote
     overlays.openConfirm({
       key: `decision:${item.prospectId}`,
       title: approving ? 'Confirmar aprovação' : 'Confirmar rejeição',
-      message: `Prospect: ${textOf(item.empresa) || 'Sem nome'}`,
+      message: `Lead: ${textOf(item.empresa) || 'Sem nome'}`,
       detail: approving ? 'A aprovação é uma triagem interna: não cria registro no CRM nem autoriza contato.' : undefined,
       tone: approving ? 'primary' : 'danger',
       confirmLabel: approving ? 'Confirmar aprovação' : 'Confirmar rejeição',
@@ -747,7 +747,7 @@ export function createApprovalsView({ document, root, api, canReview, canPromote
     }
     // confirmado pelo servidor: só agora há sucesso para mostrar
     state.busy = false;
-    notify('success', mode === 'approve' ? 'Prospect aprovado.' : 'Prospect rejeitado.');
+    notify('success', mode === 'approve' ? 'Lead aprovado.' : 'Lead rejeitado.');
     if (bus) bus.publish('approvals:changed', { action: mode, prospectId: item.prospectId });
     closeDrawer({ silent: false, reason: 'decided' });
     load({ quiet: true });
@@ -765,7 +765,7 @@ export function createApprovalsView({ document, root, api, canReview, canPromote
     overlays.openConfirm({
       key: `promotion:${item.prospectId}`,
       title: 'Promover para o CRM',
-      message: `Prospect: ${textOf(item.empresa) || 'Sem nome'}`,
+      message: `Lead: ${textOf(item.empresa) || 'Sem nome'}`,
       detail: PROMOTE_CONFIRM_TEXT,
       confirmLabel: 'Promover',
       busyLabel: 'Promovendo…',
@@ -843,7 +843,7 @@ export function createApprovalsView({ document, root, api, canReview, canPromote
       return;
     }
     if (state.items.length === 0) {
-      fill(listRegion, emptyState(document, { title: approved ? 'Nenhum prospect aprovado.' : 'Nenhum prospect aguardando revisão.', text: approved ? 'Os leads aprovados na triagem aparecem aqui até serem promovidos.' : 'Quando uma prospecção entregar leads, eles aparecem aqui para revisão.' }));
+      fill(listRegion, emptyState(document, { title: approved ? 'Nenhum lead aprovado.' : 'Nenhum lead aguardando revisão.', text: approved ? 'Os leads aprovados na triagem aparecem aqui até serem promovidos.' : 'Quando uma prospecção entregar leads, eles aparecem aqui para revisão.' }));
       fill(pagerRegion);
       return;
     }
@@ -891,7 +891,7 @@ export function createApprovalsView({ document, root, api, canReview, canPromote
       document,
       'div',
       { className: 'table-wrap' },
-      h(document, 'table', { className: 'list queue' }, h(document, 'caption', { className: 'visually-hidden', text: approved ? 'Prospects aprovados' : 'Prospects aguardando revisão' }), h(document, 'thead', {}, head), h(document, 'tbody', {}, ...body))
+      h(document, 'table', { className: 'list queue' }, h(document, 'caption', { className: 'visually-hidden', text: approved ? 'Leads aprovados' : 'Leads aguardando revisão' }), h(document, 'thead', {}, head), h(document, 'tbody', {}, ...body))
     );
   }
 

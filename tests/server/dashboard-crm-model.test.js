@@ -20,15 +20,18 @@ const nbsp = (text) => text.replace(/\u00a0/g, ' ');
 // ===========================================================================
 // Vocabulário: o Dashboard × o domínio
 // ===========================================================================
-test('[DASH-MODEL-1] os 13 status do Dashboard são exatamente os do domínio, na mesma ordem, com os mesmos rótulos (CRM_STATUS e CRM_STATUS_LABEL)', async () => {
+test('[DASH-MODEL-1] os 13 status do Dashboard são exatamente os do domínio, na mesma ordem (CRM_STATUS); os RÓTULOS são os do catálogo em português — o domínio segue com os seus nomes em inglês, que nunca são mostrados', async () => {
   const { CRM_STATUSES, statusLabel, statusTone } = await loadModel();
+  const { STATUS_LABELS } = await import('../../dashboard/i18n/pt-BR.mjs');
   assert.deepEqual(CRM_STATUSES.map((status) => status.value), Object.values(domain.CRM_STATUS));
   for (const status of CRM_STATUSES) {
-    assert.equal(status.label, domain.CRM_STATUS_LABEL[status.value], status.value);
+    assert.equal(status.label, STATUS_LABELS[status.value], status.value);
+    assert.ok(Object.hasOwn(domain.CRM_STATUS_LABEL, status.value), `o domínio ainda tem o status ${status.value}`);
+    assert.doesNotMatch(status.label, /^(Prospect|Research|Contacted|Responded|Qualified Prospect|Qualification|Meeting Scheduled|Meeting Completed|Proposal|Negotiation|Won|Lost|Do Not Contact)$/, `${status.value}: rótulo em inglês`);
     assert.ok(['neutral', 'info', 'warn', 'ok', 'bad'].includes(status.tone), `tom inválido em ${status.value}`);
     assert.equal(Object.isFrozen(status), true);
   }
-  assert.equal(statusLabel('WON'), 'Won');
+  assert.equal(statusLabel('WON'), 'Fechada');
   assert.equal(statusLabel('ALGO_NOVO'), 'ALGO_NOVO', 'um status desconhecido aparece como veio');
   for (const estranho of [undefined, null, {}, []]) assert.equal(statusLabel(estranho), '—');
   assert.equal(statusTone('DO_NOT_CONTACT'), 'bad');
@@ -40,7 +43,7 @@ test('[DASH-MODEL-2] os campos do Dashboard são exatamente os 31 graváveis do 
   assert.equal(WRITABLE_KEYS.length, new Set(WRITABLE_KEYS).size, 'nenhum campo repetido');
   assert.deepEqual([...WRITABLE_KEYS].sort(), [...domain.CRM_WRITABLE_FIELDS].sort());
   assert.equal(WRITABLE_KEYS.length, 31);
-  assert.deepEqual(FIELD_GROUPS.map((group) => group.title), ['Identificação', 'Contato', 'Presença digital', 'Comercial', 'Pipeline', 'Próxima ação']);
+  assert.deepEqual(FIELD_GROUPS.map((group) => group.title), ['Identificação', 'Contato', 'Presença digital', 'Comercial', 'Funil de Vendas', 'Próxima ação']);
   const managed = FIELD_GROUPS.flatMap((group) => group.fields).filter((entry) => entry.managed === true).map((entry) => entry.key);
   assert.deepEqual(managed.sort(), ['dataDeEntrada', 'status']);
   for (const key of managed) assert.ok(domain.CRM_MANAGED_FIELDS.includes(key), `${key} é gerenciado pelo domínio`);
@@ -196,7 +199,7 @@ test('[DASH-MODEL-7] formatação: dinheiro em reais, datas, valores exibidos po
   assert.equal(nbsp(displayValue(campo('valorProposta'), { valorProposta: 2500.5 })), 'R$ 2.500,50');
   assert.equal(displayValue(campo('valorProposta'), { valorProposta: 'não é número' }), '');
   assert.equal(displayValue(campo('dataDaProximaAcao'), { dataDaProximaAcao: '2026-10-01' }), '01/10/2026');
-  assert.equal(displayValue(campo('status'), { status: 'WON' }), 'Won');
+  assert.equal(displayValue(campo('status'), { status: 'WON' }), 'Fechada');
   assert.equal(displayValue(campo('empresa'), { empresa: { hostil: true } }), '');
   assert.equal(displayValue(campo('empresa'), {}), '');
   assert.equal(displayValue(campo('empresa'), null), '');
@@ -277,7 +280,7 @@ test('[DASH-MODEL-10] mensagens de erro: 401 é da sessão (null); 403, 404, 409
   assert.match(messageForCrmError(erro(403, 'FORBIDDEN', 'Esta conta não possui acesso a esta área.')), /não tem permissão/);
   assert.match(messageForCrmError(erro(404, 'NOT_FOUND', 'Item não encontrado.')), /não encontrado/);
   assert.match(messageForCrmError(erro(409, 'DUPLICATE_RECORD', 'x')), /Já existe um registro com esta identidade/);
-  assert.match(messageForCrmError(erro(409, 'DNC_BLOCKED', 'x')), /bloqueada como "Não contatar"/);
+  assert.match(messageForCrmError(erro(409, 'DNC_BLOCKED', 'x')), /bloqueada como "Não Contatar"/);
   assert.match(messageForCrmError(erro(409, 'RECORD_LOCKED', 'x')), /não pode mais ser alterado/);
   assert.match(messageForCrmError(erro(409, 'INVALID_TRANSITION', 'x')), /mudança de status não é permitida/);
   // Integridade CRM ↔ Card (Etapa "Funis 2 — correção final").
@@ -307,9 +310,9 @@ test('[DASH-MODEL-11] histórico: só o que a API devolveu, do mais recente para
   ];
   const linhas = describeHistory(entradas, roleLabel);
   assert.equal(linhas.length, 3);
-  assert.deepEqual(linhas.map((linha) => linha.transition), ['Contacted → Won', 'Prospect → Contacted', 'Registro criado como Prospect'], 'do mais recente ao mais antigo');
+  assert.deepEqual(linhas.map((linha) => linha.transition), ['Contatado → Fechada', 'Lead em Prospecção → Contatado', 'Registro criado como Lead em Prospecção'], 'do mais recente ao mais antigo');
   assert.equal(linhas[0].who, 'Sistema');
-  assert.equal(linhas[1].who, 'Rafael Closer (Closer comercial)');
+  assert.equal(linhas[1].who, 'Rafael Closer (Vendedor)');
   assert.equal(linhas[1].reason, 'Primeiro contato');
   assert.equal(linhas[2].who, 'Breno Bento (Administrador)');
   assert.match(linhas[2].when, /10\/09\/2026/);
@@ -329,7 +332,7 @@ test('[DASH-MODEL-11] histórico: só o que a API devolveu, do mais recente para
 test('[DASH-MODEL-12] format.mjs: roleLabel só traduz role CONHECIDA (nunca uma propriedade herdada do objeto), e as URLs seguem seguras', async () => {
   const { roleLabel, ROLE_LABELS, safeHttpUrl } = await import('../../dashboard/format.mjs');
   assert.equal(roleLabel('ADMIN'), 'Administrador');
-  assert.equal(roleLabel('COMMERCIAL_CLOSER'), 'Closer comercial');
+  assert.equal(roleLabel('COMMERCIAL_CLOSER'), 'Vendedor');
   assert.equal(roleLabel('OUTRA'), 'OUTRA');
   for (const herdada of ['constructor', 'toString', '__proto__', 'hasOwnProperty']) assert.equal(roleLabel(herdada), herdada);
   for (const naoTexto of [undefined, null, 42, {}]) assert.equal(roleLabel(naoTexto), '');

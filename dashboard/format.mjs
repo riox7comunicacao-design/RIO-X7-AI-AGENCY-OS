@@ -5,6 +5,8 @@
 // views/approvals.mjs sem mudar o comportamento (as telas continuam exportando os mesmos nomes; os testes de
 // tests/server/static-security.test.js seguem valendo).
 
+import { ROLE_LABELS as PT_ROLE_LABELS } from './i18n/pt-BR.mjs';
+
 // Um valor de dado vira texto só se for um texto, número ou booleano; qualquer outra coisa (objeto, lista) é ignorada.
 export function textOf(value) {
   if (typeof value === 'string') return value.trim();
@@ -47,7 +49,7 @@ export function formatDateTime(value) {
 }
 
 // Os nomes que a pessoa vê para cada role. Só apresentação: quem decide o que a role pode é o servidor.
-export const ROLE_LABELS = Object.freeze({ ADMIN: 'Administrador', COMMERCIAL_CLOSER: 'Closer comercial' });
+export const ROLE_LABELS = PT_ROLE_LABELS;
 
 // Só uma role CONHECIDA (propriedade própria) ganha o nome amigável; qualquer outra é mostrada como veio (texto).
 export function roleLabel(role) {

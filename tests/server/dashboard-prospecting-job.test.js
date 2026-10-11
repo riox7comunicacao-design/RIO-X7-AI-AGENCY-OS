@@ -139,7 +139,7 @@ test('[DASH-JOB-1] com o brief PRONTO aparece "Iniciar prospecção…"; clicar 
   assert.equal(t.proximaAgendada().ms, POLL, 'a consulta de status é agendada (intervalo moderado)');
 });
 
-test('[DASH-JOB-2] a tela consulta /status periodicamente: mostra etapa, contagens e tempo; ao CONCLUIR mostra "PROSPECÇÃO CONCLUÍDA", o resultado e o link para a Approval Queue, e PARA de consultar', async () => {
+test('[DASH-JOB-2] a tela consulta /status periodicamente: mostra etapa, contagens e tempo; ao CONCLUIR mostra "PROSPECÇÃO CONCLUÍDA", o resultado e o link para a Fila de Aprovação, e PARA de consultar', async () => {
   const t = await montar({
     respostas: [
       job({ currentStep: 'VALIDANDO', progress: 55, candidatesDiscovered: 6, candidatesValidated: 2, candidatesRejected: 1, elapsedMs: 75000 }),
@@ -160,12 +160,12 @@ test('[DASH-JOB-2] a tela consulta /status periodicamente: mostra etapa, contage
 
   await t.rodarAgendada();
   assert.match(t.tela(), /PROSPECÇÃO CONCLUÍDA/);
-  assert.match(t.tela(), /3 de 3 lead\(s\) solicitado\(s\) chegaram à Approval Queue/);
+  assert.match(t.tela(), /3 de 3 lead\(s\) solicitado\(s\) chegaram à Fila de Aprovação/);
   assert.doesNotMatch(t.tela(), /não foi\(ram\) entregue\(s\)/, 'nada ficou fora da fila');
   assert.equal(t.browser.by.id(t.browser.root, 'pros-cancel-job'), null, 'sem cancelar depois de terminar');
   const link = t.browser.by.id(t.browser.root, 'pros-open-approvals');
   assert.equal(link.getAttribute('href'), '#/aprovacoes');
-  assert.equal(link.textContent, 'Abrir a Approval Queue');
+  assert.equal(link.textContent, 'Abrir a Fila de Aprovação');
   assert.deepEqual(t.browser.by.cls(t.browser.root, 'step').map((li) => li.className), ['step done', 'step done', 'step done']);
   assert.equal(t.proximaAgendada(), undefined, 'terminou: nenhuma nova consulta agendada');
 });
@@ -176,7 +176,7 @@ test('[DASH-JOB-3] PARCIAL: "PROSPECÇÃO PARCIAL" diz que a quantidade não foi
   await iniciar(parcial);
   await parcial.rodarAgendada();
   assert.match(parcial.tela(), /PROSPECÇÃO PARCIAL/);
-  assert.match(parcial.tela(), /2 de 3 lead\(s\) solicitado\(s\) chegaram à Approval Queue/);
+  assert.match(parcial.tela(), /2 de 3 lead\(s\) solicitado\(s\) chegaram à Fila de Aprovação/);
   assert.match(parcial.tela(), /nenhuma empresa fraca foi incluída para completar/);
   assert.ok(parcial.browser.by.id(parcial.browser.root, 'pros-open-approvals'));
 
@@ -192,7 +192,7 @@ test('[DASH-JOB-3] PARCIAL: "PROSPECÇÃO PARCIAL" diz que a quantidade não foi
   await selecionar(retidos);
   await iniciar(retidos);
   await retidos.rodarAgendada();
-  assert.match(retidos.tela(), /Nenhum lead chegou à Approval Queue/);
+  assert.match(retidos.tela(), /Nenhum lead chegou à Fila de Aprovação/);
   assert.match(retidos.tela(), /3 empresa\(s\) comprovada\(s\) pela pesquisa, mas 3 não foi\(ram\) entregue\(s\) à fila/);
   assert.equal(retidos.browser.by.id(retidos.browser.root, 'pros-open-approvals'), null, 'sem lead na fila não há o que abrir');
 });
@@ -260,7 +260,7 @@ test('[DASH-JOB-7] brief em RASCUNHO não tem o botão; sem permissão a tela ne
   assert.equal(pesquisando.browser.by.id(pesquisando.browser.root, 'pros-start-job'), null, 'PESQUISANDO não inicia um novo job (máquina de estados explícita)');
 
   const sem = await montar({ canPropose: false });
-  assert.match(sem.tela(), /não pode usar o Workbench/);
+  assert.match(sem.tela(), /não pode usar a Nova Prospecção/);
   assert.equal(sem.browser.by.id(sem.browser.root, 'pros-start-job'), null);
 });
 
@@ -384,7 +384,7 @@ test('[DASH-JOB-REP] reposição (2.2): durante a execução mostra os leads ent
   assert.equal(tile(t, 'Entregues à fila').textContent, 'Entregues à fila2de 3 solicitados');
   assert.equal(t.browser.by.id(t.browser.root, 'pros-job-meta').textContent, 'Tempo decorrido: 00:00 · Reposições realizadas: 1');
   await t.rodarAgendada();
-  assert.match(t.tela(), /2 de 3 lead\(s\) solicitado\(s\) chegaram à Approval Queue/);
+  assert.match(t.tela(), /2 de 3 lead\(s\) solicitado\(s\) chegaram à Fila de Aprovação/);
   assert.match(t.browser.by.id(t.browser.root, 'pros-job-meta').textContent, /Reposições realizadas: 2/);
 
   const sem = await montar({ respostas: [job({ status: 'CONCLUIDO', currentStep: 'FINALIZADO', progress: 100, candidatesValidated: 3, leadsNaFila: 3, lote: { loteId: 'lote:w', validadosPeloMotor: 3, naFila: 3, foraDaFila: 0 } })] });
@@ -409,7 +409,7 @@ test('[DASH-JOB-3.0] resultado padronizado (na gaveta), máximo de candidatos (p
   const resumoNaTela = t.browser.by.id(gaveta, 'pros-job-summary');
   assert.ok(resumoNaTela, 'o resumo padronizado está na aba Resultados');
   const texto = resumoNaTela.textContent.replace(/\s+/g, ' ');
-  for (const rotulo of ['Solicitados', 'Candidatos processados', 'Validados', 'Na Approval Queue', 'Já existentes', 'Dados insuficientes', 'Duplicados', 'DNC', 'Reposições', 'Tempo', 'Custo das pesquisas']) assert.ok(texto.includes(rotulo), rotulo);
+  for (const rotulo of ['Solicitados', 'Candidatos processados', 'Validados', 'Na Fila de Aprovação', 'Já existentes', 'Dados insuficientes', 'Duplicados', 'Não Contatar', 'Reposições', 'Tempo', 'Custo das pesquisas']) assert.ok(texto.includes(rotulo), rotulo);
   assert.equal(t.browser.by.id(t.browser.root, 'pros-cancel-job'), null, 'sem CANCELAR depois de terminar');
   t.browser.press('Escape');
   await t.browser.flush(4);

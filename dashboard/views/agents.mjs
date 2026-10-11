@@ -13,20 +13,20 @@ export const AGENT_STATUS = 'Em desenvolvimento';
 // [nome, descrição] — a ordem da apresentação.
 export const AGENTS = Object.freeze(
   [
-    ['Prospector', 'Pesquisa e descoberta de empresas.'],
-    ['SDR', 'Qualificação e abordagem comercial.'],
+    ['Prospecção', 'Pesquisa e descoberta de empresas.'],
+    ['Pré-vendas (SDR)', 'Qualificação e abordagem comercial.'],
     ['Raio-X Digital', 'Diagnóstico comercial e digital.'],
-    ['Closer', 'Apoio à preparação e condução comercial.'],
+    ['Fechamento Comercial', 'Apoio à preparação e condução comercial.'],
     ['Gestor de Tráfego', 'Meta Ads, Google Ads e TikTok Ads.'],
-    ['Copywriter', 'Copies, anúncios e mensagens.'],
-    ['Designer', 'Criativos e identidade visual.'],
+    ['Redação Publicitária', 'Textos, anúncios e mensagens.'],
+    ['Design', 'Criativos e identidade visual.'],
     ['Editor de Vídeo', 'Reels, vídeos e conteúdos.'],
-    ['Web Developer', 'Sites e landing pages.'],
+    ['Desenvolvimento Web', 'Sites e páginas de captura.'],
     ['Administrativo', 'Processos e organização interna.'],
     ['Financeiro', 'Controle e análise financeira.'],
     ['Jurídico', 'Apoio documental e jurídico.'],
-    ['Customer Success', 'Onboarding, acompanhamento e retenção.'],
-    ['COO / Orquestrador', 'Coordenação dos especialistas.'],
+    ['Sucesso do Cliente', 'Integração, acompanhamento e retenção.'],
+    ['Orquestrador', 'Coordenação dos especialistas.'],
   ].map(([name, description]) => Object.freeze({ name, description }))
 );
 

@@ -152,7 +152,7 @@ export function createProspectingHistoryView({ document, root, api, navigate = (
       document,
       'section',
       { className: 'approvals', id: 'prospecting-history', 'aria-labelledby': 'history-title' },
-      pageHeader(document, { title: 'Histórico de prospecções', titleId: 'history-title', subtitle: 'Cada prospecção com o que foi encontrado, validado, entregue à Approval Queue e descartado. O histórico é preservado: refazer cria uma prospecção nova.', actions: [refreshButton] }),
+      pageHeader(document, { title: 'Histórico de prospecções', titleId: 'history-title', subtitle: 'Cada prospecção com o que foi encontrado, validado, entregue à Fila de Aprovação e descartado. O histórico é preservado: refazer cria uma prospecção nova.', actions: [refreshButton] }),
       h(document, 'div', { className: 'toolbar toolbar-stacked' }, h(document, 'div', { className: 'toolbar-row toolbar-tools' }, search.element, statusSelect.element, sorter.element, counterEl)),
       messageRegion,
       h(document, 'div', { className: 'list-card' }, listRegion, pagerRegion)
@@ -411,7 +411,7 @@ export function createProspectingHistoryView({ document, root, api, navigate = (
       return;
     }
     if (total === 0) {
-      fill(listRegion, h(document, 'div', { id: 'history-empty' }, emptyState(document, { title: 'Nenhuma prospecção executada ainda.', text: 'Quando uma prospecção automática for executada, ela aparece aqui com tudo o que foi encontrado, validado, entregue à Approval Queue e descartado.', action: h(document, 'a', { className: 'btn secondary', href: buildHash({ name: 'prospecting' }), text: 'Ir para Nova Prospecção' }) })));
+      fill(listRegion, h(document, 'div', { id: 'history-empty' }, emptyState(document, { title: 'Nenhuma prospecção executada ainda.', text: 'Quando uma prospecção automática for executada, ela aparece aqui com tudo o que foi encontrado, validado, entregue à Fila de Aprovação e descartado.', action: h(document, 'a', { className: 'btn secondary', href: buildHash({ name: 'prospecting' }), text: 'Ir para Nova Prospecção' }) })));
       fill(pagerRegion);
       return;
     }

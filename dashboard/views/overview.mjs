@@ -12,6 +12,7 @@
 import { h, fill } from '../dom.mjs';
 import { textOf, formatDateTime } from '../format.mjs';
 import { buildHash } from '../router.mjs';
+import { STATUS_LABELS } from '../i18n/pt-BR.mjs';
 import { countByStatus, messageForCrmError, statusLabel, statusTone } from '../crm-model.mjs';
 
 const MAX_ACTIVITY = 8;
@@ -19,21 +20,7 @@ const MAX_ACTIVITY = 8;
 // Os NOMES, em português, dos status do CRM — só para a Visão Geral. Os identificadores (PROSPECT, WON...) são os do domínio e
 // não mudam; o CRM e as Aprovações continuam mostrando os rótulos de crm-model.mjs. Um status que não esteja aqui cai no
 // rótulo de crm-model (nunca fica em branco).
-export const OVERVIEW_STATUS_LABELS = Object.freeze({
-  PROSPECT: 'Prospecção',
-  RESEARCH: 'Pesquisa',
-  QUALIFIED_PROSPECT: 'Prospect Qualificado',
-  CONTACTED: 'Contatado',
-  RESPONDED: 'Respondeu',
-  QUALIFICATION: 'Qualificação',
-  MEETING_SCHEDULED: 'Reunião Agendada',
-  MEETING_COMPLETED: 'Reunião Realizada',
-  PROPOSAL: 'Proposta',
-  NEGOTIATION: 'Negociação',
-  WON: 'Ganho',
-  LOST: 'Perdido',
-  DO_NOT_CONTACT: 'Não Contatar',
-});
+export const OVERVIEW_STATUS_LABELS = STATUS_LABELS;
 
 export function overviewStatusLabel(value) {
   return Object.prototype.hasOwnProperty.call(OVERVIEW_STATUS_LABELS, value) ? OVERVIEW_STATUS_LABELS[value] : statusLabel(value);
@@ -121,7 +108,7 @@ export function createOverviewView({ document, root, api, me, permissions, now =
     const total = crm.items.length;
     return [
       kpi({ id: 'leads', title: 'Leads no CRM', value: total, sub: plural(total, 'registro no CRM', 'registros no CRM'), link: { href: buildHash({ name: 'crm-list' }), text: 'Abrir CRM' } }),
-      kpi({ id: 'prospects', title: 'Prospects no pipeline', value: counts.get('PROSPECT') || 0, sub: `registros no status ${overviewStatusLabel('PROSPECT')}` }),
+      kpi({ id: 'prospects', title: 'Leads em Prospecção', value: counts.get('PROSPECT') || 0, sub: `registros no status ${overviewStatusLabel('PROSPECT')}` }),
     ];
   }
 
@@ -135,7 +122,7 @@ export function createOverviewView({ document, root, api, me, permissions, now =
         id: 'approvals',
         title: 'Aprovações pendentes',
         value: approvals.count,
-        sub: plural(approvals.count, 'prospect aguardando revisão', 'prospects aguardando revisão'),
+        sub: plural(approvals.count, 'lead aguardando revisão', 'leads aguardando revisão'),
         link: { href: buildHash({ name: 'approvals' }), text: 'Abrir aprovações' },
       }),
     ];
@@ -178,7 +165,7 @@ export function createOverviewView({ document, root, api, me, permissions, now =
     return el(
       'section',
       { className: 'card panel-card', 'aria-labelledby': 'overview-pipeline-title' },
-      el('h3', { id: 'overview-pipeline-title', text: 'Pipeline comercial' }),
+      el('h3', { id: 'overview-pipeline-title', text: 'Funil de Vendas' }),
       el('p', { className: 'muted', text: 'Registros do CRM em cada status.' }),
       body
     );

@@ -92,7 +92,7 @@ const sohAdministrador = (usuario) => ({ userId: usuario.userId, name: usuario.n
 // ===========================================================================
 // ADMIN: o ciclo inteiro pela interface, contra a API real
 // ===========================================================================
-test('[DASH-FULL-1] ADMIN pela interface, contra a API REAL: criar -> editar -> mudar status -> marcar "Não contatar" — cada passo chega ao arquivo do CRM com a identidade do TOKEN (nunca a da tela) e a ficha mostra o que o servidor devolveu', async (t) => {
+test('[DASH-FULL-1] ADMIN pela interface, contra a API REAL: criar -> editar -> mudar status -> marcar "Não Contatar" — cada passo chega ao arquivo do CRM com a identidade do TOKEN (nunca a da tela) e a ficha mostra o que o servidor devolveu', async (t) => {
   const s = await subir(t, { hash: '#/crm/novo' });
   await preencher(s, { empresa: 'Clínica Nova Teste', site: 'nova.example.test', telefone: '24 90000-0003', cidade: 'Petrópolis', valorProposta: '1500,50', responsavel: 'Rafael' });
   s.browser.choose(s.browser.by.label(escopo(s), 'Status inicial'), 'QUALIFIED_PROSPECT');
@@ -129,27 +129,27 @@ test('[DASH-FULL-1] ADMIN pela interface, contra a API REAL: criar -> editar -> 
   s.browser.choose(s.browser.by.label(escopo(s), 'Novo status'), 'CONTACTED');
   s.browser.type(s.browser.by.label(escopo(s), 'Motivo (opcional)'), 'Primeiro contato feito');
   await clicar(s, 'Confirmar mudança');
-  assert.match(textoDaTela(s.browser), /Status alterado para Contacted\./);
+  assert.match(textoDaTela(s.browser), /Status alterado para Contatado\./);
   const movido = doArquivo(s, criado.id);
   assert.equal(movido.status, 'CONTACTED');
   assert.deepEqual(movido.historico.at(-1).reviewedBy, sohAdministrador(BRENO));
   assert.equal(movido.historico.at(-1).motivo, 'Primeiro contato feito');
   const itensDoHistorico = s.browser.by.tag(s.browser.by.cls(s.browser.root, 'timeline')[0], 'li').map((li) => li.textContent);
   assert.equal(itensDoHistorico.length, 2);
-  assert.match(itensDoHistorico[0], /Qualified Prospect → Contacted/);
+  assert.match(itensDoHistorico[0], /Lead Qualificado → Contatado/);
   assert.match(itensDoHistorico[0], /Breno Bento \(Administrador\)/);
 
-  // marcar "Não contatar"
-  await clicar(s, 'Marcar como Não contatar');
-  await clicar(s, 'Confirmar: marcar como Não contatar');
+  // marcar "Não Contatar"
+  await clicar(s, 'Marcar como Não Contatar');
+  await clicar(s, 'Confirmar: marcar como Não Contatar');
   assert.match(textoDaTela(s.browser), /Confirme que você entende que a ação é terminal/, 'sem a confirmação nada acontece');
   assert.equal(doArquivo(s, criado.id).status, 'CONTACTED');
   s.browser.check(s.browser.by.label(escopo(s), 'Entendo que esta ação é terminal e não pode ser desfeita.'));
   s.browser.type(s.browser.by.label(escopo(s), 'Motivo (opcional)'), 'Pediu para não ser contatado');
-  await clicar(s, 'Confirmar: marcar como Não contatar');
+  await clicar(s, 'Confirmar: marcar como Não Contatar');
   assert.equal(doArquivo(s, criado.id).status, 'DO_NOT_CONTACT');
-  assert.match(textoDaTela(s.browser), /bloqueado como "Não contatar"/);
-  for (const botao of ['Editar', 'Mudar status', 'Marcar como Não contatar']) assert.equal(s.browser.by.button(s.browser.root, botao), null, `${botao} saiu`);
+  assert.match(textoDaTela(s.browser), /bloqueado como "Não Contatar"/);
+  for (const botao of ['Editar', 'Mudar status', 'Marcar como Não Contatar']) assert.equal(s.browser.by.button(s.browser.root, botao), null, `${botao} saiu`);
 });
 
 test('[DASH-FULL-2] as regras do domínio chegam à tela pela API real: transição proibida (409 INVALID_TRANSITION), identidade duplicada (409 DUPLICATE_RECORD) e identidade BLOQUEADA (409 DNC_BLOCKED) mostram a frase certa, sem gravar nada', async (t) => {
@@ -176,7 +176,7 @@ test('[DASH-FULL-2] as regras do domínio chegam à tela pela API real: transiç
   assert.match(textoDaTela(s.browser), /Já existe um registro com esta identidade \(mesmo site, telefone ou Instagram\)/);
   await preencher(s, { site: BETA.site });
   await clicar(s, 'Criar registro');
-  assert.match(textoDaTela(s.browser), /Esta identidade está bloqueada como "Não contatar"/);
+  assert.match(textoDaTela(s.browser), /Esta identidade está bloqueada como "Não Contatar"/);
   assert.equal(gravados(s).length, antes, 'nada foi gravado');
   assert.equal(s.browser.by.label(escopo(s), 'Empresa (obrigatório)').value, 'Outra Empresa', 'o formulário continua preenchido');
 
@@ -189,7 +189,7 @@ test('[DASH-FULL-2] as regras do domínio chegam à tela pela API real: transiç
   await crm.markDoNotContact(s.repositorio, alfa.id, { actor: 'HUMAN', reviewedBy: { userId: 'user-outro', name: 'Outro', role: 'ADMIN' }, motivo: 'por baixo' });
   s.browser.type(s.browser.by.label(escopo(s), 'Cidade'), 'Outra cidade');
   await clicar(s, 'Salvar alterações');
-  assert.match(textoDaTela(s.browser), /bloqueado como "Não contatar"/);
+  assert.match(textoDaTela(s.browser), /bloqueado como "Não Contatar"/);
   assert.equal(doArquivo(s, alfa.id).cidade, ALFA.cidade, 'a edição foi recusada');
   assert.equal(s.browser.by.button(s.browser.root, 'Editar'), null);
 });
@@ -229,9 +229,9 @@ test('[DASH-FULL-4] tudo o que a interface enviou ao servidor tem só campos do 
   await clicar(s, 'Mudar status');
   s.browser.choose(s.browser.by.label(escopo(s), 'Novo status'), 'RESPONDED');
   await clicar(s, 'Confirmar mudança');
-  await clicar(s, 'Marcar como Não contatar');
+  await clicar(s, 'Marcar como Não Contatar');
   s.browser.check(s.browser.by.label(escopo(s), 'Entendo que esta ação é terminal e não pode ser desfeita.'));
-  await clicar(s, 'Confirmar: marcar como Não contatar');
+  await clicar(s, 'Confirmar: marcar como Não Contatar');
 
   const { WRITABLE_KEYS } = await import('../../dashboard/crm-model.mjs');
   const escritas = s.fetchImpl.calls.filter((chamada) => chamada.method !== 'GET');
@@ -268,7 +268,7 @@ test('[DASH-FULL-5] COMMERCIAL_CLOSER pela interface: lista, busca, filtra e abr
   s.browser.click(s.browser.by.button(s.browser.root, 'Clínica Alfa Teste'));
   await s.browser.flush();
   assert.equal(tituloDaFicha(s), 'Clínica Alfa Teste');
-  for (const botao of ['Editar', 'Mudar status', 'Marcar como Não contatar']) assert.equal(s.browser.by.button(s.browser.root, botao), null, botao);
+  for (const botao of ['Editar', 'Mudar status', 'Marcar como Não Contatar']) assert.equal(s.browser.by.button(s.browser.root, botao), null, botao);
   assert.equal(s.fetchImpl.calls.filter((chamada) => chamada.method !== 'GET').length, 0);
 
   // A tela é forçada a mostrar os botões (como se as permissões locais estivessem adulteradas): o SERVIDOR recusa.
@@ -289,9 +289,9 @@ test('[DASH-FULL-5] COMMERCIAL_CLOSER pela interface: lista, busca, filtra e abr
   await browserForcado.flush();
   browserForcado.click(browserForcado.by.button(browserForcado.root, 'Descartar alterações')); // cancelar com texto digitado pergunta antes
   await browserForcado.flush();
-  browserForcado.click(browserForcado.by.button(browserForcado.root, 'Marcar como Não contatar'));
+  browserForcado.click(browserForcado.by.button(browserForcado.root, 'Marcar como Não Contatar'));
   browserForcado.check(browserForcado.by.label(browserForcado.root, 'Entendo que esta ação é terminal e não pode ser desfeita.'));
-  browserForcado.click(browserForcado.by.button(browserForcado.root, 'Confirmar: marcar como Não contatar'));
+  browserForcado.click(browserForcado.by.button(browserForcado.root, 'Confirmar: marcar como Não Contatar'));
   await browserForcado.flush();
   assert.match(browserForcado.root.textContent, /Sua conta não tem permissão para esta ação\./);
   const recusas = s.fetchImpl.responses.filter((resposta) => resposta.method !== 'GET');

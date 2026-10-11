@@ -1,4 +1,4 @@
-// Approval Queue — UX 4.0.1 (refinamento visual): linha inteira clicável (mouse e teclado), resumo do lead sem informação repetida e com hierarquia
+// Fila de Aprovação — UX 4.0.1 (refinamento visual): linha inteira clicável (mouse e teclado), resumo do lead sem informação repetida e com hierarquia
 // (identidade → situação comercial → responsável), nomes e cargos longos, estrutura da gaveta (cabeçalho e rodapé fixos, só o miolo rola) e as
 // regras de CSS que sustentam isso em telas menores. DOM de teste e API falsa: nenhum navegador, nenhuma rede, nenhum Claude.
 
@@ -193,7 +193,7 @@ test('[APR-REF-4] o RESUMO segue a hierarquia (Identidade → Situação comerci
   assert.equal(s.browser.by.cls(painel, 'lead-badges').length, 0, 'e a fileira de selos repetidos');
 
   const texto = painel.textContent;
-  for (const rotulo of ['Estado na fila', 'Verificação', 'Dados', 'Duplicidade', 'DNC', 'Tipo de lead', 'Pesquisado em', 'Hipótese de oportunidade', 'Observações']) {
+  for (const rotulo of ['Estado na fila', 'Verificação', 'Dados', 'Duplicidade', 'Não Contatar', 'Tipo de lead', 'Pesquisado em', 'Hipótese de oportunidade', 'Observações']) {
     assert.equal(ocorrencias(texto, rotulo), 1, `"${rotulo}" aparece uma vez`);
   }
   assert.equal(ocorrencias(texto, 'Aguardando revisão'), 1, 'o estado aparece uma vez');

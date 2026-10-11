@@ -1,6 +1,6 @@
-// Leads Reprovados na UX 4.0.2 (mesmo padrão da Approval Queue): lista com busca/ordem/paginação e linha inteira clicável, gaveta do lead (abas, decisão
+// Leads Reprovados na UX 4.0.2 (mesmo padrão da Fila de Aprovação): lista com busca/ordem/paginação e linha inteira clicável, gaveta do lead (abas, decisão
 // com motivo/data/responsável, nada afirmado sobre dado ausente), URL do lead (link direto, Voltar/Avançar), RECONSIDERAR com confirmação humana
-// (uma única requisição, sucesso só depois do servidor, erro que preserva o digitado) e atualização sem F5, inclusive o contador da Approval Queue.
+// (uma única requisição, sucesso só depois do servidor, erro que preserva o digitado) e atualização sem F5, inclusive o contador da Fila de Aprovação.
 // DOM de teste e API falsa — nenhum navegador, nenhuma rede, nenhum Claude, nenhuma operação real.
 
 const test = require('node:test');
@@ -226,7 +226,7 @@ test('[REJ-UX-3] FILTROS por categoria vêm do servidor: o botão ativo fica mar
   const itens = [rej(1), rej(2, { estado: 'DUPLICADO', reaprovavel: false, motivo: 'Duplicado' }), rej(3, { estado: 'DADOS_INSUFICIENTES', reaprovavel: false })];
   const api = apiFalsa({ itens });
   const s = await abrir({ api });
-  for (const rotulo of ['Todos', 'Reprovados', 'Dados insuficientes', 'Duplicados', 'DNC', 'Expirados']) assert.ok(botao(s, rotulo), rotulo);
+  for (const rotulo of ['Todos', 'Reprovados', 'Dados insuficientes', 'Duplicados', 'Não Contatar', 'Expirados']) assert.ok(botao(s, rotulo), rotulo);
   assert.equal(botao(s, 'Todos').getAttribute('aria-pressed'), 'true');
   s.browser.type(s.browser.by.label(s.browser.root, 'Buscar lead'), 'lead');
   await clicar(s, botao(s, 'Duplicados'));
@@ -270,7 +270,7 @@ test('[REJ-UX-4] a GAVETA abre na própria tela com as cinco abas e a DECISÃO e
   assert.match(decisao.textContent, /Reprovado/);
   assert.match(decisao.textContent, /\d{2}\/\d{2}\/2026/, 'a data da decisão');
   assert.match(decisao.textContent, /Decidido porRafael Closer \(COMMERCIAL_CLOSER\)/);
-  assert.match(decisao.textContent, /Job de origemJOB-20261007-001/);
+  assert.match(decisao.textContent, /Prospecção de origemJOB-20261007-001/);
   assert.match(decisao.textContent, /Reconsiderações anteriores0/);
   // cada informação uma vez: nada de cartões repetindo a lista
   assert.equal(ocorrencias(resumo.textContent, 'Sem fit com o serviço'), 1);
@@ -297,7 +297,7 @@ test('[REJ-UX-5] DADOS AUSENTES não são afirmados: sem motivo, data, responsá
   assert.match(resumo.textContent, /Motivo não registrado\./);
   assert.match(resumo.textContent, /Data não registrada/);
   assert.match(resumo.textContent, /Decidido porNão registrado/, 'humano sem identidade informada: nunca inventa uma pessoa');
-  assert.doesNotMatch(resumo.textContent, /Job de origem/);
+  assert.doesNotMatch(resumo.textContent, /Prospecção de origem/);
   assert.match(resumo.textContent, /Sem análise comercial/);
   assert.doesNotMatch(resumo.textContent, /Confirmado|Pendente/);
   assert.match(painelDaAba(s, 'contatos').textContent, /Sem contatos informados/);
@@ -340,7 +340,7 @@ test('[REJ-UX-7] DNC e leads que não são reprovados por humano NUNCA têm o bo
   const s = await abrir({ api: apiFalsa({ itens: [rej(1, { estado: 'DNC', reaprovavel: false, origemDaDecisao: 'SISTEMA', reprovadoPor: null, motivo: 'DNC' }), rej(2, { estado: 'DUPLICADO', reaprovavel: false, origemDaDecisao: 'SISTEMA', reprovadoPor: null }), rej(3)] }) });
   await abrirLead(s, 'Lead 01');
   assert.equal(s.browser.by.id(s.browser.root, 'btn-reapprove'), null);
-  assert.match(gaveta(s).textContent, /Este contato está em DNC \(restrição de contato\)\. Não é uma rejeição comercial e não pode ser reconsiderado\./);
+  assert.match(gaveta(s).textContent, /Este contato está como Não Contatar \(restrição de contato\)\. Não é uma rejeição comercial e não pode ser reconsiderado\./);
   s.browser.press('Escape');
   await s.browser.flush(4);
   await abrirLead(s, 'Lead 02');
@@ -442,7 +442,7 @@ test('[REJ-UX-10] A GAVETA ABERTA durante a atualização: o conteúdo se atuali
 // RECONSIDERAR
 // ---------------------------------------------------------------------------------------------------------------------------------------------
 
-test('[REJ-UX-11] RECONSIDERAR: abrir a confirmação não envia nada; ela mostra o MOTIVO ORIGINAL e o que a ação NÃO faz; clique triplo envia UMA vez; sucesso só depois do servidor; lista, contador e aviso atualizam sem F5 e o Approval Queue é avisado — sem aprovar nem promover', async () => {
+test('[REJ-UX-11] RECONSIDERAR: abrir a confirmação não envia nada; ela mostra o MOTIVO ORIGINAL e o que a ação NÃO faz; clique triplo envia UMA vez; sucesso só depois do servidor; lista, contador e aviso atualizam sem F5 e o Fila de Aprovação é avisado — sem aprovar nem promover', async () => {
   const s = await abrir({ api: apiFalsa({ itens: [rej(1), rej(2), rej(3)] }) });
   assert.match(s.browser.root.textContent, /3 leads/);
   await abrirLead(s, 'Lead 01');
@@ -463,11 +463,11 @@ test('[REJ-UX-11] RECONSIDERAR: abrir a confirmação não envia nada; ela mostr
   assert.deepEqual(s.api.chamadas.filter(([n]) => n === 'reaprovar'), [['reaprovar', 'rej-01', 'Cliente pediu']], 'uma única reconsideração');
   assert.equal(confirmacao(s), null);
   assert.equal(gaveta(s), null, 'a gaveta fechou: o lead saiu desta lista');
-  assert.deepEqual(avisos(s), ['Lead 01 voltou para a Approval Queue (aguardando revisão). Nada foi enviado ao CRM.']);
+  assert.deepEqual(avisos(s), ['Lead 01 voltou para a Fila de Aprovação (aguardando revisão). Nada foi enviado ao CRM.']);
   assert.equal(botao(s, 'Lead 01') === null || s.browser.by.button(s.browser.root, 'Lead 01') === null, true, 'a lista foi atualizada sem F5');
   assert.match(s.browser.root.textContent, /2 leads/, 'o contador também');
   assert.equal(conta(s, 'lista'), 2, 'uma requisição de atualização');
-  assert.deepEqual(s.eventos, [['reconsider', 'rej-01']], 'a Approval Queue é avisada');
+  assert.deepEqual(s.eventos, [['reconsider', 'rej-01']], 'a Fila de Aprovação é avisada');
   assert.equal(conta(s, 'completar'), 0, 'nenhuma pesquisa começou');
 });
 
@@ -507,7 +507,7 @@ test('[REJ-UX-13] ERROS: falha do servidor mantém a confirmação aberta e o TE
   assert.equal(s.browser.by.label(s.browser.root, 'Justificativa (opcional)').value, 'texto importante', 'o texto digitado ficou');
   assert.equal(s.browser.by.button(confirmacao(s), 'Reconsiderar').disabled, false, 'dá para tentar de novo');
   assert.ok(gaveta(s));
-  assert.equal(avisos(s).some((t) => /voltou para a Approval Queue/.test(t)), false, 'nenhum sucesso antes da confirmação do servidor');
+  assert.equal(avisos(s).some((t) => /voltou para a Fila de Aprovação/.test(t)), false, 'nenhum sucesso antes da confirmação do servidor');
 
   modo = 'barreira';
   await clicar(s, s.browser.by.button(confirmacao(s), 'Reconsiderar'));
@@ -515,8 +515,8 @@ test('[REJ-UX-13] ERROS: falha do servidor mantém a confirmação aberta e o TE
   assert.equal(s.browser.by.label(s.browser.root, 'Justificativa (opcional)').value, 'texto importante');
   assert.ok(botao(s, 'Lead 01'), 'o lead continua reprovado na lista');
   assert.equal(conta(s, 'lista'), 2, 'o 409 atualiza a lista');
-  assert.equal(avisos(s).some((t) => /voltou para a Approval Queue/.test(t)), false);
-  assert.deepEqual(s.eventos, [], 'a Approval Queue não foi avisada de nada');
+  assert.equal(avisos(s).some((t) => /voltou para a Fila de Aprovação/.test(t)), false);
+  assert.deepEqual(s.eventos, [], 'a Fila de Aprovação não foi avisada de nada');
 
   modo = 'sumiu';
   await clicar(s, s.browser.by.button(confirmacao(s), 'Reconsiderar'));
@@ -529,7 +529,7 @@ test('[REJ-UX-13] ERROS: falha do servidor mantém a confirmação aberta e o TE
   await abrirLead(s, 'Lead 02');
   await clicar(s, s.browser.by.id(s.browser.root, 'btn-reapprove'));
   await clicar(s, s.browser.by.button(confirmacao(s), 'Reconsiderar'));
-  assert.ok(avisos(s).some((t) => /Lead 02 voltou para a Approval Queue/.test(t)));
+  assert.ok(avisos(s).some((t) => /Lead 02 voltou para a Fila de Aprovação/.test(t)));
 });
 
 test('[REJ-UX-14] COMPLETAR PESQUISA continua uma ação humana separada: só corre a consulta de estado (e só com a gaveta aberta), nada de pesquisa sozinha; fechar a gaveta PARA a consulta; reconsiderar nunca executa pesquisa', async () => {
@@ -587,9 +587,9 @@ async function painel({ hash = '#/prospeccao/leads-reprovados', role = 'ADMIN', 
 const linkMenu = (t, nome) => t.browser.by.link(t.browser.root, nome);
 const chamadasDe = (t, metodo, prefixo) => t.fetchImpl.calls.filter((c) => c.method === metodo && c.path.startsWith(prefixo)).length;
 
-test('[REJ-UX-15] NO PAINEL: o módulo é persistente (busca e filtro sobrevivem a trocar de módulo), a gaveta tem URL, e RECONSIDERAR atualiza a lista E o contador da Approval Queue no menu sem F5 — uma leitura da fila, nenhuma pesquisa', async () => {
+test('[REJ-UX-15] NO PAINEL: o módulo é persistente (busca e filtro sobrevivem a trocar de módulo), a gaveta tem URL, e RECONSIDERAR atualiza a lista E o contador da Fila de Aprovação no menu sem F5 — uma leitura da fila, nenhuma pesquisa', async () => {
   const t = await painel();
-  assert.equal(linkMenu(t, 'Approval Queue').getAttribute('data-count'), null, 'a fila ainda não foi carregada: nenhum contador inventado');
+  assert.equal(linkMenu(t, 'Fila de Aprovação').getAttribute('data-count'), null, 'a fila ainda não foi carregada: nenhum contador inventado');
   const campo = t.browser.by.label(t.browser.root, 'Buscar lead');
   t.browser.type(campo, 'lead 0');
   t.browser.click(t.browser.by.button(t.browser.root, 'Lead 01'));
@@ -605,16 +605,16 @@ test('[REJ-UX-15] NO PAINEL: o módulo é persistente (busca e filtro sobrevivem
   await t.browser.flush(14);
   assert.equal(t.browser.window.location.hash, '#/prospeccao/leads-reprovados', 'o endereço voltou à lista');
   assert.equal(t.browser.by.button(t.browser.root, 'Lead 01'), null, 'a lista foi atualizada sem F5');
-  assert.equal(linkMenu(t, 'Approval Queue').getAttribute('data-count'), '2', 'o contador da fila acompanha (1 pendente + o lead reconsiderado)');
-  assert.equal(linkMenu(t, 'Approval Queue').textContent, 'Approval Queue', 'o texto do link não muda');
+  assert.equal(linkMenu(t, 'Fila de Aprovação').getAttribute('data-count'), '2', 'o contador da fila acompanha (1 pendente + o lead reconsiderado)');
+  assert.equal(linkMenu(t, 'Fila de Aprovação').textContent, 'Fila de Aprovação', 'o texto do link não muda');
   assert.equal(chamadasDe(t, 'POST', '/api/leads/reprovados/rej-01/reaprovar'), 1);
   assert.equal(chamadasDe(t, 'POST', '/api/approvals'), 0, 'nada foi aprovado');
   assert.equal(t.fetchImpl.calls.some((c) => c.path.includes('completar-pesquisa') && c.method === 'POST'), false, 'nenhuma pesquisa');
 
   // sair e voltar: a busca e a lista persistem; a fila mostra o lead devolvido
-  t.browser.click(linkMenu(t, 'Approval Queue'));
+  t.browser.click(linkMenu(t, 'Fila de Aprovação'));
   await t.browser.flush(10);
-  assert.ok(t.browser.by.button(t.browser.root, 'Lead 01'), 'o lead reconsiderado está na Approval Queue');
+  assert.ok(t.browser.by.button(t.browser.root, 'Lead 01'), 'o lead reconsiderado está na Fila de Aprovação');
   t.browser.click(linkMenu(t, 'Leads Reprovados'));
   await t.browser.flush(10);
   assert.equal(t.browser.by.label(t.browser.root, 'Buscar lead').value, 'lead 0', 'a busca sobreviveu a trocar de módulo');
@@ -680,7 +680,7 @@ test('[REJ-UX-19] a BARRA de ferramentas tem duas linhas: categorias em cima; bu
   assert.match(linhas[0].className, /toolbar-filters/);
   assert.match(linhas[1].className, /toolbar-tools/);
   const categorias = s.browser.findAll(linhas[0], (el) => el.localName === 'button').map((el) => el.textContent);
-  assert.deepEqual(categorias, ['Todos', 'Reprovados', 'Dados insuficientes', 'Duplicados', 'DNC', 'Expirados']);
+  assert.deepEqual(categorias, ['Todos', 'Reprovados', 'Dados insuficientes', 'Duplicados', 'Não Contatar', 'Expirados']);
   assert.ok(s.browser.by.label(linhas[1], 'Buscar lead'), 'a busca fica na segunda linha');
   assert.ok(s.browser.by.label(linhas[1], 'Ordenar por'), 'a ordem também');
   const contador = s.browser.find(linhas[1], (el) => /\btoolbar-count\b/.test(el.className));
@@ -695,13 +695,13 @@ test('[REJ-UX-19] a BARRA de ferramentas tem duas linhas: categorias em cima; bu
   assert.ok(celular.includes('.toolbar-tools .search-field, .toolbar-tools .select-field { flex: 1 1 100%; }'));
 });
 
-test('[REJ-UX-20] o ESTADO VAZIO explica que a área reúne leads que passaram pela Approval Queue e saíram dela, e ORIENTA para o Histórico de prospecções quem procura candidatos descartados — sem misturar as duas populações nem chamar nenhum endpoint novo', async () => {
+test('[REJ-UX-20] o ESTADO VAZIO explica que a área reúne leads que passaram pela Fila de Aprovação e saíram dela, e ORIENTA para o Histórico de prospecções quem procura candidatos descartados — sem misturar as duas populações nem chamar nenhum endpoint novo', async () => {
   const s = await abrir({ api: apiFalsa({ itens: [] }) });
   const vazio = s.browser.by.id(s.browser.root, 'rejected-empty');
   assert.ok(vazio);
   const texto = vazio.textContent;
   assert.ok(texto.includes('Nenhum lead nesta categoria.'));
-  assert.ok(texto.includes('passaram pela Approval Queue e saíram dela'));
+  assert.ok(texto.includes('passaram pela Fila de Aprovação e saíram dela'));
   assert.ok(texto.includes('reprovados por uma pessoa, expirados ou bloqueados'));
   assert.ok(texto.includes('Candidatos que a prospecção descartou ANTES de chegar à fila'));
   assert.ok(texto.includes('ficam no Histórico de prospecções, não aqui'));

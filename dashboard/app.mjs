@@ -8,6 +8,7 @@
 
 import { startDashboard } from './main.mjs';
 import { browserNavigation } from './router.mjs';
+import { createVisualPreferences } from './preferences.mjs';
 
 startDashboard({
   document,
@@ -15,4 +16,6 @@ startDashboard({
   fetchImpl: (...args) => globalThis.fetch(...args),
   sdk: globalThis.supabase,
   navigation: browserNavigation(globalThis),
+  // a única preferência lembrada no navegador: o menu lateral está recolhido? (preferences.mjs)
+  preferences: createVisualPreferences(globalThis),
 });

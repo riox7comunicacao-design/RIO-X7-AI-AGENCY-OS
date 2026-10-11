@@ -23,7 +23,7 @@ const indicadores = (browser) =>
       .filter((cartao) => browser.by.cls(cartao, 'stat').length > 0)
       .map((cartao) => [browser.by.tag(cartao, 'h3')[0].textContent, browser.by.cls(cartao, 'stat')[0].textContent])
   );
-const ZEROS = Object.freeze({ 'Leads no CRM': '0', 'Prospects no pipeline': '0', 'Aprovações pendentes': '0', 'Reuniões': '0', 'Propostas': '0', 'Negociações': '0' });
+const ZEROS = Object.freeze({ 'Leads no CRM': '0', 'Leads em Prospecção': '0', 'Aprovações pendentes': '0', 'Reuniões': '0', 'Propostas': '0', 'Negociações': '0' });
 
 async function montar({ permissions = TUDO, items = [], approvals = [], me = { name: 'Breno Bento' }, now = MANHA } = {}) {
   const { createOverviewView } = await import('../../dashboard/views/overview.mjs');
@@ -46,28 +46,28 @@ test('[DASH-OVERVIEW-1] mostra o total do CRM, a contagem só dos status que exi
   const t = await montar({ items: itens, approvals: [{ prospectId: 'a' }, { prospectId: 'b' }] });
   await t.abrir();
 
-  assert.deepEqual(indicadores(t.browser), { 'Leads no CRM': '4', 'Prospects no pipeline': '1', 'Aprovações pendentes': '2', 'Reuniões': '0', 'Propostas': '0', 'Negociações': '0' });
+  assert.deepEqual(indicadores(t.browser), { 'Leads no CRM': '4', 'Leads em Prospecção': '1', 'Aprovações pendentes': '2', 'Reuniões': '0', 'Propostas': '0', 'Negociações': '0' });
   const linhas = t.browser.by.cls(t.browser.root, 'pipeline-row').map((li) => [t.browser.by.cls(li, 'badge')[0].textContent, t.browser.by.cls(li, 'pipeline-count')[0].textContent]);
-  assert.equal(linhas.length, 13, 'o pipeline mostra os 13 status REAIS do domínio, na ordem do funil');
-  assert.deepEqual(linhas.map(([nome]) => nome), ['Prospecção', 'Pesquisa', 'Prospect Qualificado', 'Contatado', 'Respondeu', 'Qualificação', 'Reunião Agendada', 'Reunião Realizada', 'Proposta', 'Negociação', 'Ganho', 'Perdido', 'Não Contatar']);
-  assert.deepEqual(Object.fromEntries(linhas.filter(([, n]) => n !== '0')), { 'Prospecção': '1', Contatado: '2', Ganho: '1' });
+  assert.equal(linhas.length, 13, 'o funil de vendas mostra os 13 status REAIS do domínio, na ordem do funil');
+  assert.deepEqual(linhas.map(([nome]) => nome), ['Lead em Prospecção', 'Em Pesquisa', 'Lead Qualificado', 'Contatado', 'Respondeu', 'Em Qualificação', 'Reunião Agendada', 'Reunião Realizada', 'Proposta Enviada', 'Em Negociação', 'Fechada', 'Perdida', 'Não Contatar']);
+  assert.deepEqual(Object.fromEntries(linhas.filter(([, n]) => n !== '0')), { 'Lead em Prospecção': '1', Contatado: '2', Fechada: '1' });
   assert.match(texto(t.browser), /Bom dia, Breno Bento/);
   assert.match(texto(t.browser), /Central operacional da Rio X7\./);
   assert.match(texto(t.browser), /registros no CRM/);
-  assert.match(texto(t.browser), /prospects aguardando revisão/);
+  assert.match(texto(t.browser), /leads aguardando revisão/);
   assert.equal(t.browser.by.link(t.browser.root, 'Abrir CRM').href, '#/crm');
   assert.equal(t.browser.by.link(t.browser.root, 'Abrir aprovações').href, '#/aprovacoes');
   assert.equal(t.api.callsOf('listCrm').length, 1);
   assert.equal(t.api.callsOf('listApprovals').length, 1);
 });
 
-test('[DASH-OVERVIEW-2] singular e vazio: "1 registro no CRM", "1 prospect aguardando revisão"; sem registros diz que ainda não há', async () => {
+test('[DASH-OVERVIEW-2] singular e vazio: "1 registro no CRM", "1 lead aguardando revisão"; sem registros diz que ainda não há', async () => {
   const { crmRecord } = await loadFixtures();
   const um = await montar({ items: [crmRecord({ status: 'WON' })], approvals: [{ prospectId: 'a' }] });
   await um.abrir();
   assert.match(texto(um.browser), /registro no CRM/);
   assert.doesNotMatch(texto(um.browser), /registros no CRM/);
-  assert.match(texto(um.browser), /prospect aguardando revisão/);
+  assert.match(texto(um.browser), /lead aguardando revisão/);
   assert.doesNotMatch(texto(um.browser), /prospects aguardando/);
 
   const vazio = await montar({ items: [], approvals: [] });
@@ -151,15 +151,15 @@ test('[DASH-OVERVIEW-7] os nomes em português dos status valem só na Visão Ge
   const { OVERVIEW_STATUS_LABELS, overviewStatusLabel } = await import('../../dashboard/views/overview.mjs');
   const { CRM_STATUSES, statusLabel } = await import('../../dashboard/crm-model.mjs');
   assert.deepEqual(Object.keys(OVERVIEW_STATUS_LABELS), CRM_STATUSES.map((status) => status.value), 'mesmos identificadores, mesma ordem do funil');
-  assert.deepEqual(Object.values(OVERVIEW_STATUS_LABELS), ['Prospecção', 'Pesquisa', 'Prospect Qualificado', 'Contatado', 'Respondeu', 'Qualificação', 'Reunião Agendada', 'Reunião Realizada', 'Proposta', 'Negociação', 'Ganho', 'Perdido', 'Não Contatar']);
+  assert.deepEqual(Object.values(OVERVIEW_STATUS_LABELS), ['Lead em Prospecção', 'Em Pesquisa', 'Lead Qualificado', 'Contatado', 'Respondeu', 'Em Qualificação', 'Reunião Agendada', 'Reunião Realizada', 'Proposta Enviada', 'Em Negociação', 'Fechada', 'Perdida', 'Não Contatar']);
   assert.equal(overviewStatusLabel('STATUS_NOVO'), statusLabel('STATUS_NOVO'));
   assert.equal(overviewStatusLabel('constructor'), statusLabel('constructor'), 'nada herdado do protótipo vira rótulo');
-  assert.equal(statusLabel('PROSPECT'), 'Prospect', 'o rótulo do CRM não mudou');
+  assert.equal(statusLabel('PROSPECT'), 'Lead em Prospecção', 'a Visão Geral e o CRM usam o mesmo catálogo de rótulos em português');
 
   const t = await montar({ items: [], approvals: [] });
   await t.abrir();
-  const cartao = t.browser.by.cls(t.browser.root, 'kpi').find((c) => t.browser.by.tag(c, 'h3')[0].textContent === 'Prospects no pipeline');
+  const cartao = t.browser.by.cls(t.browser.root, 'kpi').find((c) => t.browser.by.tag(c, 'h3')[0].textContent === 'Leads em Prospecção');
   assert.ok(cartao, 'o cartão se chama "Prospects no pipeline"');
-  assert.equal(t.browser.by.cls(cartao, 'kpi-sub')[0].textContent, 'registros no status Prospecção');
-  assert.doesNotMatch(texto(t.browser), /Novos prospects/);
+  assert.equal(t.browser.by.cls(cartao, 'kpi-sub')[0].textContent, 'registros no status Lead em Prospecção');
+  assert.doesNotMatch(texto(t.browser), /Novos leads/);
 });

@@ -124,13 +124,13 @@ export function formatClock(ms) {
 function errorMessage(error) {
   const status = error && typeof error.status === 'number' ? error.status : null;
   if (error && error.code === 'ENRICH_BUSY') return 'Já existe uma pesquisa em andamento para outro lead. Aguarde ela terminar.';
-  if (error && error.code === 'ENRICH_NOT_ALLOWED') return 'Este lead está em DNC (não contatar): a pesquisa não é permitida.';
+  if (error && error.code === 'ENRICH_NOT_ALLOWED') return 'Este lead está como Não Contatar: a pesquisa não é permitida.';
   if (status === 409) return 'Já existe uma pesquisa em andamento para este lead.';
   if (status === 503) return 'O Claude não está disponível neste computador.';
   if (status === 403) return 'Sua conta não tem permissão para completar a pesquisa.';
   // 404 tem DUAS causas diferentes e a tela as distingue pelo `code` do servidor: o LEAD não existe na Approval Queue (ENRICH_NOT_FOUND) ou a ROTA não existe neste servidor (ROUTE_NOT_FOUND:
   // o processo em execução é anterior a esta função e precisa ser reiniciado). Nunca se diz "lead não encontrado" por uma rota ausente.
-  if (error && error.code === 'ENRICH_NOT_FOUND') return 'Lead não encontrado na Approval Queue.';
+  if (error && error.code === 'ENRICH_NOT_FOUND') return 'Lead não encontrado na Fila de Aprovação.';
   if (status === 404) return 'Esta função ainda não está disponível neste servidor (a versão em execução é anterior). Reinicie o servidor e recarregue a página.';
   return 'Não foi possível completar a pesquisa agora. Tente novamente em instantes.';
 }
@@ -370,7 +370,7 @@ export function createEnrichmentPanel({ document, api, prospectId, canRun = true
           el('strong', { text: 'Confirmar nova pesquisa' }),
           el('p', { id: 'enrich-confirm-previous', text: `Tentativa anterior: ${formatDateTime(last.iniciadoEm)} · ${executionSummary(last)}` }),
           el('p', { id: 'enrich-confirm-fields', text: `Será pesquisado somente: ${fieldsText(pending)}` }),
-          el('p', { className: 'muted', text: 'A pesquisa roda em segundo plano, uma de cada vez, e não altera a decisão do lead nem a Approval Queue.' }),
+          el('p', { className: 'muted', text: 'A pesquisa roda em segundo plano, uma de cada vez, e não altera a decisão do lead nem a Fila de Aprovação.' }),
           el('div', { className: 'actions' },
             el('button', { type: 'button', className: 'btn primary', id: 'enrich-confirm-run', disabled: !canClick, onclick: onConfirm, text: 'CONFIRMAR NOVA PESQUISA' }),
             el('button', { type: 'button', className: 'btn secondary', id: 'enrich-confirm-cancel', disabled: state.busy, onclick: onCancelConfirm, text: 'CANCELAR' })

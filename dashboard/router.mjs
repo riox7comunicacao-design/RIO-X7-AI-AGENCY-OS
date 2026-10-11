@@ -5,7 +5,11 @@
 // qualquer fragmento leva ao login) e o botão "Voltar" do navegador funciona.
 //
 //   #/                        Visão Geral
-//   #/crm                     lista do CRM
+//   #/crm                     lista de registros do CRM (a rota ANTIGA, mantida: continua mostrando a mesma lista e acende "Clientes" no menu)
+//   #/crm/clientes            a mesma lista, pelo nome novo (CRM 5.0, Fase 2A)
+//   #/crm/dashboard           Dashboard Comercial (página EM DESENVOLVIMENTO; o texto "CRM" do menu abre esta)
+//   #/crm/metas               Metas e Indicadores (EM DESENVOLVIMENTO)
+//   #/crm/configuracoes       Configurações do CRM (EM DESENVOLVIMENTO), com #/crm/configuracoes/servicos | nichos | funis | origens
 //   #/crm/novo                formulário de novo registro
 //   #/crm/registro/<id>       ficha de um registro (o id vai codificado: crm%3A...)
 //   #/aprovacoes              a fila de aprovação
@@ -19,6 +23,13 @@
 // Um fragmento que não é nenhum destes é "not-found" (uma tela amigável), nunca um erro.
 
 const CRM_RECORD_SEGMENT = 'registro';
+// as páginas de Configurações do CRM: o trecho do endereço -> o nome da rota
+const CRM_SETTINGS_SEGMENTS = Object.freeze({
+  servicos: 'crm-settings-services',
+  nichos: 'crm-settings-niches',
+  funis: 'crm-settings-funnels',
+  origens: 'crm-settings-origins',
+});
 
 export function parseRoute(hash) {
   const raw = typeof hash === 'string' ? hash.replace(/^#/, '') : '';
@@ -28,6 +39,11 @@ export function parseRoute(hash) {
   if (segments.length === 0) return { name: 'overview' };
   if (segments.length === 1 && segments[0] === 'crm') return { name: 'crm-list' };
   if (segments.length === 2 && segments[0] === 'crm' && segments[1] === 'novo') return { name: 'crm-new' };
+  if (segments.length === 2 && segments[0] === 'crm' && segments[1] === 'clientes') return { name: 'crm-clients' };
+  if (segments.length === 2 && segments[0] === 'crm' && segments[1] === 'dashboard') return { name: 'crm-dashboard' };
+  if (segments.length === 2 && segments[0] === 'crm' && segments[1] === 'metas') return { name: 'crm-goals' };
+  if (segments.length === 2 && segments[0] === 'crm' && segments[1] === 'configuracoes') return { name: 'crm-settings' };
+  if (segments.length === 3 && segments[0] === 'crm' && segments[1] === 'configuracoes' && Object.prototype.hasOwnProperty.call(CRM_SETTINGS_SEGMENTS, segments[2])) return { name: CRM_SETTINGS_SEGMENTS[segments[2]] };
   if (segments.length === 3 && segments[0] === 'crm' && segments[1] === CRM_RECORD_SEGMENT && segments[2] !== '') {
     try {
       const id = decodeURIComponent(segments[2]);
@@ -100,6 +116,22 @@ export function buildHash(route) {
       return '#/crm';
     case 'crm-new':
       return '#/crm/novo';
+    case 'crm-clients':
+      return '#/crm/clientes';
+    case 'crm-dashboard':
+      return '#/crm/dashboard';
+    case 'crm-goals':
+      return '#/crm/metas';
+    case 'crm-settings':
+      return '#/crm/configuracoes';
+    case 'crm-settings-services':
+      return '#/crm/configuracoes/servicos';
+    case 'crm-settings-niches':
+      return '#/crm/configuracoes/nichos';
+    case 'crm-settings-funnels':
+      return '#/crm/configuracoes/funis';
+    case 'crm-settings-origins':
+      return '#/crm/configuracoes/origens';
     case 'crm-record':
       return `#/crm/${CRM_RECORD_SEGMENT}/${encodeURIComponent(route.id)}`;
     case 'approvals':
@@ -131,10 +163,13 @@ export function buildHash(route) {
   }
 }
 
-// A seção do menu a que uma rota pertence (o item que fica "ativo").
+// A TELA que uma rota mostra (quem decide qual view entra na página). O destaque do menu é outra coisa: ver menuItemOf em nav.mjs.
+//   'crm'        a lista/ficha/novo registro (as rotas #/crm e #/crm/clientes mostram a mesma tela)
+//   'crm-future' as páginas EM DESENVOLVIMENTO do CRM (Dashboard Comercial, Metas, Configurações e seus cadastros)
 export function sectionOf(route) {
   const name = route && route.name;
-  if (name === 'crm-list' || name === 'crm-new' || name === 'crm-record') return 'crm';
+  if (name === 'crm-list' || name === 'crm-clients' || name === 'crm-new' || name === 'crm-record') return 'crm';
+  if (name === 'crm-dashboard' || name === 'crm-goals' || name === 'crm-settings' || (typeof name === 'string' && name.startsWith('crm-settings-'))) return 'crm-future';
   if (name === 'approvals' || name === 'approval-lead') return 'approvals';
   if (name === 'agents') return 'agents';
   if (name === 'funnels') return 'funnels';

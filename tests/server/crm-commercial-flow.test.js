@@ -4,7 +4,7 @@
 //   PROSPECT -> CONTACTED -> RESPONDED -> QUALIFICATION -> MEETING_SCHEDULED -> MEETING_COMPLETED -> PROPOSAL -> NEGOTIATION -> WON | LOST
 //
 // com histórico, autor (sempre o do token), motivo, DNC no meio e depois do funil, e os campos Responsável, Próxima ação, Data da próxima
-// ação, Última interação, Data da reunião, Link do Meet e Observações — que precisam sobreviver a "atualizar a página" (um painel novo
+// ação, Última interação, Data da reunião, Link do Google Meet e Observações — que precisam sobreviver a "atualizar a página" (um painel novo
 // sobre o mesmo arquivo). Nenhuma regra de negócio nova: a máquina de estados é a do domínio (src/crm/constants.js), só é exercitada.
 //
 // Só dados sintéticos (example.test); CRM e fila em diretório temporário removido no fim; nenhum navegador, credencial ou rede reais.
@@ -17,7 +17,8 @@ const path = require('node:path');
 const { Readable } = require('node:stream');
 
 const { createJsonFileCrmRepository } = require('../../src/crm/crmRepository');
-const { CRM_STATUS, CRM_STATUS_LABEL, ALLOWED_TRANSITIONS } = require('../../src/crm/constants');
+const { CRM_STATUS, ALLOWED_TRANSITIONS } = require('../../src/crm/constants');
+const loadLabels = () => import('../../dashboard/i18n/pt-BR.mjs');
 const { createBrowser } = require('../helpers/fakeDom');
 const { FAKE_ENV } = require('../helpers/authFixtures');
 const { montarAmbiente, BRENO, RAFAEL } = require('./testEnv');
@@ -157,6 +158,7 @@ const linhasDoHistorico = (s) => s.browser.by.tag(s.browser.by.cls(s.browser.roo
 
 test('[FLUXO-4] funil completo pela interface: cada "Mudar status" aparece na ficha, no histórico (com motivo e autor), na lista filtrada e na Visão Geral; o lead termina em Won', async (t) => {
   const a = ambiente(t);
+  const { STATUS_LABELS } = await loadLabels();
   const id = await novoLead(a);
   const s = await subirPainel(a.env, BRENO, `#/crm/registro/${enc(id)}`);
   assert.equal(s.browser.by.cls(s.browser.root, 'overlay-title')[0].textContent, 'Clínica Funil Teste');
@@ -167,10 +169,10 @@ test('[FLUXO-4] funil completo pela interface: cada "Mudar status" aparece na fi
     s.browser.choose(s.browser.by.label(escopo(s), 'Novo status'), para);
     s.browser.type(s.browser.by.label(escopo(s), 'Motivo (opcional)'), `Motivo do passo ${i}`);
     await clicar(s, 'Confirmar mudança');
-    assert.match(tela(s), new RegExp(`Status alterado para ${CRM_STATUS_LABEL[para]}\\.`), para);
+    assert.match(tela(s), new RegExp(`Status alterado para ${STATUS_LABELS[para]}\\.`), para);
     const itens = linhasDoHistorico(s);
     assert.equal(itens.length, i + 1, 'um evento novo por passo');
-    assert.match(itens[0], new RegExp(`^${CRM_STATUS_LABEL[FUNIL_COMPLETO[i - 1]]} → ${CRM_STATUS_LABEL[para]}`), 'o mais recente primeiro');
+    assert.match(itens[0], new RegExp(`^${STATUS_LABELS[FUNIL_COMPLETO[i - 1]]} → ${STATUS_LABELS[para]}`), 'o mais recente primeiro');
     assert.match(itens[0], new RegExp(`Motivo do passo ${i}`));
     assert.match(itens[0], /Breno Bento \(Administrador\)/);
   }
@@ -183,15 +185,15 @@ test('[FLUXO-4] funil completo pela interface: cada "Mudar status" aparece na fi
   lista.browser.choose(lista.browser.by.label(lista.browser.root, 'Status'), 'PROSPECT');
   assert.match(tela(lista), /Nenhum registro encontrado/);
 
-  // a Visão Geral acompanha: 1 registro, em Ganho
+  // a Visão Geral acompanha: 1 registro, em Fechada
   const geral = await subirPainel(a.env, BRENO, '#/');
   assert.match(tela(geral), /Leads no CRM\s*1/);
   const contagem = Object.fromEntries(geral.browser.by.cls(geral.browser.root, 'pipeline-row').map((li) => [geral.browser.by.cls(li, 'badge')[0].textContent, geral.browser.by.cls(li, 'pipeline-count')[0].textContent]));
-  assert.equal(contagem.Ganho, '1');
+  assert.equal(contagem.Fechada, '1');
   assert.equal(Object.entries(contagem).filter(([, n]) => n !== '0').length, 1, 'nenhum outro status tem registro');
 });
 
-test('[FLUXO-5] pela interface: um lead Won ou Lost não pode voltar ao funil — o servidor recusa com a frase própria da tela, e nada entra no histórico; "Não contatar" continua possível', async (t) => {
+test('[FLUXO-5] pela interface: um lead Won ou Lost não pode voltar ao funil — o servidor recusa com a frase própria da tela, e nada entra no histórico; "Não Contatar" continua possível', async (t) => {
   const a = ambiente(t);
   const id = await novoLead(a);
   assert.equal((await a.chamar(BRENO, 'POST', `/api/crm/${enc(id)}/status`, { to: 'LOST', reason: 'Sem interesse (teste)' })).status, 200);
@@ -204,7 +206,7 @@ test('[FLUXO-5] pela interface: um lead Won ou Lost não pode voltar ao funil �
   assert.equal(a.lidos()[0].status, 'LOST');
   assert.equal(a.lidos()[0].historico.length, antes, 'a recusa não criou evento');
   // o caminho que sobra é o do DNC, com aviso e confirmação
-  assert.ok(s.browser.by.button(s.browser.root, 'Marcar como Não contatar'));
+  assert.ok(s.browser.by.button(s.browser.root, 'Marcar como Não Contatar'));
 });
 
 test('[FLUXO-6] COMMERCIAL_CLOSER pela interface: percorre a ficha e o histórico de um lead no meio do funil, mas nenhuma escrita é oferecida — e a API recusa a mudança de status com 403', async (t) => {
@@ -212,9 +214,9 @@ test('[FLUXO-6] COMMERCIAL_CLOSER pela interface: percorre a ficha e o históric
   const id = await novoLead(a);
   await a.chamar(BRENO, 'POST', `/api/crm/${enc(id)}/status`, { to: 'QUALIFICATION', reason: 'Conversa boa (teste)' });
   const s = await subirPainel(a.env, RAFAEL, `#/crm/registro/${enc(id)}`);
-  assert.match(tela(s), /Qualification/);
+  assert.match(tela(s), /Em Qualificação/);
   assert.match(linhasDoHistorico(s)[0], /Conversa boa \(teste\)/);
-  for (const botao of ['Editar', 'Mudar status', 'Marcar como Não contatar']) assert.equal(s.browser.by.button(s.browser.root, botao), null, botao);
+  for (const botao of ['Editar', 'Mudar status', 'Marcar como Não Contatar']) assert.equal(s.browser.by.button(s.browser.root, botao), null, botao);
   const antes = fs.readFileSync(a.env.crmFilePath, 'utf8');
   const r = await a.chamar(RAFAEL, 'POST', `/api/crm/${enc(id)}/status`, { to: 'PROPOSAL' });
   assert.deepEqual([r.status, r.json.error.code], [403, 'FORBIDDEN']);
@@ -291,7 +293,7 @@ test('[FLUXO-8] editar a próxima ação e o responsável: o novo valor persiste
   const eventos = linhasDoHistorico(s).length;
   await clicar(s, 'Editar');
   await preencher(s, { proximaAcao: 'Enviar a proposta', dataDaProximaAcao: '2026-10-09', responsavel: 'Breno' });
-  s.browser.type(s.browser.by.label(s.browser.root, 'Link do Meet'), '');
+  s.browser.type(s.browser.by.label(s.browser.root, 'Link do Google Meet'), '');
   await clicar(s, 'Salvar alterações');
   assert.match(tela(s), /Alterações salvas\./);
 

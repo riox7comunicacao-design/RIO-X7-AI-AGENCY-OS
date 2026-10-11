@@ -36,7 +36,7 @@ function scan(file) {
 const SCANS = new Map(FILES.map((file) => [rel(file), scan(file)]));
 
 test('[DASH-GUARD-1] a lista de módulos do Dashboard é a esperada (um módulo novo exige decidir aqui — de propósito)', () => {
-  assert.deepEqual([...SCANS.keys()].sort(), ['api.mjs', 'app.mjs', 'crm-model.mjs', 'dom.mjs', 'format.mjs', 'main.mjs', 'router.mjs', 'ui/components.mjs', 'ui/dataBus.mjs', 'ui/index.mjs', 'ui/overlays.mjs', 'ui/routedDrawer.mjs', 'ui/toasts.mjs', 'views/agents.mjs', 'views/approvals.mjs', 'views/crm.mjs', 'views/funnels.mjs', 'views/jobDetails.mjs', 'views/leadEnrichmentPanel.mjs', 'views/leadProfile.mjs', 'views/overview.mjs', 'views/prospecting.mjs', 'views/prospectingExclusions.mjs', 'views/prospectingHistory.mjs', 'views/rejectedLeads.mjs']);
+  assert.deepEqual([...SCANS.keys()].sort(), ['api.mjs', 'app.mjs', 'crm-model.mjs', 'dom.mjs', 'format.mjs', 'i18n/pt-BR.mjs', 'main.mjs', 'nav.mjs', 'preferences.mjs', 'router.mjs', 'ui/components.mjs', 'ui/dataBus.mjs', 'ui/index.mjs', 'ui/overlays.mjs', 'ui/routedDrawer.mjs', 'ui/sidebar.mjs', 'ui/toasts.mjs', 'views/agents.mjs', 'views/approvals.mjs', 'views/comingSoon.mjs', 'views/crm.mjs', 'views/funnels.mjs', 'views/jobDetails.mjs', 'views/leadEnrichmentPanel.mjs', 'views/leadProfile.mjs', 'views/overview.mjs', 'views/prospecting.mjs', 'views/prospectingExclusions.mjs', 'views/prospectingHistory.mjs', 'views/rejectedLeads.mjs']);
   for (const [nome, { analysis }] of SCANS) assert.deepEqual(analysis.issues, [], `${nome}: carregamento que a análise não enxerga`);
 });
 
@@ -57,11 +57,30 @@ test('[DASH-GUARD-2] o Dashboard conversa com o servidor SÓ pelo cliente de API
   }
 });
 
-test('[DASH-GUARD-3] nada é guardado no navegador pelo Dashboard e nada vai para o console: nenhum localStorage, sessionStorage, indexedDB, cookie, console, caches, alert ou prompt', () => {
-  const proibidos = ['localStorage', 'sessionStorage', 'indexedDB', 'cookie', 'console', 'caches', 'alert', 'prompt', 'BroadcastChannel'];
+test('[DASH-GUARD-3] nada é guardado no navegador pelo Dashboard e nada vai para o console: nenhum sessionStorage, indexedDB, cookie, console, caches, alert ou prompt — e o localStorage existe SÓ em preferences.mjs (a exceção autorizada da Fase 2A do CRM 5.0: o estado visual do menu lateral)', () => {
+  const proibidos = ['sessionStorage', 'indexedDB', 'cookie', 'console', 'caches', 'alert', 'prompt', 'BroadcastChannel'];
   for (const [nome, { identifiers }] of SCANS) {
     for (const proibido of proibidos) assert.equal(identifiers.has(proibido), false, `${nome} não pode usar ${proibido}`);
+    assert.equal(identifiers.has('localStorage'), nome === 'preferences.mjs', nome === 'preferences.mjs' ? 'preferences.mjs é o ÚNICO módulo que toca o armazenamento' : `${nome} não pode usar localStorage`);
   }
+});
+
+test('[DASH-GUARD-3b] a exceção do localStorage é MÍNIMA: uma única chave, só os valores "1" e "0", nenhum outro método de armazenamento, e só o ponto de entrada (app.mjs) importa o módulo', () => {
+  const { analysis, identifiers, strings } = SCANS.get('preferences.mjs');
+  // as únicas chamadas de armazenamento: getItem e setItem (nunca removeItem, clear, key, length, setItem de outra coisa)
+  for (const proibido of ['removeItem', 'clear', 'key', 'length', 'sessionStorage']) assert.equal(identifiers.has(proibido), false, `preferences.mjs não usa ${proibido}`);
+  assert.deepEqual([...identifiers].filter((id) => /^(get|set)Item$/.test(id)).sort(), ['getItem', 'setItem']);
+  // textos do módulo: a chave e os dois valores (o resto é código); nada que lembre dado de usuário
+  const literais = strings.filter((texto) => texto !== '' && !/^\s*$/.test(texto));
+  const permitidos = new Set(['riox7.sidebar.collapsed', '1', '0', 'function']);
+  for (const texto of literais) assert.ok(permitidos.has(texto), `preferences.mjs: texto inesperado "${texto}"`);
+  assert.ok(literais.includes('riox7.sidebar.collapsed'));
+  // só app.mjs importa preferences.mjs (as telas e o painel recebem o objeto por parâmetro)
+  for (const [nome, { analysis: other }] of SCANS) {
+    const importa = other.refs.some((ref) => /preferences\.mjs$/.test(ref.specifier));
+    assert.equal(importa, nome === 'app.mjs', `${nome}${nome === 'app.mjs' ? ' importa preferences.mjs' : ' não importa preferences.mjs'}`);
+  }
+  assert.deepEqual(analysis.issues, []);
 });
 
 test('[DASH-GUARD-4] nenhum segredo no código do navegador: nada de service_role, chaves, JWT, variáveis do Supabase, e o authUserId nunca é lido nem mostrado', () => {

@@ -271,13 +271,13 @@ export function createFunnelsView({ document, root, api, permissions, navigate }
   function render() {
     if (!root) return;
     if (!permissions.canReadCrm) {
-      fill(root, el('p', { className: 'message error', role: 'alert', text: 'Sua conta não tem permissão para ver o Kanban de funis.' }));
+      fill(root, el('p', { className: 'message error', role: 'alert', text: 'Sua conta não tem permissão para ver o Quadro de Negociações.' }));
       return;
     }
     const head = el(
       'div',
       { className: 'funnel-head' },
-      el('h2', { text: 'Funis' }),
+      el('h2', { text: 'Funis de Vendas' }),
       state.funnels.length > 0
         ? el(
             'select',

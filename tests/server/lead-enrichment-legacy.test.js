@@ -1,4 +1,4 @@
-// CORREÇÃO 3.0.2 — "Lead não encontrado." no painel COMPLETAR PESQUISA de um lead EXISTENTE da Approval Queue.
+// CORREÇÃO 3.0.2 — "Lead não encontrado." no painel COMPLETAR PESQUISA de um lead EXISTENTE da Fila de Aprovação.
 //
 // CAUSA RAIZ comprovada: (1) o servidor em execução era anterior às rotas /api/leads/:id/completar-pesquisa (sem Authorization já respondia 404 ROUTE_NOT_FOUND, enquanto /perfil respondia 401); e
 // (2) o painel traduzia QUALQUER 404 em "Lead não encontrado." — a rota ausente era apresentada como se o lead não existisse. O ID, o repositório e o Service estavam corretos: com o código atual a
@@ -90,9 +90,9 @@ function montar(t, { motor = motorFake(), rejeitar = false, perfis = true } = {}
 }
 const rota = (id, acao = 'completar-pesquisa') => `/api/leads/${encodeURIComponent(id)}/${acao}`;
 
-test('[LEG-1] ID REAL (espaços, ":" e "|"): o mesmo prospectId da Approval Queue resolve nas rotas de enriquecimento; o estado do perfil ANTIGO da 3.0.1 é lido sem erro, preservado e compatível', async (t) => {
+test('[LEG-1] ID REAL (espaços, ":" e "|"): o mesmo prospectId da Fila de Aprovação resolve nas rotas de enriquecimento; o estado do perfil ANTIGO da 3.0.1 é lido sem erro, preservado e compatível', async (t) => {
   const { env } = montar(t);
-  // 1) o ID que a Approval Queue entrega ao abrir o detalhe é o que o painel envia
+  // 1) o ID que a Fila de Aprovação entrega ao abrir o detalhe é o que o painel envia
   const lista = (await chamar(env, BRENO, { url: '/api/approvals' })).json().items;
   const doDetalhe = lista.find((i) => i.empresa === 'Empresa Exemplo Alfa Centro Estético');
   assert.equal(doDetalhe.prospectId, ID_REAL);
@@ -138,7 +138,7 @@ test('[LEG-2] perfil ANTIGO sem metadados da 3.0.2: ao completar, o contexto é 
   assert.deepEqual(depois.enriquecimento.legado.camposPendentesAnterior, ['responsavel', 'emails', 'atividadeRecente']);
   assert.equal(depois.enriquecimento.execucoes.length, 1, 'nenhuma execução antiga foi inventada: só a real, desta');
   assert.equal(env.perfisDeLeads.list().length, 1, 'nenhum perfil duplicado');
-  assert.equal(fs.readFileSync(fila.filePath, 'utf8'), filaAntes, 'nenhum lead novo, nenhum estado alterado na Approval Queue');
+  assert.equal(fs.readFileSync(fila.filePath, 'utf8'), filaAntes, 'nenhum lead novo, nenhum estado alterado na Fila de Aprovação');
 });
 
 test('[LEG-3] lead NOVO (perfil da 3.0.2 com contexto), lead SEM perfil e lead REPROVADO com perfil antigo: o painel resolve os três; a pesquisa NÃO altera o estado nem o histórico do reprovado', async (t) => {
@@ -192,7 +192,7 @@ test('[LEG-5] a TELA distingue as duas causas do 404: rota ausente neste servido
   const casos = [
     [{ status: 404, code: 'ROUTE_NOT_FOUND' }, /ainda não está disponível neste servidor.*Reinicie o servidor/s, /Lead não encontrado/],
     [{ status: 404, code: 'HTTP_404' }, /Reinicie o servidor/, /Lead não encontrado/],
-    [{ status: 404, code: 'ENRICH_NOT_FOUND' }, /Lead não encontrado na Approval Queue/, /Reinicie/],
+    [{ status: 404, code: 'ENRICH_NOT_FOUND' }, /Lead não encontrado na Fila de Aprovação/, /Reinicie/],
   ];
   for (const [erro, esperado, proibido] of casos) {
     const browser = createBrowser();

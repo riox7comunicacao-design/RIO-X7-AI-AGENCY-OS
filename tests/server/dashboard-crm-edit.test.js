@@ -614,7 +614,7 @@ test('[CRM-ED-14] EVENTOS e RESPOSTAS TARDIAS durante a edição nunca sobrescre
   assert.equal(campo.value, 'Meu rascunho');
   assert.match(s.browser.by.tag(s.root, 'tbody')[0].textContent, /Mudou por fora/, 'a lista, por baixo, mostra o dado novo');
 
-  // por baixo, outra pessoa marca "Não contatar": o rascunho continua à vista, mas não dá mais para salvar
+  // por baixo, outra pessoa marca "Não Contatar": o rascunho continua à vista, mas não dá mais para salvar
   s.api.store.items.find((i) => i.id === 'crm:a').status = 'DO_NOT_CONTACT';
   s.bus.publish('crm:changed', { prospectId: 'id:z' });
   await s.browser.flush(10);
@@ -632,7 +632,7 @@ test('[CRM-ED-15] DUPLO ENVIO e OPERAÇÕES CONCORRENTES: clique duplo, Enter + 
   const s = await abrir();
   await abrirEdicao(s);
   const rodape = s.browser.by.tag(s.browser.find(gaveta(s), (el) => el.localName === 'footer'), 'button').map((b) => b.textContent);
-  assert.deepEqual(rodape, ['Salvar alterações', 'Cancelar'], 'durante a edição não há Mudar status / Não contatar / Excluir ao alcance');
+  assert.deepEqual(rodape, ['Salvar alterações', 'Cancelar'], 'durante a edição não há Mudar status / Não Contatar / Excluir ao alcance');
   assert.equal(botao(s, 'Mudar status'), null);
   digitar(s, 'Cidade', 'Uma vez só');
   const pendente = s.api.hold('updateCrm');
@@ -647,7 +647,7 @@ test('[CRM-ED-15] DUPLO ENVIO e OPERAÇÕES CONCORRENTES: clique duplo, Enter + 
   pendente.release();
   await s.browser.flush(10);
   assert.equal(conta(s, 'updateCrm'), 1);
-  assert.deepEqual(s.browser.by.tag(s.browser.find(gaveta(s), (el) => el.localName === 'footer'), 'button').map((b) => b.textContent), ['Editar', 'Mudar status', 'Marcar como Não contatar'], 'as ações voltam depois de salvar');
+  assert.deepEqual(s.browser.by.tag(s.browser.find(gaveta(s), (el) => el.localName === 'footer'), 'button').map((b) => b.textContent), ['Editar', 'Mudar status', 'Marcar como Não Contatar'], 'as ações voltam depois de salvar');
 });
 
 // ---------------------------------------------------------------------------------------------------------------------------------------------

@@ -37,13 +37,13 @@ export const REASON_LABELS = Object.freeze({
 });
 const CAUSE_LABELS = Object.freeze({ DNS: 'o endereço não foi encontrado', TLS: 'falha na conexão segura', RESPOSTA_GRANDE: 'a página era grande demais', DESAFIO_NA_PAGINA: 'a página pediu uma verificação anti-robô' });
 const ASPECT_LABELS = Object.freeze({ empresa: 'empresa', nicho: 'nicho', localizacao: 'localização' });
-const HELD_LABELS = Object.freeze({ DADOS_INSUFICIENTES: 'Dados insuficientes', DNC: 'Não contatar (DNC)', DUPLICADO: 'Duplicado', REPETIDO_NA_SUBMISSAO: 'Repetido nesta submissão' });
+const HELD_LABELS = Object.freeze({ DADOS_INSUFICIENTES: 'Dados insuficientes', DNC: 'Não Contatar', DUPLICADO: 'Duplicado', REPETIDO_NA_SUBMISSAO: 'Repetido nesta submissão' });
 const CHANNEL_LABELS = Object.freeze({ instagram: 'Instagram', facebook: 'Facebook', googleMeuNegocio: 'Google Meu Negócio', linkedin: 'LinkedIn', youtube: 'YouTube', tiktok: 'TikTok', whatsapp: 'WhatsApp' });
 const LEAD_TYPE_FILTERS = Object.freeze(['TODOS', 'EMPRESA', 'PROFISSIONAL', 'UNIDADE_FRANQUIA', 'NAO_VERIFICADO']);
 
 // Os grupos de candidatos: cada candidato cai em UM só grupo (os mesmos nomes na gaveta e nos contadores).
 export const GROUPS = Object.freeze([
-  ['ENTREGUE', 'Entregues à Approval Queue', 'ok'],
+  ['ENTREGUE', 'Entregues à Fila de Aprovação', 'ok'],
   ['JA_EXISTIA', 'Já estavam na fila', 'neutral'],
   ['RETIDO', 'Validados, retidos fora da fila', 'warn'],
   ['NAO_VALIDADO', 'Não validados', 'neutral'],
@@ -182,7 +182,7 @@ export function createJobDetails({ document, getBrief = () => null, liveNote = '
     if (isActive(job)) situation.push(h(document, 'p', { className: 'muted', text: `${STEP_LABELS[job.currentStep] || 'Em andamento'}. ${liveNote}` }));
     if (job.status === 'ERRO') situation.push(h(document, 'p', { className: 'notice bad', role: 'note', text: JOB_ERROR_TEXT[job.error && job.error.code] || JOB_ERROR_TEXT.JOB_INTERNAL }));
     if (job.status === 'PARCIAL') situation.push(h(document, 'p', { className: 'muted', text: 'A quantidade pedida não foi atingida: nenhuma empresa fraca foi incluída para completar.' }));
-    if (job.status === 'CANCELADO') situation.push(h(document, 'p', { className: 'muted', text: 'A prospecção foi cancelada antes de terminar. O que já tinha sido entregue à Approval Queue continua lá.' }));
+    if (job.status === 'CANCELADO') situation.push(h(document, 'p', { className: 'muted', text: 'A prospecção foi cancelada antes de terminar. O que já tinha sido entregue à Fila de Aprovação continua lá.' }));
 
     const funnel = h(
       document,
@@ -190,7 +190,7 @@ export function createJobDetails({ document, getBrief = () => null, liveNote = '
       { className: 'indicator-grid' },
       indicator('Encontrados', ind.encontrados, 'candidatos trazidos pela descoberta'),
       indicator('Validados', ind.validados, 'comprovados pela página'),
-      indicator('Entregues à fila', ind.naFila, ind.solicitados === null ? 'na Approval Queue' : `de ${ind.solicitados} solicitados`),
+      indicator('Entregues à fila', ind.naFila, ind.solicitados === null ? 'na Fila de Aprovação' : `de ${ind.solicitados} solicitados`),
       indicator('Descartados', ind.descartados, 'não validados + retidos fora da fila')
     );
     const notLeads = [];
@@ -206,7 +206,7 @@ export function createJobDetails({ document, getBrief = () => null, liveNote = '
       indicator('Promovidos ao CRM', ind.promovidos, 'por uma pessoa')
     );
     const nav = [];
-    if (ind.naFila !== null && ind.naFila > 0) nav.push(h(document, 'a', { className: 'btn secondary', href: buildHash({ name: 'approvals' }), text: 'Abrir a Approval Queue' }));
+    if (ind.naFila !== null && ind.naFila > 0) nav.push(h(document, 'a', { className: 'btn secondary', href: buildHash({ name: 'approvals' }), text: 'Abrir a Fila de Aprovação' }));
     if (ind.rejeitados !== null && ind.rejeitados > 0) nav.push(h(document, 'a', { className: 'btn secondary', href: buildHash({ name: 'rejected-leads' }), text: 'Ver em Leads Reprovados' }));
 
     const briefing = kvList(document, [
@@ -229,7 +229,7 @@ export function createJobDetails({ document, getBrief = () => null, liveNote = '
       { className: 'lead-summary' },
       section(document, 'Situação', ...situation),
       section(document, 'Funil da prospecção', funnel, notLeads.length > 0 ? h(document, 'p', { className: 'muted', text: `Fora das contas acima (não são entregas novas nem descartes): ${notLeads.join('; ')}.` }) : null),
-      section(document, 'Decisões humanas sobre os leads entregues', decisions, h(document, 'p', { className: 'muted', text: 'Só um lead entregue à Approval Queue pode ser aprovado ou rejeitado por uma pessoa. Candidato não validado nunca foi decidido por ninguém: não passou pela validação automática.' }), nav.length > 0 ? h(document, 'div', { className: 'actions' }, ...nav) : null),
+      section(document, 'Decisões humanas sobre os leads entregues', decisions, h(document, 'p', { className: 'muted', text: 'Só um lead entregue à Fila de Aprovação pode ser aprovado ou rejeitado por uma pessoa. Candidato não validado nunca foi decidido por ninguém: não passou pela validação automática.' }), nav.length > 0 ? h(document, 'div', { className: 'actions' }, ...nav) : null),
       briefing.children.length > 0 ? section(document, 'Briefing', briefing) : null,
       dates.children.length > 0 ? section(document, 'Datas', dates) : null
     );
@@ -304,8 +304,8 @@ export function createJobDetails({ document, getBrief = () => null, liveNote = '
       document,
       'div',
       { className: 'lead-summary' },
-      section(document, `Entregues à Approval Queue (${delivered.length})`, delivered.length > 0 ? names(delivered) : emptyState(document, { title: 'Nenhum lead foi entregue por esta prospecção', text: 'Só candidatos validados pela página chegam à Approval Queue.' })),
-      held.length > 0 ? section(document, `Validados, mas retidos fora da fila (${held.length})`, h(document, 'p', { className: 'muted', text: 'Passaram pela validação, mas o pipeline os reteve (dados insuficientes, DNC ou duplicidade). Não viraram lead.' }), names(held)) : null,
+      section(document, `Entregues à Fila de Aprovação (${delivered.length})`, delivered.length > 0 ? names(delivered) : emptyState(document, { title: 'Nenhum lead foi entregue por esta prospecção', text: 'Só candidatos validados pela página chegam à Fila de Aprovação.' })),
+      held.length > 0 ? section(document, `Validados, mas retidos fora da fila (${held.length})`, h(document, 'p', { className: 'muted', text: 'Passaram pela validação, mas a triagem os reteve (dados insuficientes, Não Contatar ou duplicidade). Não viraram lead.' }), names(held)) : null,
       existing.length > 0 ? section(document, `Já estavam na fila (${existing.length})`, names(existing)) : null,
       section(document, 'Resumo padronizado', summary || h(document, 'p', { className: 'muted', text: 'Sem resumo disponível para esta prospecção.' }))
     );
@@ -333,8 +333,8 @@ export function createJobDetails({ document, getBrief = () => null, liveNote = '
       field('Repetidos', count(tele.candidatosRepetidos)),
       field('Repetidos: já na fila', repeated ? count(repeated.fila) : null),
       field('Repetidos: duplicados', repeated ? count(repeated.duplicado) : null),
-      field('Repetidos: DNC', repeated ? count(repeated.dnc) : null),
-      field('Repetidos: neste job', repeated ? count(repeated.job) : null),
+      field('Repetidos: Não Contatar', repeated ? count(repeated.dnc) : null),
+      field('Repetidos: nesta prospecção', repeated ? count(repeated.job) : null),
     ]);
     const config = kvList(document, [
       field('Máximo de candidatos', count(limits.maxCandidates)),
@@ -353,7 +353,7 @@ export function createJobDetails({ document, getBrief = () => null, liveNote = '
     const blocks = [
       timing.children.length > 0 ? section(document, 'Tempos', timing) : null,
       engine.children.length > 0 ? section(document, 'Motor de pesquisa', engine) : null,
-      counters.children.length > 0 ? section(document, 'Contagens do pipeline', counters) : null,
+      counters.children.length > 0 ? section(document, 'Contagens da prospecção', counters) : null,
       config.children.length > 0 ? section(document, 'Limites da execução', config) : null,
       events.length > 0 ? section(document, 'Eventos registrados', h(document, 'ul', { className: 'plain' }, ...events.map((entry) => h(document, 'li', { text: `${textOf(entry.codigo)}${Number.isInteger(entry.ciclo) ? ` (ciclo ${entry.ciclo})` : ''}` })))) : null,
       ids.children.length > 0 ? section(document, 'Identificação', ids) : null,

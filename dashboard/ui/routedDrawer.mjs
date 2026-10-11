@@ -36,7 +36,7 @@ export function createRoutedDrawer({ document, navigation = null, hashFor, listH
     if (!suppressNav && navigation && state.routeId !== null) {
       state.routeId = null;
       if (state.openedByPush) navigation.back();
-      else navigation.replace(listHash);
+      else navigation.replace(typeof listHash === 'function' ? listHash() : listHash); // listHash pode ser uma função: a tela pode ter mais de um endereço de lista
       state.openedByPush = false;
     }
     // o foco já voltou à linha; repintar a lista a substitui — então devolve o foco à linha nova

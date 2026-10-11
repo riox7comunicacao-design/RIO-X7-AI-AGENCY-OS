@@ -90,13 +90,13 @@ test('[DASH-SHELL-2] o SDK é criado com a URL e a chave PÚBLICA de /config.jso
   assert.equal(t.fetchImpl.calls[0].headers['cache-control'], undefined);
 });
 
-test('[DASH-SHELL-3] login: o e-mail e a senha digitados vão SÓ para o SDK; depois o painel abre com o menu (Visão Geral, CRM, Nova Prospecção, Histórico, Approval Queue, Leads Reprovados), o nome, a role em português e o botão Sair — e /api/me leva o token da sessão', async () => {
+test('[DASH-SHELL-3] login: o e-mail e a senha digitados vão SÓ para o SDK; depois o painel abre com o menu (Visão Geral, CRM, Nova Prospecção, Histórico, Fila de Aprovação, Leads Reprovados), o nome, a role em português e o botão Sair — e /api/me leva o token da sessão', async () => {
   const t = await iniciar({ session: null, routes: await rotasLogado() });
   await entrarPeloFormulario(t);
   assert.deepEqual(t.sdk.calls.signIn, [{ email: 'usuario-teste@example.test', password: 'senha-de-teste-nao-real' }]);
 
-  assert.deepEqual(linksDoMenu(t.browser).map((link) => link.textContent), ['Visão Geral', 'CRM', 'Nova Prospecção', 'Histórico', 'Approval Queue', 'Leads Reprovados', 'Funis', 'Central de Agentes', 'Exclusões Permanentes']);
-  assert.deepEqual(linksDoMenu(t.browser).map((link) => link.href), ['#/', '#/crm', '#/prospeccao', '#/prospeccao/historico', '#/aprovacoes', '#/prospeccao/leads-reprovados', '#/funis', '#/agentes', '#/exclusoes-permanentes']);
+  assert.deepEqual(linksDoMenu(t.browser).map((link) => link.textContent), ['Visão Geral', 'CRM', 'Dashboard Comercial', 'Clientes', 'Funis de Vendas', 'Metas e Indicadores', 'Configurações do CRM', 'Serviços', 'Nichos e Cores', 'Gestão de Funis e Etapas', 'Origens dos Leads', 'Nova Prospecção', 'Histórico', 'Fila de Aprovação', 'Leads Reprovados', 'Central de Agentes', 'Exclusões Permanentes']);
+  assert.deepEqual(linksDoMenu(t.browser).map((link) => link.href), ['#/', '#/crm/dashboard', '#/crm/dashboard', '#/crm/clientes', '#/funis', '#/crm/metas', '#/crm/configuracoes', '#/crm/configuracoes/servicos', '#/crm/configuracoes/nichos', '#/crm/configuracoes/funis', '#/crm/configuracoes/origens', '#/prospeccao', '#/prospeccao/historico', '#/aprovacoes', '#/prospeccao/leads-reprovados', '#/agentes', '#/exclusoes-permanentes']);
   assert.ok(t.browser.by.button(t.browser.root, 'Sair'));
   const texto = textoDaTela(t.browser);
   assert.match(texto, /Breno/);
@@ -137,7 +137,7 @@ test('[DASH-SHELL-5] e-mail ou senha vazios: pede os dois e nem chama o SDK', as
 test('[DASH-SHELL-6] com sessão já existente o painel abre direto, sem passar pelo login', async () => {
   const t = await iniciar({ session: true, routes: await rotasLogado() });
   assert.equal(t.browser.by.tag(t.browser.root, 'form').length, 0);
-  assert.deepEqual(linksDoMenu(t.browser).map((link) => link.textContent), ['Visão Geral', 'CRM', 'Nova Prospecção', 'Histórico', 'Approval Queue', 'Leads Reprovados', 'Funis', 'Central de Agentes', 'Exclusões Permanentes']);
+  assert.deepEqual(linksDoMenu(t.browser).map((link) => link.textContent), ['Visão Geral', 'CRM', 'Dashboard Comercial', 'Clientes', 'Funis de Vendas', 'Metas e Indicadores', 'Configurações do CRM', 'Serviços', 'Nichos e Cores', 'Gestão de Funis e Etapas', 'Origens dos Leads', 'Nova Prospecção', 'Histórico', 'Fila de Aprovação', 'Leads Reprovados', 'Central de Agentes', 'Exclusões Permanentes']);
   assert.deepEqual(t.sdk.calls.signIn, []);
 });
 
@@ -165,7 +165,7 @@ test('[DASH-SHELL-7] logout: "Sair" encerra a sessão no SDK, volta ao login, n�
   assert.equal(chamadasDeApi(t.fetchImpl).length, antes, 'nenhuma chamada nova de API');
 
   await entrarPeloFormulario(t);
-  assert.deepEqual(linksDoMenu(t.browser).map((link) => link.textContent), ['Visão Geral', 'CRM', 'Nova Prospecção', 'Histórico', 'Approval Queue', 'Leads Reprovados', 'Funis', 'Central de Agentes', 'Exclusões Permanentes']);
+  assert.deepEqual(linksDoMenu(t.browser).map((link) => link.textContent), ['Visão Geral', 'CRM', 'Dashboard Comercial', 'Clientes', 'Funis de Vendas', 'Metas e Indicadores', 'Configurações do CRM', 'Serviços', 'Nichos e Cores', 'Gestão de Funis e Etapas', 'Origens dos Leads', 'Nova Prospecção', 'Histórico', 'Fila de Aprovação', 'Leads Reprovados', 'Central de Agentes', 'Exclusões Permanentes']);
   assert.equal(t.browser.window._listeners.size, 1, 'um único ouvinte de rotas de novo (nada vazou)');
 });
 
@@ -267,28 +267,36 @@ test('[DASH-SHELL-13] navegação: cada item do menu abre a sua tela e fica marc
   assert.deepEqual(ativo(t.browser), ['Visão Geral']);
   assert.match(textoDaTela(t.browser), /Visão Geral/);
   const indicadores = Object.fromEntries(t.browser.by.cls(t.browser.root, 'kpi').map((cartao) => [t.browser.by.tag(cartao, 'h3')[0].textContent, (t.browser.by.cls(cartao, 'stat')[0] || {}).textContent]));
-  assert.deepEqual(indicadores, { 'Leads no CRM': '2', 'Prospects no pipeline': '0', 'Aprovações pendentes': '1', 'Reuniões': '0', 'Propostas': '0', 'Negociações': '0' }, 'a Visão Geral mostra o total do CRM (de GET /api/crm), a fila (de GET /api/approvals) e as etapas do CRM');
+  assert.deepEqual(indicadores, { 'Leads no CRM': '2', 'Leads em Prospecção': '0', 'Aprovações pendentes': '1', 'Reuniões': '0', 'Propostas': '0', 'Negociações': '0' }, 'a Visão Geral mostra o total do CRM (de GET /api/crm), a fila (de GET /api/approvals) e as etapas do CRM');
   assert.match(textoDaTela(t.browser), /registros no CRM/);
-  assert.match(textoDaTela(t.browser), /prospect aguardando revisão/);
+  assert.match(textoDaTela(t.browser), /lead aguardando revisão/);
   const pipeline = Object.fromEntries(t.browser.by.cls(t.browser.root, 'pipeline-row').map((linha) => [t.browser.by.cls(linha, 'badge')[0].textContent, t.browser.by.cls(linha, 'pipeline-count')[0].textContent]));
   assert.equal(pipeline.Contatado, '1');
-  assert.equal(pipeline.Ganho, '1');
+  assert.equal(pipeline.Fechada, '1');
 
   t.browser.click(t.browser.by.link(t.browser.root, 'CRM'));
   await t.browser.flush();
-  assert.deepEqual(ativo(t.browser), ['CRM']);
-  assert.equal(t.browser.document.title, 'CRM — Rio X7 AI Agency OS');
+  assert.deepEqual(ativo(t.browser), ['Dashboard Comercial'], 'o texto "CRM" abre o Dashboard Comercial');
+  assert.equal(t.browser.document.title, 'Dashboard Comercial — Rio X7 AI Agency OS');
+  assert.match(textoDaTela(t.browser), /EM DESENVOLVIMENTO/);
+  assert.equal(t.browser.by.tag(t.browser.root, 'table').length, 0, 'nenhum dado simulado');
+  t.browser.click(t.browser.by.link(t.browser.root, 'Clientes'));
+  await t.browser.flush();
+  assert.deepEqual(ativo(t.browser), ['Clientes']);
+  assert.equal(t.browser.document.title, 'Clientes · CRM — Rio X7 AI Agency OS');
   assert.match(textoDaTela(t.browser), /Odonto Beta/);
   assert.equal(t.browser.by.tag(t.browser.root, 'table').length, 1);
 
-  t.browser.click(t.browser.by.link(t.browser.root, 'Approval Queue'));
+  t.browser.click(t.browser.by.button(t.browser.root, 'Prospecção')); // o grupo está recolhido: a pessoa o abre pela seta/texto
+  t.browser.click(t.browser.by.link(t.browser.root, 'Fila de Aprovação'));
   await t.browser.flush();
-  assert.deepEqual(ativo(t.browser), ['Approval Queue']);
-  assert.equal(t.browser.document.title, 'Aprovações — Rio X7 AI Agency OS');
+  assert.deepEqual(ativo(t.browser), ['Fila de Aprovação']);
+  assert.equal(t.browser.document.title, 'Fila de Aprovação — Rio X7 AI Agency OS');
   assert.match(textoDaTela(t.browser), /Prospect X/);
   assert.equal(t.browser.by.tag(t.browser.root, 'table').length, 1);
   assert.doesNotMatch(textoDaTela(t.browser), /Odonto Beta/, 'a tela anterior saiu');
 
+  t.browser.click(t.browser.by.button(t.browser.root, 'Agentes IA'));
   t.browser.click(t.browser.by.link(t.browser.root, 'Central de Agentes'));
   await t.browser.flush();
   assert.deepEqual(ativo(t.browser), ['Central de Agentes']);
@@ -310,7 +318,7 @@ test('[DASH-SHELL-13] navegação: cada item do menu abre a sua tela e fica marc
 
 test('[DASH-SHELL-14] link direto: abrir o painel já em #/crm/registro/<id> mostra a ficha numa gaveta por cima da lista; fechar leva à lista, que mantém a busca que a pessoa fez', async () => {
   const t = await iniciar({ session: true, routes: await rotasLogado(), hash: '#/crm/registro/crm%3Aa' });
-  assert.deepEqual(ativo(t.browser), ['CRM']);
+  assert.deepEqual(ativo(t.browser), ['Clientes']);
   const gaveta = () => t.browser.find(t.browser.root, (el) => el.getAttribute('role') === 'dialog' && /drawer/.test(el.className));
   assert.equal(t.browser.by.cls(t.browser.root, 'overlay-title')[0].textContent, 'Clínica Alfa');
   assert.ok(t.browser.find(gaveta(), (el) => el.getAttribute('role') === 'tab' && el.textContent === 'Histórico'), 'a ficha tem a aba Histórico');
@@ -347,13 +355,13 @@ test('[DASH-SHELL-14b] o CRM é PERSISTENTE no painel: com a ficha aberta, troca
   t.browser.window.location.hash = '#/aprovacoes';
   await t.browser.flush();
   assert.equal(gaveta(), null, 'trocar de módulo fecha a gaveta');
-  assert.deepEqual(ativo(t.browser), ['Approval Queue']);
+  assert.deepEqual(ativo(t.browser), ['Fila de Aprovação']);
   assert.equal(t.browser.window.location.hash, '#/aprovacoes', 'e o endereço é o do módulo novo (nada foi desfeito)');
   const antes = cargasDoCrm();
 
   t.browser.window.location.hash = '#/crm';
   await t.browser.flush();
-  assert.deepEqual(ativo(t.browser), ['CRM']);
+  assert.deepEqual(ativo(t.browser), ['Clientes']);
   assert.equal(t.browser.by.label(t.browser.root, 'Buscar').value, 'odonto', 'a busca ficou');
   assert.equal(t.browser.by.tag(t.browser.root, 'tbody')[0].children.length, 1);
   assert.equal(t.browser.by.cls(t.browser.root, 'skeleton').length, 0, 'já pronta, sem "carregando"');
@@ -377,7 +385,7 @@ test('[DASH-SHELL-14c] TROCA DE MÓDULO com edição não salva no CRM: nada mud
   win.location.hash = '#/aprovacoes'; // sem digitar nada: a troca é livre (nem a edição aberta, sem alteração, pergunta)
   await t.browser.flush(10);
   assert.equal(pergunta(), null);
-  assert.deepEqual(ativo(t.browser), ['Approval Queue']);
+  assert.deepEqual(ativo(t.browser), ['Fila de Aprovação']);
 
   win.location.hash = '#/crm/registro/crm%3Aa';
   await t.browser.flush(10);
@@ -389,7 +397,7 @@ test('[DASH-SHELL-14c] TROCA DE MÓDULO com edição não salva no CRM: nada mud
   win.location.hash = '#/aprovacoes';
   await t.browser.flush(10);
   assert.ok(pergunta(), 'perguntou');
-  assert.deepEqual(ativo(t.browser), ['CRM'], 'o menu e a tela continuam no CRM');
+  assert.deepEqual(ativo(t.browser), ['Clientes'], 'o menu e a tela continuam no CRM');
   assert.ok(gaveta(), 'a gaveta com a edição continua aberta');
   assert.equal(t.browser.document.title.startsWith('Registro'), true, 'o título da página também não mudou');
 
@@ -398,20 +406,20 @@ test('[DASH-SHELL-14c] TROCA DE MÓDULO com edição não salva no CRM: nada mud
   assert.equal(win.location.hash, '#/crm/registro/crm%3Aa', 'o endereço voltou à ficha');
   assert.equal(win.history.length, entradas.length + 1, 'só a entrada que a própria pessoa criou ao ir para as aprovações — nenhuma a mais');
   assert.equal(t.browser.by.label(gaveta(), 'Cidade').value, 'Rascunho', 'o rascunho continua');
-  assert.deepEqual(ativo(t.browser), ['CRM']);
+  assert.deepEqual(ativo(t.browser), ['Clientes']);
 
   win.location.hash = '#/aprovacoes';
   await t.browser.flush(10);
   t.browser.click(t.browser.by.button(pergunta(), 'Descartar alterações'));
   await t.browser.flush(10);
-  assert.deepEqual(ativo(t.browser), ['Approval Queue'], 'descartou e foi para onde pediu');
+  assert.deepEqual(ativo(t.browser), ['Fila de Aprovação'], 'descartou e foi para onde pediu');
   assert.equal(gaveta(), null);
   assert.equal(win.location.hash, '#/aprovacoes');
   assert.deepEqual(escritas(), [], 'nada foi gravado');
 
   win.location.hash = '#/crm';
   await t.browser.flush(10);
-  assert.deepEqual(ativo(t.browser), ['CRM']);
+  assert.deepEqual(ativo(t.browser), ['Clientes']);
   assert.equal(win.fireBeforeUnload().prevented, false, 'sem rascunho, atualizar a página não pede nada');
 });
 
@@ -441,7 +449,7 @@ test('[DASH-SHELL-14d] SALVANDO, sair do CRM é recusado (o endereço volta e a 
 
   win.location.hash = '#/aprovacoes';
   await t.browser.flush(10);
-  assert.deepEqual(ativo(t.browser), ['CRM'], 'não saiu');
+  assert.deepEqual(ativo(t.browser), ['Clientes'], 'não saiu');
   assert.equal(win.location.hash, '#/crm/registro/crm%3Aa', 'o endereço voltou');
   assert.match(textoDaTela(t.browser), /Aguarde o salvamento terminar antes de sair\./);
 
@@ -450,7 +458,7 @@ test('[DASH-SHELL-14d] SALVANDO, sair do CRM é recusado (o endereço volta e a 
   assert.match(textoDaTela(t.browser), /Alterações salvas\./);
   win.location.hash = '#/aprovacoes';
   await t.browser.flush(10);
-  assert.deepEqual(ativo(t.browser), ['Approval Queue'], 'depois de salvar a troca é livre');
+  assert.deepEqual(ativo(t.browser), ['Fila de Aprovação'], 'depois de salvar a troca é livre');
 });
 
 // ===========================================================================
@@ -458,17 +466,17 @@ test('[DASH-SHELL-14d] SALVANDO, sair do CRM é recusado (o endereço volta e a 
 // ===========================================================================
 test('[DASH-SHELL-15] COMMERCIAL_CLOSER no painel: vê o menu, a lista e a ficha, mas não tem nenhum botão de escrita — e uma tentativa de criar por link direto mostra que a conta não pode', async () => {
   const t = await iniciar({ session: true, routes: await rotasLogado(ME_CLOSER) });
-  assert.match(textoDaTela(t.browser), /Closer comercial/);
+  assert.match(textoDaTela(t.browser), /Vendedor/);
   // COMMERCIAL_CLOSER não tem PROPOSE:LEAD_APPROVAL (mesma decisão já vigente do Prospecting Service): "Prospecção"
   // não aparece — diferente de "Funis" (READ:CRM, que o closer tem).
-  assert.deepEqual(linksDoMenu(t.browser).map((link) => link.textContent), ['Visão Geral', 'CRM', 'Approval Queue', 'Leads Reprovados', 'Funis', 'Central de Agentes']);
+  assert.deepEqual(linksDoMenu(t.browser).map((link) => link.textContent), ['Visão Geral', 'CRM', 'Dashboard Comercial', 'Clientes', 'Funis de Vendas', 'Metas e Indicadores', 'Configurações do CRM', 'Serviços', 'Nichos e Cores', 'Gestão de Funis e Etapas', 'Origens dos Leads', 'Fila de Aprovação', 'Leads Reprovados', 'Central de Agentes']);
   t.browser.window.location.hash = '#/crm';
   await t.browser.flush();
   assert.match(textoDaTela(t.browser), /Odonto Beta/);
   assert.equal(t.browser.by.link(t.browser.root, 'Novo registro'), null);
   t.browser.window.location.hash = '#/crm/registro/crm%3Aa';
   await t.browser.flush();
-  for (const botao of ['Editar', 'Mudar status', 'Marcar como Não contatar']) assert.equal(t.browser.by.button(t.browser.root, botao), null, botao);
+  for (const botao of ['Editar', 'Mudar status', 'Marcar como Não Contatar']) assert.equal(t.browser.by.button(t.browser.root, botao), null, botao);
   t.browser.window.location.hash = '#/crm/novo';
   await t.browser.flush();
   assert.match(textoDaTela(t.browser), /Sua conta não pode criar registros no CRM\./);
@@ -480,14 +488,14 @@ test('[DASH-SHELL-15] COMMERCIAL_CLOSER no painel: vê o menu, a lista e a ficha
 test('[DASH-SHELL-16] uma conta sem READ:CRM não vê o item CRM no menu, e o link direto mostra "sem acesso" SEM chamar a API do CRM', async () => {
   const semCrm = { ...ME_ADMIN, permissions: ['APPROVE:LEAD_APPROVAL'] };
   const t = await iniciar({ session: true, routes: await rotasLogado(semCrm), hash: '#/crm' });
-  assert.deepEqual(linksDoMenu(t.browser).map((link) => link.textContent), ['Visão Geral', 'Approval Queue', 'Leads Reprovados', 'Central de Agentes']);
+  assert.deepEqual(linksDoMenu(t.browser).map((link) => link.textContent), ['Visão Geral', 'Fila de Aprovação', 'Leads Reprovados', 'Central de Agentes']);
   assert.match(textoDaTela(t.browser), /Esta conta não possui acesso a esta área\./);
   assert.equal(chamadasDeApi(t.fetchImpl).filter((chamada) => chamada.path.startsWith('/api/crm')).length, 0);
 
   t.browser.window.location.hash = '#/';
   await t.browser.flush();
   assert.doesNotMatch(textoDaTela(t.browser), /registros no CRM/, 'a Visão Geral também não mostra o cartão do CRM');
-  assert.match(textoDaTela(t.browser), /prospect aguardando revisão/);
+  assert.match(textoDaTela(t.browser), /lead aguardando revisão/);
 });
 
 test('[DASH-SHELL-17] o servidor tem a última palavra: uma conta que a interface deixou ver mas o servidor recusa (403 na lista) mostra a frase de permissão, sem quebrar o painel', async () => {
@@ -519,7 +527,7 @@ test('[DASH-SHELL-18] a fila de aprovação segue igual: abrir, selecionar um pr
   await t.browser.flush();
   const aprovacao = chamadasDeApi(t.fetchImpl).find((chamada) => chamada.method === 'POST');
   assert.deepEqual(aprovacao.body, { reason: 'Bom fit' });
-  assert.match(textoDaTela(t.browser), /Prospect aprovado\./);
+  assert.match(textoDaTela(t.browser), /Lead aprovado\./);
   assert.match(textoDaTela(t.browser), /0 pendentes/);
   assert.equal(chamadasDeApi(t.fetchImpl).filter((chamada) => chamada.path.startsWith('/api/crm')).length, 0, 'a fila não chama o CRM');
 });

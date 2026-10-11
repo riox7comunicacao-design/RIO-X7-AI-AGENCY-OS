@@ -22,9 +22,9 @@ const loadApi = () => import('../../dashboard/api.mjs');
 const loadView = () => import('../../dashboard/views/approvals.mjs');
 const CONFIG = { supabaseUrl: 'https://exemplo.supabase.co', supabaseAnonKey: 'chave-anon-de-teste-nao-real' };
 
-const PROMOVIDO = 'Prospect promovido para o CRM.';
-const JA_PROMOVIDO = 'Este prospect já foi promovido para o CRM.';
-const CONFIRMACAO = 'Este prospect será incluído no CRM e poderá entrar no pipeline comercial.';
+const PROMOVIDO = 'Lead promovido para o CRM.';
+const JA_PROMOVIDO = 'Este lead já foi promovido para o CRM.';
+const CONFIRMACAO = 'Este lead será incluído no CRM e poderá entrar no funil de vendas.';
 
 // A mensagem de status exata (o texto também aparece no detalhe, então olhar só o texto da tela não basta).
 const mensagem = (s) => {
@@ -141,7 +141,7 @@ test('[DASH-PROMO-3] o botão "Promover para CRM" aparece SÓ para um prospect a
 
   const closer = await abrir({ api: api(), canPromote: false, selecionar: 'Aprovada Teste' });
   assert.equal(botao(closer, 'Promover para CRM'), null, 'quem não pode promover não vê o botão');
-  assert.match(tela(closer.browser), /Sua conta não pode promover prospects para o CRM\./);
+  assert.match(tela(closer.browser), /Sua conta não pode promover leads para o CRM\./);
 
   const pendenteAdmin = await abrir({ api: api(), filtro: null, selecionar: 'Pendente Teste' });
   assert.equal(botao(pendenteAdmin, 'Promover para CRM'), null, 'aguardando revisão nunca tem o botão');
@@ -251,8 +251,8 @@ test('[DASH-PROMO-10] as recusas do servidor viram frases claras: duplicidade, r
     [new ApiError(409, 'PROMOTION_BLOCKED_DNC', 'Promoção bloqueada: existe uma restrição de contato para este prospect.'), /restrição de contato/],
     [new ApiError(409, 'PROMOTION_NOT_APPROVED', 'Este prospect não está aprovado para o CRM.'), /não está aprovado/],
     [new ApiError(409, 'OUTRO_CODIGO', 'texto que não é de promoção /caminho/segredo'), /^(?!.*segredo).*A promoção foi bloqueada\./],
-    [new ApiError(403, 'FORBIDDEN', 'Esta conta não possui acesso a esta área.'), /Sua conta não pode promover prospects para o CRM\./],
-    [new ApiError(404, 'NOT_FOUND', 'Item não encontrado.'), /Este prospect não foi encontrado/],
+    [new ApiError(403, 'FORBIDDEN', 'Esta conta não possui acesso a esta área.'), /Sua conta não pode promover leads para o CRM\./],
+    [new ApiError(404, 'NOT_FOUND', 'Item não encontrado.'), /Este lead não foi encontrado/],
     [new ApiError(500, 'INTERNAL', 'Erro interno. Tente novamente em instantes.'), /Não foi possível concluir a operação agora/],
     [new ApiError(0, 'NETWORK', ''), /Não foi possível concluir a operação agora/],
   ];
@@ -337,7 +337,7 @@ async function aprovarPelaTela(s, empresa) {
   await clicar(s, empresa);
   await clicar(s, 'Aprovar');
   await clicar(s, 'Confirmar aprovação');
-  assert.match(tela(s.browser), /Prospect aprovado\./);
+  assert.match(tela(s.browser), /Lead aprovado\./);
 }
 
 test('[DASH-PROMO-14] ADMIN, ponta a ponta: aprovar -> Aprovados -> Promover -> confirmar -> registro no CRM -> "Ver no CRM" -> de volta: já promovido, sem duplicar', async (t) => {
@@ -390,7 +390,7 @@ test('[DASH-PROMO-15] o closer aprova pela tela mas NÃO vê "Promover para CRM"
   await clicar(s, 'Aprovados');
   await clicar(s, 'Consultório Alfa');
   assert.equal(botao(s, 'Promover para CRM'), null);
-  assert.match(tela(s.browser), /Sua conta não pode promover prospects para o CRM\./);
+  assert.match(tela(s.browser), /Sua conta não pode promover leads para o CRM\./);
   assert.equal(promocoes(s).length, 0);
 
   // a interface é só conveniência: a mesma chamada, feita à mão com o token do closer, é recusada pelo servidor
