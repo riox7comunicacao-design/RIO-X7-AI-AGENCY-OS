@@ -859,3 +859,33 @@ table.list.queue .reason-text { max-width: 320px; overflow-wrap: anywhere; displ
   table.queue td { display: flex; justify-content: space-between; gap: 12px; padding: 4px 0; border-bottom: 0; }
   table.queue td::before { flex: 0 0 34%; content: attr(data-label); color: var(--muted); font-weight: 600; }
 }
+
+/* --- cores dos nichos (CRM 5.0, Fase 2B-1) ---------------------------------------------------------- */
+/* A PALETA FIXA de 20 cores dos nichos (src/crm/catalogConstants.js#NICHE_COLORS). O servidor e o banco guardam só a CHAVE
+   ("azul"); a interface a transforma na classe .cor-azul — nunca um estilo inline (CSP style-src 'self'; DASH-GUARD-8). Cada
+   classe define três tons: fundo (tinta clara do chip), texto (contraste >= 7:1 sobre o fundo) e ponto (a cor de destaque,
+   contraste >= 3:1). O chip SEMPRE traz o nome do nicho em texto: a cor nunca é a única informação. Uma chave desconhecida, ou
+   a ausência de classe de cor, cai no tom neutro (ardósia). tests/server/dashboard-catalog-colors.test.js confere que estas
+   classes e a paleta do servidor são idênticas e recalcula os contrastes. Ainda NÃO há tela que use isto (Fase 2B-2). */
+.nicho-chip { --cor-fundo: #edeff2; --cor-texto: #404f64; --cor-ponto: #3c4653; display: inline-flex; align-items: center; gap: 6px; max-width: 100%; padding: 2px 10px; border-radius: 999px; background: var(--cor-fundo); color: var(--cor-texto); font-size: 12.5px; font-weight: 600; }
+.nicho-chip::before { content: ""; flex: none; width: 8px; height: 8px; border-radius: 50%; background: var(--cor-ponto); }
+.cor-vermelho { --cor-fundo: #fde4e3; --cor-texto: #8f2119; --cor-ponto: #d91f12; }
+.cor-laranja { --cor-fundo: #fdece3; --cor-texto: #7e3c16; --cor-ponto: #aa470e; }
+.cor-ambar { --cor-fundo: #fdf3e3; --cor-texto: #6c4c13; --cor-ponto: #c18010; }
+.cor-amarelo { --cor-fundo: #fdf8e3; --cor-texto: #5f5211; --cor-ponto: #7c6a0e; }
+.cor-lima { --cor-fundo: #f5fde3; --cor-texto: #455b10; --cor-ponto: #719c0d; }
+.cor-verde { --cor-fundo: #e4fde3; --cor-texto: #135f11; --cor-ponto: #12a50d; }
+.cor-esmeralda { --cor-fundo: #e3fdf0; --cor-texto: #115f38; --cor-ponto: #0da057; }
+.cor-turquesa { --cor-fundo: #e3fdf9; --cor-texto: #115f55; --cor-ponto: #049f8a; }
+.cor-ciano { --cor-fundo: #e3f9fd; --cor-texto: #125964; --cor-ponto: #0e99af; }
+.cor-celeste { --cor-fundo: #e3f2fd; --cor-texto: #16547e; --cor-ponto: #0e6baa; }
+.cor-azul { --cor-fundo: #e3ecfd; --cor-texto: #1a4793; --cor-ponto: #125bd9; }
+.cor-indigo { --cor-fundo: #e3e4fd; --cor-texto: #1a2293; --cor-ponto: #12197d; }
+.cor-violeta { --cor-fundo: #eae3fd; --cor-texto: #3a1a93; --cor-ponto: #4712d9; }
+.cor-roxo { --cor-fundo: #f2e3fd; --cor-texto: #631a93; --cor-ponto: #6b0eaa; }
+.cor-orquidea { --cor-fundo: #fae3fd; --cor-texto: #7f188b; --cor-ponto: #c512d9; }
+.cor-magenta { --cor-fundo: #fde3f7; --cor-texto: #8b1870; --cor-ponto: #aa0e85; }
+.cor-rosa { --cor-fundo: #fde3ee; --cor-texto: #8f194c; --cor-ponto: #d91268; }
+.cor-carmim { --cor-fundo: #fde3e7; --cor-texto: #931a2e; --cor-ponto: #aa0e28; }
+.cor-marrom { --cor-fundo: #f7efe9; --cor-texto: #68482c; --cor-ponto: #b37c4d; }
+.cor-ardosia { --cor-fundo: #edeff2; --cor-texto: #404f64; --cor-ponto: #3c4653; }

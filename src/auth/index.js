@@ -25,6 +25,7 @@ const { authorizeCrmOperation } = require('./crmBridge');
 const { authorizeProposerForLeadApproval } = require('./leadProposalBridge');
 const { authorizeFunnelOperation } = require('./funnelBridge');
 const { authorizeProspectingExclusionOperation } = require('./prospectingExclusionBridge');
+const { authorizeCatalogOperation } = require('./catalogBridge');
 
 // Fase C: createAuthorizationContext e o emissor de contexto NÃO são exportados.
 // O emissor é interno (internal/contextIssuer.js) e só o userResolver o usa; o
@@ -57,4 +58,5 @@ module.exports = {
   authorizeProposerForLeadApproval,
   authorizeFunnelOperation,
   authorizeProspectingExclusionOperation,
+  authorizeCatalogOperation,
 };

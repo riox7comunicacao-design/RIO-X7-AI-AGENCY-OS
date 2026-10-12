@@ -9,6 +9,7 @@
 const { createSupabaseCrmRepository, DEFAULT_TABLE } = require('./crmSupabaseRepository');
 const { readSupabaseCrmConfig, isSupabaseCrmConfigured } = require('./crmSupabaseConfig');
 const { FIELD_COLUMNS, MANAGED_COLUMNS, camelToSnake, recordToRow, rowToRecord } = require('./crmSupabaseMapping');
+const { createSupabaseCatalogRepository, CATALOG_TABLES } = require('./crmSupabaseCatalogRepository');
 
 module.exports = {
   createSupabaseCrmRepository,
@@ -20,4 +21,6 @@ module.exports = {
   camelToSnake,
   recordToRow,
   rowToRecord,
+  createSupabaseCatalogRepository,
+  CATALOG_TABLES,
 };

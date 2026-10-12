@@ -46,6 +46,18 @@
 //   GET    /api/funnel-cards/:id/history       histórico de movimentação (append-only)            -> 200 { historico }
 //   DELETE /api/funnel-cards/:id               ARQUIVA (nunca apaga; nunca afeta o CRM Record)     -> 200 { deleted: true, id }
 // Não há filtro nem busca (além do funil) nesta etapa: o Service não os tem, e a API não inventa operação.
+// Catálogos do CRM — Serviços, Nichos e Origens dos Leads (CRM 5.0, Fase 2B-1, decisão 0026) — só existem quando o Catalog Service é
+// injetado; sem ele, /api/crm-catalogs... é 404. O prefixo é `crm-catalogs` (e não /api/crm/catalogs) DE PROPÓSITO: /api/crm/:id é a
+// rota de um registro, e "catalogs" seria lido como um id. <catalogo> é servicos | nichos | origens; qualquer outro é 404. Ler os
+// itens ATIVOS exige READ:CRM; todo o resto (e ver os desativados) exige MANAGE:CRM_CATALOGS, hoje só ADMIN — quem decide é o Service.
+// NÃO há DELETE: "excluir" é desativar.
+//   GET   /api/crm-catalogs/<catalogo>[?todos=1]        os itens, em ordem (todos=1 inclui desativados) -> 200 { items }
+//   POST  /api/crm-catalogs/<catalogo>                  cria; corpo = campos do item                    -> 201 { item }
+//   POST  /api/crm-catalogs/<catalogo>/reorder          corpo { orderedIds: [...] } (todos os itens)     -> 200 { items }
+//   GET   /api/crm-catalogs/<catalogo>/:id              um item (administrador recebe também `emUso`)    -> 200 { item }
+//   PATCH /api/crm-catalogs/<catalogo>/:id              edita; corpo = só os campos a mudar              -> 200 { item }
+//   POST  /api/crm-catalogs/<catalogo>/:id/activate     corpo {}                                          -> 200 { item }
+//   POST  /api/crm-catalogs/<catalogo>/:id/deactivate   corpo {}                                          -> 200 { item }
 // Tudo fora de /api é arquivo estático (ver static.js).
 //
 // PIPELINE de toda rota de /api, sempre nesta ordem:
@@ -129,6 +141,13 @@ const PROSPECTING_BRIEF_OPERATIONS = Object.freeze(['createBrief', 'listBriefs',
 const PROSPECTING_JOB_OPERATIONS = Object.freeze(['startJob', 'getJob', 'listJobs', 'cancelJob']);
 // As operações do Prospecting Permanent Exclusion Service (Workbench, Etapa 2) que a API usa.
 const PROSPECTING_EXCLUSION_OPERATIONS = Object.freeze(['list', 'getById', 'create', 'update', 'deactivate', 'activate']);
+// As operações do Catalog Service (src/services/catalogService.js) que a API usa — catálogos do CRM (Fase 2B-1).
+const CRM_CATALOG_OPERATIONS = Object.freeze(['list', 'get', 'create', 'update', 'activate', 'deactivate', 'reorder']);
+// Os três catálogos, como segmento da URL. Duplica de propósito CATALOG_KEYS do domínio (este módulo não importa src/crm — R12); um
+// teste vigia que as duas listas não divirjam.
+const CRM_CATALOG_KEYS = Object.freeze(['servicos', 'nichos', 'origens']);
+// <catalogo>, depois (nada | /reorder | /:id | /:id/activate | /:id/deactivate). Grupos: 1 catálogo, 2 "reorder", 3 id, 4 ação.
+const CRM_CATALOG_ROUTE = new RegExp(`^/api/crm-catalogs/(${CRM_CATALOG_KEYS.join('|')})(?:/(reorder)|/([^/]+)(?:/(activate|deactivate))?)?$`);
 
 const NO_ACCESS_MESSAGE = 'Esta conta não possui acesso a esta área.';
 
@@ -203,6 +222,13 @@ const CATALOG = Object.freeze({
   EXCLUSION_INVALID_INPUT: [400, 'A exclusão é inválida.'],
   EXCLUSION_NOT_FOUND: [404, 'Exclusão não encontrada.'],
   EXCLUSION_PERSISTENCE: [503, 'Não foi possível ler ou gravar as exclusões agora. Tente novamente em instantes.'],
+  // Catálogos do CRM (Fase 2B-1), por `code` estável do Catalog Service/domínio — nunca por mensagem. Mensagens FIXAS: nunca o valor
+  // recusado, o id de outro item nem o texto do erro de armazenamento. A recusa de AUTORIZAÇÃO não passa por aqui (é 403 de sempre).
+  CRM_CATALOG_INVALID_INPUT: [400, 'Os dados do cadastro são inválidos.'],
+  CRM_CATALOG_NOT_FOUND: [404, 'Item do cadastro não encontrado.'],
+  CRM_CATALOG_DUPLICATE_NAME: [409, 'Já existe um item com este nome (mesmo desativado).'],
+  CRM_CATALOG_NAME_IN_USE: [409, 'Este item já é usado em registros do CRM e o nome não pode ser alterado nesta fase.'],
+  CRM_CATALOG_PERSISTENCE: [503, 'Não foi possível ler ou gravar os cadastros agora. Tente novamente em instantes.'],
   // Funis configuráveis (Etapa "Funis 1"), por `code` estável do domínio (funnelDomain.js) — nunca por mensagem:
   // quais funis/etapas foram vinculados a um card não é dito (o card ainda nem existe nesta etapa).
   FUNNEL_HAS_CARDS: [409, 'Este funil possui cards vinculados e não pode ser excluído.'],
@@ -325,6 +351,16 @@ const EXCLUSION_CODES = Object.freeze({
   EXCLUSION_PERSISTENCE: 'EXCLUSION_PERSISTENCE',
 });
 
+// O `code` do domínio/Catalog Service dos catálogos do CRM (catalogDomain.js) que a API reconhece — mesmo mapeamento identidade das
+// listas acima (CRM 5.0, Fase 2B-1). Um teste vigia que esta lista não diverge de CATALOG_ERROR.
+const CRM_CATALOG_CODES = Object.freeze({
+  CRM_CATALOG_INVALID_INPUT: 'CRM_CATALOG_INVALID_INPUT',
+  CRM_CATALOG_NOT_FOUND: 'CRM_CATALOG_NOT_FOUND',
+  CRM_CATALOG_DUPLICATE_NAME: 'CRM_CATALOG_DUPLICATE_NAME',
+  CRM_CATALOG_NAME_IN_USE: 'CRM_CATALOG_NAME_IN_USE',
+  CRM_CATALOG_PERSISTENCE: 'CRM_CATALOG_PERSISTENCE',
+});
+
 // O `code` do Lead Reconsideration Service (leadReconsiderationService.js) que a API reconhece (Implementação 3.0).
 const RECON_CODES = Object.freeze({
   FILTRO_INVALIDO: 'RECON_FILTRO_INVALIDO',
@@ -438,6 +474,9 @@ function mapErrorToHttp(error) {
     code = RECON_CODES[error.code];
   } else if (error && typeof error === 'object' && Object.prototype.hasOwnProperty.call(EXCLUSION_CODES, error.code)) {
     code = EXCLUSION_CODES[error.code];
+    if (CATALOG[code][0] === 400) details = safeDetails(error.details);
+  } else if (error && typeof error === 'object' && typeof error.code === 'string' && Object.prototype.hasOwnProperty.call(CRM_CATALOG_CODES, error.code)) {
+    code = CRM_CATALOG_CODES[error.code];
     if (CATALOG[code][0] === 400) details = safeDetails(error.details);
   } else {
     const message = error && typeof error.message === 'string' ? error.message : '';
@@ -616,7 +655,7 @@ function parseTarget(req) {
 }
 
 // `crm`: as rotas do CRM só existem quando o CRM Service foi injetado; sem ele, /api/crm... é uma rota desconhecida (404).
-function matchRoute(pathname, { crm, promotion, prospecting, prospectingBatchReads, prospectingBrief, prospectingJobs, prospectingExclusions, funnels, leadReview, leadEnrichment }) {
+function matchRoute(pathname, { crm, promotion, prospecting, prospectingBatchReads, prospectingBrief, prospectingJobs, prospectingExclusions, funnels, crmCatalogs, leadReview, leadEnrichment }) {
   if (pathname === '/api/me') return { name: 'me', label: '/api/me', methods: ['GET'] };
   if (pathname === '/api/approvals') return { name: 'list', label: '/api/approvals', methods: ['GET'] };
   if (prospecting && pathname === '/api/prospecting/submit') return { name: 'prospecting-submit', label: '/api/prospecting/submit', methods: ['POST'] };
@@ -666,6 +705,19 @@ function matchRoute(pathname, { crm, promotion, prospecting, prospectingBatchRea
     if (action) return { family: 'prospecting-exclusion', name: `exclusion-${action[2]}`, label: `/api/prospecting/exclusions/:id/${action[2]}`, methods: ['POST'], rawId: action[1] };
     const item2 = /^\/api\/prospecting\/exclusions\/([^/]+)$/.exec(pathname);
     if (item2) return { family: 'prospecting-exclusion', name: 'exclusion-item', label: '/api/prospecting/exclusions/:id', methods: ['GET', 'PATCH'], rawId: item2[1] };
+  }
+  // Catálogos do CRM (Fase 2B-1) — só existe quando o Catalog Service foi injetado. O prefixo é /api/crm-catalogs, NUNCA /api/crm/...
+  // (rota de um registro, que leria "catalogs" como um id). Mesmo cuidado de ordem: /reorder e as ações vêm antes do :id genérico;
+  // um <catalogo> desconhecido não casa e cai em 404 como qualquer rota de /api desconhecida.
+  if (crmCatalogs) {
+    const catalogRoute = CRM_CATALOG_ROUTE.exec(pathname);
+    if (catalogRoute) {
+      const [, catalog, reorder, rawId, action] = catalogRoute;
+      if (reorder) return { family: 'crm-catalog', name: 'catalog-reorder', label: '/api/crm-catalogs/:catalogo/reorder', methods: ['POST'], catalog };
+      if (rawId === undefined) return { family: 'crm-catalog', name: 'catalog-collection', label: '/api/crm-catalogs/:catalogo', methods: ['GET', 'POST'], catalog };
+      if (action) return { family: 'crm-catalog', name: `catalog-${action}`, label: `/api/crm-catalogs/:catalogo/:id/${action}`, methods: ['POST'], catalog, rawId };
+      return { family: 'crm-catalog', name: 'catalog-item', label: '/api/crm-catalogs/:catalogo/:id', methods: ['GET', 'PATCH'], catalog, rawId };
+    }
   }
   if (promotion) {
     const promote = /^\/api\/approvals\/([^/]+)\/promote$/.exec(pathname);
@@ -788,6 +840,7 @@ function createApp(dependencies) {
     leadReconsiderationService,
     leadEnrichmentService,
     funnelService,
+    crmCatalogService,
     publicConfig,
     staticRoot,
     staticFiles,
@@ -848,6 +901,11 @@ function createApp(dependencies) {
   if (funnelService !== undefined) {
     for (const operation of FUNNEL_OPERATIONS) {
       if (!funnelService || typeof funnelService[operation] !== 'function') throw new Error(`createApp exige { funnelService } com ${operation}()`);
+    }
+  }
+  if (crmCatalogService !== undefined) {
+    for (const operation of CRM_CATALOG_OPERATIONS) {
+      if (!crmCatalogService || typeof crmCatalogService[operation] !== 'function') throw new Error(`createApp exige { crmCatalogService } com ${operation}()`);
     }
   }
   if (!publicConfig || typeof publicConfig.supabaseUrl !== 'string' || typeof publicConfig.supabaseAnonKey !== 'string') {
@@ -1156,6 +1214,42 @@ function createApp(dependencies) {
     throw new HttpError('ROUTE_NOT_FOUND');
   }
 
+  // Catálogos do CRM — Serviços, Nichos e Origens dos Leads (Fase 2B-1): cada rota só traduz HTTP <-> uma chamada ao Catalog Service,
+  // com o AuthorizationContext do token. A permissão (READ:CRM / MANAGE:CRM_CATALOGS), a validação dos campos, a unicidade e a trava de
+  // renomeação são do Service. Nenhum corpo ou query participa da identidade ou da permissão. Não existe rota DELETE (desativar).
+  async function dispatchCrmCatalog(req, url, route, context) {
+    const catalog = route.catalog;
+    if (route.name === 'catalog-collection') {
+      if (req.method === 'GET') {
+        // ?todos=1 inclui os desativados (exige MANAGE no Service); ?todos=0 é o padrão. Qualquer outro valor é 400.
+        const query = readQuery(url, ['todos']);
+        let incluirInativos = false;
+        if (query.has('todos')) {
+          const raw = query.get('todos');
+          if (raw === '1') incluirInativos = true;
+          else if (raw !== '0') throw new HttpError('INVALID_REQUEST', 'Parâmetros não permitidos.');
+        }
+        return respond(200, { items: await crmCatalogService.list(context, catalog, { incluirInativos }) });
+      }
+      readQuery(url, []);
+      return respond(201, { item: await crmCatalogService.create(context, catalog, await readJsonBody(req)) });
+    }
+    readQuery(url, []);
+    if (route.name === 'catalog-reorder') {
+      const picked = readActionBody(await readJsonBody(req), ['orderedIds']);
+      return respond(200, { items: await crmCatalogService.reorder(context, catalog, picked.orderedIds) });
+    }
+    const id = decodeId(route.rawId);
+    if (route.name === 'catalog-item') {
+      if (req.method === 'GET') return respond(200, { item: await crmCatalogService.get(context, catalog, id) });
+      return respond(200, { item: await crmCatalogService.update(context, catalog, id, await readJsonBody(req)) });
+    }
+    if (Object.keys(await readJsonBody(req)).length > 0) throw new HttpError('INVALID_REQUEST', 'Campos não permitidos na requisição.');
+    if (route.name === 'catalog-activate') return respond(200, { item: await crmCatalogService.activate(context, catalog, id) });
+    if (route.name === 'catalog-deactivate') return respond(200, { item: await crmCatalogService.deactivate(context, catalog, id) });
+    throw new HttpError('ROUTE_NOT_FOUND');
+  }
+
   async function dispatch(req, trace) {
     const url = parseTarget(req);
     const route = matchRoute(url.pathname, {
@@ -1167,6 +1261,7 @@ function createApp(dependencies) {
       prospectingJobs: prospectingJobService !== undefined,
       prospectingExclusions: prospectingExclusionService !== undefined,
       funnels: funnelService !== undefined,
+      crmCatalogs: crmCatalogService !== undefined,
       leadReview: leadReconsiderationService !== undefined,
       leadEnrichment: leadEnrichmentService !== undefined,
     });
@@ -1182,6 +1277,7 @@ function createApp(dependencies) {
 
     if (route.family === 'crm') return dispatchCrm(req, url, route, context);
     if (route.family === 'funnel') return dispatchFunnel(req, url, route, context);
+    if (route.family === 'crm-catalog') return dispatchCrmCatalog(req, url, route, context);
     if (route.family === 'prospecting-brief') return dispatchProspectingBrief(req, url, route, context);
     if (route.family === 'prospecting-job') return dispatchProspectingJob(req, url, route, context);
     if (route.family === 'prospecting-exclusion') return dispatchProspectingExclusion(req, url, route, context);

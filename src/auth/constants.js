@@ -65,6 +65,11 @@ const PERMISSION = Object.freeze({
   // não é sobre Funil, não é propor um lead) — decisão explícita do proprietário de criar a MENOR permissão nova
   // possível em vez de reaproveitar uma que não é semanticamente correta. Só ADMIN a recebe.
   MANAGE_PROSPECTING_EXCLUSIONS: 'MANAGE:PROSPECTING_EXCLUSIONS',
+  // Administrar os CATÁLOGOS do CRM — Serviços, Nichos e Origens dos Leads (CRM 5.0, Fase 2B-1, decisão 0026): criar, editar,
+  // reordenar, desativar e reativar itens. Não é sobre um registro do CRM (WRITE:CRM), nem sobre Funis (MANAGE:FUNNELS): é a lista
+  // controlada que os registros e as negociações passarão a usar — uma capacidade administrativa distinta, mesmo raciocínio de
+  // MANAGE:FUNNELS. Só ADMIN a recebe. CONSULTAR os itens ATIVOS exige só READ:CRM (a permissão de leitura que já existe).
+  MANAGE_CRM_CATALOGS: 'MANAGE:CRM_CATALOGS',
 });
 
 const PERMISSION_FORMAT = /^[A-Z][A-Z0-9_]*:[A-Z][A-Z0-9_]*$/;
@@ -98,7 +103,7 @@ function isValidPermissionString(permission) {
 // autorização (hasPermission/requirePermission) leem apenas o array
 // `permissions` do contexto — nunca comparam o nome da role.
 //
-// ADMIN: exatamente as 10 permissões abaixo — nunca um coringa "*:*" (proibido
+// ADMIN: exatamente as 12 permissões abaixo — nunca um coringa "*:*" (proibido
 // pela decisão 0010, seção 10).
 const ADMIN_PERMISSIONS = Object.freeze([
   PERMISSION.READ_CRM,
@@ -115,11 +120,14 @@ const ADMIN_PERMISSIONS = Object.freeze([
   PERMISSION.MANAGE_FUNNELS,
   // Administrar Exclusões Permanentes de Prospecção (Etapa 2 do Workbench) — só ADMIN; nunca COMMERCIAL_CLOSER.
   PERMISSION.MANAGE_PROSPECTING_EXCLUSIONS,
+  // Administrar os catálogos do CRM (Serviços, Nichos, Origens dos Leads — Fase 2B-1) — só ADMIN; nunca COMMERCIAL_CLOSER.
+  PERMISSION.MANAGE_CRM_CATALOGS,
 ]);
 
 // COMMERCIAL_CLOSER: exatamente as 5 permissões abaixo — WRITE:CRM, DELETE:CRM,
-// MANAGE:USERS, MANAGE:FUNNELS e PROPOSE:LEAD_APPROVAL (propor candidatos do
-// Prospector) ficam de fora, propositalmente.
+// MANAGE:USERS, MANAGE:FUNNELS, MANAGE:PROSPECTING_EXCLUSIONS, MANAGE:CRM_CATALOGS
+// e PROPOSE:LEAD_APPROVAL (propor candidatos do Prospector) ficam de fora,
+// propositalmente.
 const COMMERCIAL_CLOSER_PERMISSIONS = Object.freeze([
   PERMISSION.READ_CRM,
   PERMISSION.ANALYZE_CRM,

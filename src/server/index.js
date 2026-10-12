@@ -21,6 +21,8 @@
 //   RIO_X7_QUEUE_PATH                 o arquivo da fila (padrão: o do domínio, data/approval-queue.json)
 //   RIO_X7_CRM_PATH                   o arquivo do CRM (padrão: data/crm.json; criado no primeiro registro)
 //   RIO_X7_FUNNELS_PATH               o arquivo de Funis/Etapas (padrão: data/funnels.json; Etapa "Funis 1")
+//   RIO_X7_CRM_CATALOGS_PATH          o arquivo dos catálogos do CRM — Serviços, Nichos, Origens dos Leads (padrão:
+//                                     data/crm-catalogs.json; só no modo "file"; criado quando um ADMIN cria o 1º item)
 //   RIO_X7_PROSPECTING_BRIEFS_PATH     o arquivo de Briefs do Workbench (padrão: data/prospecting-briefs.json;
 //                                     Etapa "Prospecção 1")
 //   REPOSITORY_MODE (etapas 2.3/3H)   "file" (padrão, não exige nenhuma credencial nova) ou "supabase" (exige a
@@ -52,6 +54,7 @@ const {
   authorizeProposerForLeadApproval,
   authorizeFunnelOperation,
   authorizeProspectingExclusionOperation,
+  authorizeCatalogOperation,
 } = require('../auth');
 const { createApprovalQueueService } = require('../services/approvalQueueService');
 // Funnel Service (reestruturação Prospecção/CRM/Funis, Etapa "Funis 1") — só o adapter de arquivo local existe
@@ -68,6 +71,10 @@ const { createFileBackedProspectingService } = require('../services/prospectingF
 // Prospecting Permanent Exclusion Service (Workbench, Etapa 2) — mesma REPOSITORY_MODE do CRM; só existe em
 // "supabase" (nunca um terceiro adapter local — ver o cabeçalho de prospectingExclusionRepositoryFactory.js).
 const { createConfiguredProspectingExclusionService } = require('../services/prospectingExclusionRepositoryFactory');
+// Catalog Service (CRM 5.0, Fase 2B-1 — Serviços, Nichos e Origens dos Leads): mesma REPOSITORY_MODE do CRM ("file" por padrão, com um
+// arquivo local; "supabase" exige as tabelas da migration NÃO APLICADA). O contador de uso lê o MESMO repositório bruto do CRM.
+const { createConfiguredCatalogService } = require('../services/catalogRepositoryFactory');
+const { createCrmCatalogUsageCounter } = require('../services/catalogUsage');
 // Prospecting Brief Service (Etapa "Prospecção 1" — Workbench): a camada ANTES da submissão — nunca reconstrói o
 // Prospecting Service, só o recebe pronto (ver o cabeçalho de prospectingBriefFileService.js).
 const { createFileBackedProspectingBriefService } = require('../services/prospectingBriefFileService');
@@ -86,6 +93,8 @@ const DEFAULT_USERS_FILE = path.join(ROOT, 'data', 'users.json');
 // Dados do CRM: um arquivo local em data/ (o .gitignore exclui data/*.json — são dados pessoais de prospects).
 const DEFAULT_CRM_FILE = path.join(ROOT, 'data', 'crm.json');
 const DEFAULT_FUNNELS_FILE = path.join(ROOT, 'data', 'funnels.json');
+// Catálogos do CRM (modo "file"): o arquivo só passa a existir quando um ADMIN cria o primeiro item — nada é criado na subida.
+const DEFAULT_CRM_CATALOGS_FILE = path.join(ROOT, 'data', 'crm-catalogs.json');
 
 const DEFAULT_HOST = '127.0.0.1';
 const DEFAULT_PORT = 3000;
@@ -272,6 +281,16 @@ function createServer(env = process.env, options = {}) {
     crmService,
   });
 
+  // Catalog Service (Fase 2B-1): administrar (MANAGE:CRM_CATALOGS, só ADMIN) e consultar os itens ativos (READ:CRM) os catálogos de
+  // Serviços, Nichos e Origens dos Leads. NÃO liga nada ao CRM: os campos nicho/origem/servicoPotencial seguem texto livre. O contador
+  // de uso lê o MESMO `crmRepository` acima (nunca autoriza nem grava) só para recusar renomear um item que algum registro usa.
+  const crmCatalogService = createConfiguredCatalogService({
+    env,
+    authorizeOperation: authorizeCatalogOperation,
+    filePath: resolveFile(env.RIO_X7_CRM_CATALOGS_PATH, DEFAULT_CRM_CATALOGS_FILE),
+    countUsage: createCrmCatalogUsageCounter({ crmRepository }),
+  });
+
   const app = createApp({
     verifyAccessToken: authAdapter.verifyAccessToken,
     userStore,
@@ -285,6 +304,7 @@ function createServer(env = process.env, options = {}) {
     leadEnrichmentService,
     prospectingExclusionService,
     funnelService,
+    crmCatalogService,
     publicConfig: { supabaseUrl, supabaseAnonKey },
     staticRoot: DASHBOARD_ROOT,
     staticFiles: { '/lib/supabase.js': SUPABASE_BUNDLE },

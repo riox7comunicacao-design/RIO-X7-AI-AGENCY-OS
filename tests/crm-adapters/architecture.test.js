@@ -23,7 +23,7 @@ test('[CRMADP-ARQ-1] o domínio (src/crm) NÃO importa src/crm-adapters em nenhu
 });
 
 test('[CRMADP-ARQ-2] src/crm-adapters/ só importa módulos irmãos e node: builtins — NUNCA src/crm/ (R12 já reserva o domínio a src/services/; o adapter guarda sua própria cópia do que precisa, em vez de abrir exceção), nem src/auth, src/services, src/server, dashboard ou tests; sem dependência nova', () => {
-  const permitidoIndex = /^\.\/(crmSupabaseConfig|crmSupabaseRepository|crmSupabaseMapping)$/;
+  const permitidoIndex = /^\.\/(crmSupabaseConfig|crmSupabaseRepository|crmSupabaseMapping|crmSupabaseCatalogRepository)$/;
   const permitidoIrmao = /^\.\/(crmSupabaseConfig|crmSupabaseMapping)$/;
   for (const nome of fs.readdirSync(ADAPTERS)) {
     const arquivo = path.join(ADAPTERS, nome);
@@ -58,4 +58,19 @@ test('[CRMADP-ARQ-4] só src/services/crmRepositoryFactory.js usa src/crm-adapte
   const especificadores = analise.refs.map((ref) => ref.specifier);
   assert.ok(especificadores.includes('../crm-adapters/crmSupabaseRepository'), 'crmRepositoryFactory.js deveria importar createSupabaseCrmRepository de verdade');
   assert.ok(especificadores.includes('../crm-adapters/crmSupabaseConfig'), 'crmRepositoryFactory.js deveria importar readSupabaseCrmConfig de verdade');
+});
+
+test('[CRMADP-ARQ-5] dentro de src/services/, SÓ as duas fábricas de repositório (CRM e catálogos) importam src/crm-adapters/ — decidir ENTRE adapters é composição; nenhum outro serviço conhece o Supabase (Fase 2B-1)', () => {
+  const dir = path.join(RAIZ, 'src', 'services');
+  const importadores = [];
+  for (const nome of fs.readdirSync(dir).filter((n) => n.endsWith('.js'))) {
+    const analise = analyzeSource(fs.readFileSync(path.join(dir, nome), 'utf8'), `src/services/${nome}`);
+    if (analise.refs.some((ref) => /crm-adapters/.test(ref.specifier))) importadores.push(nome);
+  }
+  assert.deepEqual(importadores.sort(), ['catalogRepositoryFactory.js', 'crmRepositoryFactory.js']);
+  // o adapter dos catálogos só importa o config do próprio diretório (R16), e a fábrica de catálogos importa só ele e o config
+  const adapter = analyzeSource(fs.readFileSync(path.join(ADAPTERS, 'crmSupabaseCatalogRepository.js'), 'utf8'), 'src/crm-adapters/crmSupabaseCatalogRepository.js');
+  assert.deepEqual(adapter.refs.map((ref) => ref.specifier), ['./crmSupabaseConfig']);
+  const fabrica = analyzeSource(fs.readFileSync(path.join(dir, 'catalogRepositoryFactory.js'), 'utf8'), 'src/services/catalogRepositoryFactory.js');
+  assert.deepEqual(fabrica.refs.map((ref) => ref.specifier).filter((s) => /crm-adapters/.test(s)).sort(), ['../crm-adapters/crmSupabaseCatalogRepository', '../crm-adapters/crmSupabaseConfig']);
 });

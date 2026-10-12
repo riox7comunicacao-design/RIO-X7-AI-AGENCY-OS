@@ -41,6 +41,7 @@ const ADMIN_LITERAL = [
   'MANAGE:USERS',
   'MANAGE:FUNNELS',
   'MANAGE:PROSPECTING_EXCLUSIONS',
+  'MANAGE:CRM_CATALOGS',
 ];
 const CLOSER_LITERAL = ['READ:CRM', 'ANALYZE:CRM', 'PROPOSE:CRM', 'APPROVE:LEAD_APPROVAL', 'APPROVE:OUTBOUND_APPROVAL'];
 
@@ -179,7 +180,7 @@ test('[CTXT-4] as permissions do contexto são derivadas da role: ADMIN = 10 e C
   const adminContext = issueAuthorizationContext(admin);
   const closerContext = issueAuthorizationContext(closer);
 
-  assert.equal(adminContext.permissions.length, 11);
+  assert.equal(adminContext.permissions.length, 12);
   assert.equal(closerContext.permissions.length, 5);
   assert.deepEqual(sorted(adminContext.permissions), sorted(ADMIN_LITERAL));
   assert.deepEqual(sorted(closerContext.permissions), sorted(CLOSER_LITERAL));
@@ -202,23 +203,23 @@ test('[CTXT-4] as permissions do contexto são derivadas da role: ADMIN = 10 e C
 
 test('[CTXT-5] a origem das permissions efetivas é a fonte canônica da role: user.permissions nunca é lido, e não há como alterá-lo', (t) => {
   const usuario = defineUser(userInput({ role: ROLE.ADMIN }));
-  assert.equal(usuario.permissions.length, 11);
+  assert.equal(usuario.permissions.length, 12);
 
   // Trocamos SÓ a fonte canônica (neste teste, com restauração automática): o
-  // contexto segue a fonte, e o USER — com suas 10 permissions — é ignorado.
+  // contexto segue a fonte, e o USER — com suas 12 permissions — é ignorado.
   t.mock.method(constants, 'getRolePermissions', () => Object.freeze([PERMISSION.READ_CRM]));
   const contexto = issueAuthorizationContext(usuario);
 
   assert.deepEqual([...contexto.permissions], [PERMISSION.READ_CRM]);
   assert.equal(constants.getRolePermissions.mock.callCount() >= 1, true, 'a fonte canônica foi consultada na emissão');
-  assert.equal(usuario.permissions.length, 11, 'o USER não mudou');
+  assert.equal(usuario.permissions.length, 12, 'o USER não mudou');
 
   // Alterar user.permissions (ou as do contexto) é recusado: USER, contexto e arrays são congelados.
   assert.equal(Reflect.set(usuario, 'permissions', [PERMISSION.MANAGE_USERS]), false);
   assert.equal(Reflect.set(contexto, 'permissions', [PERMISSION.MANAGE_USERS]), false);
   assert.throws(() => Reflect.apply(Array.prototype.push, usuario.permissions, ['MANAGE:USERS']), TypeError);
   assert.throws(() => Reflect.apply(Array.prototype.push, contexto.permissions, ['MANAGE:USERS']), TypeError);
-  assert.equal(usuario.permissions.length, 11);
+  assert.equal(usuario.permissions.length, 12);
   assert.equal(contexto.permissions.length, 1);
 });
 

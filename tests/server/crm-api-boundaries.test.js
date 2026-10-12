@@ -76,6 +76,8 @@ test('[CRM-API-ARCH-3] a raiz de composição só chama a fábrica de src/servic
     [
       '../auth',
       '../services/approvalQueueService',
+      '../services/catalogRepositoryFactory',
+      '../services/catalogUsage',
       '../services/crmIntegrationFileService',
       '../services/crmRepositoryFactory',
       '../services/funnelFileService',
@@ -102,6 +104,13 @@ test('[CRM-API-ARCH-3] a raiz de composição só chama a fábrica de src/servic
   // funnelFileService.js para obter a checagem (uma FUNÇÃO só — ver o cabeçalho desse arquivo), nunca o
   // repositório de Funil nem o domínio diretamente (regra R12: src/server/ não pode importar src/crm/).
   assert.equal(identificadores.has('createFileBackedActiveFunnelCardsChecker'), true);
+  // Catálogos do CRM (Fase 2B-1): a composição usa SÓ a fábrica de src/services (e o contador de uso, também de src/services) e a ponte de
+  // autorização — nunca o domínio dos catálogos, o repositório, um adapter nem o Service construído à mão.
+  for (const proibido of ['createCatalogService', 'createJsonFileCatalogRepository', 'createInMemoryCatalogRepository', 'createSupabaseCatalogRepository', 'catalogDomain', 'normalizeCatalogName']) {
+    assert.equal(identificadores.has(proibido), false, `a composição não pode usar ${proibido}`);
+  }
+  assert.equal(identificadores.has('createConfiguredCatalogService'), true);
+  assert.equal(identificadores.has('authorizeCatalogOperation'), true, 'o autorizador real dos catálogos é injetado pela composição');
 });
 
 test('[CRM-API-ARCH-4] a composição injeta o autorizador de src/auth e o caminho do arquivo — e o app recebe o Service pronto (não há um segundo caminho até o domínio); promoção e prospecção recebem o MESMO objeto crmService (etapa 3F), nunca um crmPath próprio', () => {

@@ -23,6 +23,8 @@ const { createLeadReconsiderationService } = require('../../src/services/leadRec
 const { createInMemoryLeadProfileRepository } = require('../../src/research-prospector/leadProfileRepository');
 const { createLeadEnrichmentService } = require('../../src/services/leadEnrichmentService');
 const { createFileBackedFunnelService, createFileBackedActiveFunnelCardsChecker } = require('../../src/services/funnelFileService');
+const { createConfiguredCatalogService } = require('../../src/services/catalogRepositoryFactory');
+const { createCrmCatalogUsageCounter } = require('../../src/services/catalogUsage');
 const {
   defineUser,
   createUserStore,
@@ -33,6 +35,7 @@ const {
   authorizeProposerForLeadApproval,
   authorizeFunnelOperation,
   authorizeProspectingExclusionOperation,
+  authorizeCatalogOperation,
   createSupabaseAuthAdapter,
 } = require('../../src/auth');
 const { createApp } = require('../../src/server/app');
@@ -104,6 +107,13 @@ function novoArquivoFunnels(t) {
   return path.join(dir, 'funnels.json');
 }
 
+// Idem, para os catálogos do CRM (Serviços, Nichos, Origens dos Leads — Fase 2B-1).
+function novoArquivoCatalogos(t) {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'server-catalogs-'));
+  t.after(() => fs.rmSync(dir, { recursive: true, force: true }));
+  return path.join(dir, 'crm-catalogs.json');
+}
+
 // Idem, para o Workbench de Prospecção (Etapa "Prospecção 1").
 function novoArquivoBriefs(t) {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'server-briefs-'));
@@ -145,6 +155,9 @@ function montarAmbiente(
     funnels = false,
     funnelFilePath,
     funnelService: funnelServiceInjetado,
+    crmCatalogs = false,
+    crmCatalogFilePath,
+    crmCatalogService: crmCatalogServiceInjetado,
   } = {}
 ) {
   const { filePath, ids } = queue || novaFila(t);
@@ -224,6 +237,20 @@ function montarAmbiente(
           crmService,
         })
       : undefined);
+  // Catalog Service (Fase 2B-1): `crmCatalogs: true` liga a fábrica REAL de produção em modo "file" (env EXPLÍCITO e vazio — nunca o
+  // process.env, que no `npm test` carrega o .env do desenvolvedor) sobre um arquivo temporário PRÓPRIO. O contador de uso lê o MESMO
+  // repositório do CRM de teste quando `crm: true` (senão, um CRM vazio). `crmCatalogService` injeta um double no lugar.
+  const arquivoCatalogos = crmCatalogs ? crmCatalogFilePath || novoArquivoCatalogos(t) : undefined;
+  const crmCatalogService =
+    crmCatalogServiceInjetado ||
+    (crmCatalogs
+      ? createConfiguredCatalogService({
+          env: {},
+          authorizeOperation: authorizeCatalogOperation,
+          filePath: arquivoCatalogos,
+          countUsage: createCrmCatalogUsageCounter({ crmRepository: arquivoCrm ? sharedFileCrmRepository(arquivoCrm) : { list: () => [] } }),
+        })
+      : undefined);
   // Lead Reconsideration Service (Implementação 3.0): `leadReconsideration: true` liga o Service REAL sobre a MESMA fila, o MESMO CRM e um repositório de perfis em memória.
   const perfisDeLeads = leadProfiles || createInMemoryLeadProfileRepository();
   const leadReconsiderationService = leadReconsideration ? createLeadReconsiderationService({ authorizeReviewer: authorizeReviewerForApprovalQueue, queuePath: filePath, crmService, profileRepository: perfisDeLeads }) : undefined;
@@ -245,6 +272,7 @@ function montarAmbiente(
     leadReconsiderationService,
     leadEnrichmentService,
     funnelService,
+    crmCatalogService,
     publicConfig,
     staticRoot: DASHBOARD_ROOT,
     staticFiles: resolvedStaticFiles,
@@ -273,6 +301,8 @@ function montarAmbiente(
     prospectingBriefFilePath: arquivoBriefs,
     funnelService,
     funnelFilePath: arquivoFunnels,
+    crmCatalogService,
+    crmCatalogFilePath: arquivoCatalogos,
     fakeAuth,
     // Expostos para testes que montam uma VARIANTE do app (ex.: trocando só o Service por um double, para
     // provar o mapeamento de erro) reaproveitando a MESMA autenticação real já configurada aqui.
@@ -283,4 +313,4 @@ function montarAmbiente(
   };
 }
 
-module.exports = { montarAmbiente, novaFila, novoArquivoCrm, novoArquivoFunnels, novoArquivoBriefs, achado, descoberta, BRENO, RAFAEL, EX_COLABORADOR, DASHBOARD_ROOT, SUPABASE_BUNDLE };
+module.exports = { montarAmbiente, novaFila, novoArquivoCrm, novoArquivoFunnels, novoArquivoCatalogos, novoArquivoBriefs, achado, descoberta, BRENO, RAFAEL, EX_COLABORADOR, DASHBOARD_ROOT, SUPABASE_BUNDLE };
