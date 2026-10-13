@@ -5,10 +5,8 @@
 // global na criação), então a interpretação de respostas HTTP reais é
 // exercitada sem rede. Nenhum teste unitário toca o Supabase.
 //
-// Testes de integração real (no fim): só leitura (GET /auth/v1/user). O teste
-// com token REAL só executa se RIO_X7_TEST_ACCESS_TOKEN estiver definido no
-// ambiente; caso contrário fica explicitamente PENDENTE (skip) — nenhum token
-// é inventado. Nenhum valor de token/URL/chave é impresso.
+// Testes de integração real (só leitura, GET /auth/v1/user): vivem em tests/integration/ e só executam sob autorização explícita (RIO_X7_RUN_EXTERNAL_TESTS=1) — o
+// teste com token REAL ainda exige RIO_X7_TEST_ACCESS_TOKEN; caso contrário fica explicitamente PENDENTE (skip). Nenhum token é inventado; nenhum valor de token/URL/chave é impresso.
 
 const test = require('node:test');
 const assert = require('node:assert/strict');
@@ -21,7 +19,6 @@ const {
   ROLE_PERMISSION_TEMPLATE,
   defineUser,
   createUserStore,
-  isSupabaseConfigured,
   createSupabaseAuthAdapter,
   SupabaseAdapterError,
   CONNECTIVITY_ERROR,
@@ -449,37 +446,6 @@ test('[SEC-4] o adapter não importa USER/resolver/AuthorizationContext, não us
 });
 
 // ===========================================================================
-// Integração REAL — somente leitura (GET /auth/v1/user). Nenhuma escrita.
+// Integração REAL (GET /auth/v1/user, somente leitura): os testes [REAL-1] e [REAL-2] foram MOVIDOS, sem alterar as asserções, para
+// tests/integration/supabase-auth.integration.test.js. A suíte comum nunca fala com o Supabase real (guarda hermético: tests/setup/hermetic.js).
 // ===========================================================================
-const configurado = isSupabaseConfigured(process.env);
-
-test('[REAL-1] token deliberadamente inválido contra o Supabase real é rejeitado como AUTH (só executa com .env carregado)', async (t) => {
-  if (!configurado) {
-    t.skip('SUPABASE_URL/SUPABASE_ANON_KEY ausentes neste ambiente — NÃO VERIFICADO aqui');
-    return;
-  }
-  const adapter = createSupabaseAuthAdapter(process.env);
-  await assert.rejects(() => adapter.verifyAccessToken('token-invalido-de-proposito-nao-e-um-jwt'), expectError(CONNECTIVITY_ERROR.AUTH));
-  assert.deepEqual(await adapter.getSessionStatus(), { authenticated: false }, 'nenhuma sessão foi criada no cliente');
-});
-
-// PENDENTE / CONDICIONAL: exige um access token REAL, de curta duração, de um
-// usuário de TESTE, fornecido pela variável de ambiente RIO_X7_TEST_ACCESS_TOKEN.
-// Hoje essa variável NÃO existe, então o teste é explicitamente pulado — nenhum
-// token é inventado. Nada do token/identidade é impresso.
-test('[REAL-2] token REAL (RIO_X7_TEST_ACCESS_TOKEN) resulta em identidade verificada pelo Supabase real — PENDENTE se a variável não existir', async (t) => {
-  const tokenReal = process.env.RIO_X7_TEST_ACCESS_TOKEN;
-  if (!configurado || typeof tokenReal !== 'string' || tokenReal.trim() === '') {
-    t.skip('PENDENTE: defina RIO_X7_TEST_ACCESS_TOKEN (access token real, curta duração, usuário de TESTE) para executar');
-    return;
-  }
-  const adapter = createSupabaseAuthAdapter(process.env);
-  const identidade = await adapter.verifyAccessToken(tokenReal);
-
-  assert.deepEqual(Object.keys(identidade).sort(), ['authUserId', 'email', 'emailConfirmed']);
-  assert.equal(typeof identidade.authUserId, 'string');
-  assert.ok(identidade.authUserId.length > 0);
-  assert.ok(identidade.email === null || typeof identidade.email === 'string');
-  assert.equal(typeof identidade.emailConfirmed, 'boolean');
-  assert.deepEqual(await adapter.getSessionStatus(), { authenticated: false }, 'verificar o token não cria sessão no cliente');
-});

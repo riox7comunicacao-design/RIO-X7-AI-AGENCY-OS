@@ -2,9 +2,9 @@
 
 ## Status
 
-**Implementado localmente em 2026-10-12** (CRM 5.0, Fase 2B-1 — somente a estrutura técnica, sem interface). **Não commitado.** A migration SQL (`supabase/migrations/20261012090000_crm_catalogs.sql`) é só uma proposta versionada, **NÃO APLICADA**: nada a executa, e o estado real do banco não foi consultado. Nenhum dado foi criado.
+**Fase 2B-1 (estrutura técnica) publicada** em 2026-10-12 (commit `85d3d4f`). **Fase 2B-2 (interface administrativa) implementada localmente, ainda não commitada** — ver "Atualização da Fase 2B-2" no fim deste documento e `docs/development/UX-4-CHECKPOINT.md`. A migration SQL (`supabase/migrations/20261012090000_crm_catalogs.sql`) é só uma proposta versionada, **NÃO APLICADA**: nada a executa, e o estado real do banco não foi consultado. Nenhum dado foi criado.
 
-Decisões aprovadas pelo proprietário para esta etapa (D1–D5, na ordem abaixo). A interface administrativa é a **Fase 2B-2**, ainda não iniciada.
+Decisões aprovadas pelo proprietário para esta etapa (D1–D5, na ordem abaixo). A interface administrativa é a **Fase 2B-2** (implementada localmente; a migration continua **NÃO APLICADA**).
 
 ## 1. O que é
 
@@ -90,4 +90,16 @@ Aditiva: três tabelas, índices, `UNIQUE`, `CHECK`s (formato do id, limites, li
 - **O contador de uso lê todos os registros do CRM** (como o próprio CRM já carrega tudo); é chamado só ao tentar mudar um nome e na consulta de um item pelo ADMIN.
 - **A promoção não canonicaliza** `nicho`: o texto do briefing segue como veio (a ligação com os catálogos é da Fase 2B-3).
 - **Serviço potencial é um valor só** por registro; vários serviços por negociação virão com a Fase 4.
-- O Dashboard **ainda não tem a permissão nova nem telas**: a interface é a 2B-2.
+- ~~O Dashboard ainda não tem a permissão nova nem telas~~ — resolvido na Fase 2B-2 (ver abaixo).
+
+## 13. Atualização da Fase 2B-2 — interface administrativa (implementada localmente)
+
+Só o Dashboard; **nenhuma regra, endpoint, permissão ou migration do backend foi alterada** e a migration segue **NÃO APLICADA**.
+
+- **Telas** `#/crm/configuracoes/servicos`, `…/nichos` e `…/origens` (lista, busca por nome, filtro de ativos/inativos, criar e editar num painel lateral com URL própria `…/novo` e `…/<id>`, desativar com confirmação, reativar, reordenar). Só o `MANAGE:CRM_CATALOGS` (`canManageCrmCatalogs`) as vê; o servidor continua a autoridade final.
+- **Cor do nicho:** o backend **permite** cor nula (um nicho legado pode não ter cor) e **isso não foi alterado**; a interface **exige uma das 20 cores ao criar** um nicho, não oferece a opção "sem cor", e mostra um nicho legado sem cor com tratamento neutro ("Sem cor definida"). Só a **chave** da cor é enviada; a aparência vem das classes `.cor-<chave>` (CSP `style-src 'self'`, nenhum estilo inline).
+- **Reordenar:** a nova ordem aparece já, mas só é considerada salva depois da resposta da API; em falha a ordem anterior volta. Desabilitado com busca ou filtro ativos (a ordem vale para todos os itens, ativos e desativados).
+- **Nome em uso pelo CRM legado:** a tela consulta `emUso` ao abrir a edição e, se maior que zero, trava o nome com a explicação (a restrição da seção 4 continua sendo do servidor).
+- **Página Configurações do CRM** (`#/crm/configuracoes`): deixou de ser "em desenvolvimento" e virou um índice com cartões para os três cadastros (links para as rotas reais) e para a Gestão de Funis e Etapas (desabilitado, EM DESENVOLVIMENTO), por permissão; sem informação simulada.
+- **Menu:** os três itens exigem `MANAGE:CRM_CATALOGS`; "Gestão de Funis e Etapas" (ainda EM DESENVOLVIMENTO) exige `MANAGE:FUNNELS`. Sem nenhuma das duas, "Configurações do CRM" não aparece.
+- **Sem integração, sem proposta, sem carga inicial:** nenhuma origem real é cadastrada e nenhuma integração (WhatsApp, Meta Ads, Google Ads, IA) é ativada; o preço de referência segue só informativo.

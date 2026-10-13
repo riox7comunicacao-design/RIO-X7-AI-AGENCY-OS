@@ -1,14 +1,8 @@
 // Passo 0009.8, Fase B — integração real com Supabase Auth.
 //
-// Este arquivo assume dois estados possíveis do ambiente, e se comporta
-// corretamente em ambos, sem nunca fingir um resultado:
-//
-// 1) SUPABASE_URL/SUPABASE_ANON_KEY carregados de um .env real (dev local,
-//    quando configurado) — os testes de conectividade real RODAM de fato
-//    contra o projeto Supabase configurado, sem criar nada (só leitura).
-// 2) Nenhuma configuração presente (clone novo, CI sem segredos) — os
-//    mesmos testes são pulados explicitamente (t.skip), nunca marcados
-//    como "passando" sem terem sido de fato exercitados.
+// Este arquivo é HERMÉTICO (Fase 2B-2): roda no `npm test` sem credenciais e sem rede externa (o guarda tests/setup/hermetic.js remove as credenciais do ambiente e
+// bloqueia qualquer acesso externo). Os testes de conectividade REAL com o projeto Supabase configurado (somente leitura) foram MOVIDOS, sem alterar as asserções, para
+// tests/integration/supabase-auth.integration.test.js, que só executa sob autorização explícita (RIO_X7_RUN_EXTERNAL_TESTS=1 e `npm run test:integration`).
 //
 // Nenhum valor de SUPABASE_URL/SUPABASE_ANON_KEY é impresso em nenhum
 // teste — só PRESENTE/AUSENTE (booleano) ou o resultado classificado de uma
@@ -16,6 +10,7 @@
 
 const test = require('node:test');
 const assert = require('node:assert/strict');
+const net = require('node:net');
 
 const {
   ROLE,
@@ -34,8 +29,6 @@ const {
 // Fase D: o resolver só aceita uma VerifiedIdentity. Os testes do resolver abaixo usam
 // identidades REAIS (verifyAccessToken contra um Supabase falso, sem rede).
 const { verifiedIdentityFor, verifiedIdentitiesFor } = require('../helpers/authFixtures');
-
-const configurado = isSupabaseConfigured(process.env);
 
 test('configuração real do ambiente: SUPABASE_URL/SUPABASE_ANON_KEY (nenhum valor exibido, só presença)', () => {
   console.log('SUPABASE_URL:', process.env.SUPABASE_URL ? 'PRESENTE' : 'AUSENTE');
@@ -58,11 +51,14 @@ test('CONFIGURACAO: checkConnectivity classifica corretamente a ausência de con
   assert.equal(resultado.status, CONNECTIVITY_ERROR.CONFIGURACAO);
 });
 
-test('NETWORK: checkConnectivity classifica corretamente um host inalcançável (não precisa de configuração real)', async () => {
-  const adapter = createSupabaseAuthAdapter({
-    SUPABASE_URL: 'https://projeto-que-nao-existe-rio-x7-teste-0009-8.supabase.co',
-    SUPABASE_ANON_KEY: 'chave-de-teste-nao-real',
-  });
+// O equivalente HERMÉTICO do antigo teste de "host inalcançável": em vez de consultar o DNS público por um nome inventado, usa uma porta do próprio computador que acabou de ser
+// fechada (conexão recusada) — o adapter tem de classificá-la como NETWORK, sem nenhum acesso externo.
+test('NETWORK: checkConnectivity classifica corretamente um host inalcançável (porta local fechada — sem DNS nem rede externa)', async () => {
+  const servidor = net.createServer();
+  await new Promise((resolve) => servidor.listen(0, '127.0.0.1', resolve));
+  const { port } = servidor.address();
+  await new Promise((resolve) => servidor.close(resolve));
+  const adapter = createSupabaseAuthAdapter({ SUPABASE_URL: `http://127.0.0.1:${port}`, SUPABASE_ANON_KEY: 'chave-de-teste-nao-real' });
   const resultado = await adapter.checkConnectivity();
   assert.equal(resultado.status, CONNECTIVITY_ERROR.NETWORK);
 });
@@ -70,60 +66,6 @@ test('NETWORK: checkConnectivity classifica corretamente um host inalcançável 
 test('CONFIGURACAO: SUPABASE_URL malformada é rejeitada pelo próprio SDK ao criar o cliente', () => {
   const adapter = createSupabaseAuthAdapter({ SUPABASE_URL: 'nao-e-uma-url', SUPABASE_ANON_KEY: 'x' });
   assert.throws(() => adapter.getClient(), /CONFIGURACAO|inválid/);
-});
-
-test('conectividade real com o projeto Supabase configurado (só executa se .env estiver carregado)', async (t) => {
-  if (!configurado) {
-    t.skip('SUPABASE_URL/SUPABASE_ANON_KEY ausentes neste ambiente — NÃO VERIFICADO aqui, ver docs/decisions/0011-supabase-auth-integration.md');
-    return;
-  }
-  const adapter = createSupabaseAuthAdapter(process.env);
-
-  // Cliente inicializado = SIM (não lança).
-  const client = adapter.getClient();
-  assert.ok(client, 'cliente Supabase deveria ser criado com sucesso');
-  assert.equal(typeof client.auth.getSession, 'function');
-
-  // Conectividade REAL — usa o endpoint público /auth/v1/settings
-  // (somente leitura). getSession() sozinho NÃO prova rede (resolve
-  // localmente mesmo com URL inexistente, verificado durante este passo) —
-  // por isso checkConnectivity() é a checagem que de fato importa aqui.
-  const conectividade = await adapter.checkConnectivity();
-  assert.equal(conectividade.status, 'OK', `esperava conectividade OK, obteve: ${JSON.stringify(conectividade)}`);
-});
-
-test('AUTH: chave inválida contra o host real configurado é classificada como AUTH, não como sucesso (só executa se .env estiver carregado)', async (t) => {
-  if (!configurado) {
-    t.skip('SUPABASE_URL ausente neste ambiente — NÃO VERIFICADO aqui');
-    return;
-  }
-  const adapter = createSupabaseAuthAdapter({
-    SUPABASE_URL: process.env.SUPABASE_URL,
-    SUPABASE_ANON_KEY: 'chave-deliberadamente-invalida-para-teste',
-  });
-  const resultado = await adapter.checkConnectivity();
-  assert.equal(resultado.status, CONNECTIVITY_ERROR.AUTH);
-});
-
-test('D — getSession() nunca é tratado como erro quando não há sessão (só executa se .env estiver carregado)', async (t) => {
-  if (!configurado) {
-    t.skip('SUPABASE_URL/SUPABASE_ANON_KEY ausentes neste ambiente — NÃO VERIFICADO aqui');
-    return;
-  }
-  const adapter = createSupabaseAuthAdapter(process.env);
-  const status = await adapter.getSessionStatus();
-  assert.equal(status.authenticated, false, 'nenhuma sessão foi criada por este passo — ausência de sessão é o resultado esperado (D), não um erro');
-});
-
-// B — sessão inexistente → resolveAuthenticatedIdentity() rejeita explicitamente,
-// nunca inventa uma identidade.
-test('B — resolveAuthenticatedIdentity() rejeita explicitamente quando não há sessão (só executa se .env estiver carregado)', async (t) => {
-  if (!configurado) {
-    t.skip('SUPABASE_URL/SUPABASE_ANON_KEY ausentes neste ambiente — NÃO VERIFICADO aqui');
-    return;
-  }
-  const adapter = createSupabaseAuthAdapter(process.env);
-  await assert.rejects(() => adapter.resolveAuthenticatedIdentity(), /nenhuma sessão autenticada/);
 });
 
 // C — authUserId desconhecido (mesmo com o "formato" de um UUID real que o

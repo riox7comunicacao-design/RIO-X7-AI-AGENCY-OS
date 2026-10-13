@@ -726,8 +726,10 @@ test('[CRM-ED-19] ESTÁTICO: o CSS traz o rodapé de edição, o estado "não sa
   const fonte = read('dashboard', 'views', 'crm.mjs').split('\n').filter((l) => !/^\s*\/\//.test(l)).join('\n');
   assert.doesNotMatch(fonte, /setAttribute\('style'|\.style\./);
   const main = read('dashboard', 'main.mjs');
-  assert.match(main, /crmView\.leaveState\(\)/);
-  assert.match(main, /crmView\.confirmLeave\(/);
+  // a proteção ao sair é uma só para o CRM e para os catálogos do CRM (Fase 2B-2): quem está na tela guardada responde por leaveState()/confirmLeave()
+  assert.match(main, /currentSection === 'crm' \? crmView : currentSection === 'crm-catalogs' \? catalogsView : null/);
+  assert.match(main, /guarded\.leaveState\(\)/);
+  assert.match(main, /guarded\.confirmLeave\(/);
   assert.match(main, /navigation\.restore\(renderedHash\)/);
   const router = read('dashboard', 'router.mjs');
   assert.match(router, /restore\(hash\)/);

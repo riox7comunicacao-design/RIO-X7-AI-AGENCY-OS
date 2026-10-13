@@ -9,7 +9,11 @@
 //   #/crm/clientes            a mesma lista, pelo nome novo (CRM 5.0, Fase 2A)
 //   #/crm/dashboard           Dashboard Comercial (página EM DESENVOLVIMENTO; o texto "CRM" do menu abre esta)
 //   #/crm/metas               Metas e Indicadores (EM DESENVOLVIMENTO)
-//   #/crm/configuracoes       Configurações do CRM (EM DESENVOLVIMENTO), com #/crm/configuracoes/servicos | nichos | funis | origens
+//   #/crm/configuracoes       Configurações do CRM: a página de acessos aos cadastros (Serviços, Nichos e Cores, Origens dos Leads e a Gestão de Funis e Etapas, EM DESENVOLVIMENTO),
+//                              com #/crm/configuracoes/servicos | nichos | funis | origens
+//   #/crm/configuracoes/servicos | nichos | origens           os catálogos do CRM (Fase 2B-2): a lista (Funis ainda é EM DESENVOLVIMENTO)
+//   #/crm/configuracoes/<catalogo>/novo                        o painel lateral de "Novo ..." sobre a lista do catálogo
+//   #/crm/configuracoes/<catalogo>/<id>                        o painel lateral de edição de um item (o id vai codificado: service%3A...)
 //   #/crm/novo                formulário de novo registro
 //   #/crm/registro/<id>       ficha de um registro (o id vai codificado: crm%3A...)
 //   #/aprovacoes              a fila de aprovação
@@ -30,6 +34,28 @@ const CRM_SETTINGS_SEGMENTS = Object.freeze({
   funis: 'crm-settings-funnels',
   origens: 'crm-settings-origins',
 });
+// Os catálogos do CRM (Fase 2B-2): a chave do catálogo (a mesma do segmento do endereço e da API) -> o nome da rota da LISTA. O painel de novo item e o de edição têm rotas próprias
+// (crm-catalog-new e crm-catalog-item), que levam a chave em `catalog`.
+export const CATALOG_LIST_ROUTES = Object.freeze({
+  servicos: 'crm-settings-services',
+  nichos: 'crm-settings-niches',
+  origens: 'crm-settings-origins',
+});
+const hasCatalog = (key) => typeof key === 'string' && Object.prototype.hasOwnProperty.call(CATALOG_LIST_ROUTES, key);
+
+// A chave do catálogo de uma rota (lista, novo ou edição), ou null.
+export function catalogOfRoute(route) {
+  const name = route && route.name;
+  if (name === 'crm-catalog-new' || name === 'crm-catalog-item') return hasCatalog(route.catalog) ? route.catalog : null;
+  for (const [key, listName] of Object.entries(CATALOG_LIST_ROUTES)) if (name === listName) return key;
+  return null;
+}
+
+// O nome da rota da LISTA do catálogo de uma rota de catálogo (serve ao título da aba).
+export function catalogListRouteName(route) {
+  const key = catalogOfRoute(route);
+  return key ? CATALOG_LIST_ROUTES[key] : null;
+}
 
 export function parseRoute(hash) {
   const raw = typeof hash === 'string' ? hash.replace(/^#/, '') : '';
@@ -44,6 +70,16 @@ export function parseRoute(hash) {
   if (segments.length === 2 && segments[0] === 'crm' && segments[1] === 'metas') return { name: 'crm-goals' };
   if (segments.length === 2 && segments[0] === 'crm' && segments[1] === 'configuracoes') return { name: 'crm-settings' };
   if (segments.length === 3 && segments[0] === 'crm' && segments[1] === 'configuracoes' && Object.prototype.hasOwnProperty.call(CRM_SETTINGS_SEGMENTS, segments[2])) return { name: CRM_SETTINGS_SEGMENTS[segments[2]] };
+  if (segments.length === 4 && segments[0] === 'crm' && segments[1] === 'configuracoes' && hasCatalog(segments[2]) && segments[3] !== '') {
+    if (segments[3] === 'novo') return { name: 'crm-catalog-new', catalog: segments[2] };
+    try {
+      const id = decodeURIComponent(segments[3]);
+      if (id.trim() !== '') return { name: 'crm-catalog-item', catalog: segments[2], id };
+    } catch {
+      // um "%" solto: cai em not-found, como qualquer rota que não existe.
+    }
+    return { name: 'not-found' };
+  }
   if (segments.length === 3 && segments[0] === 'crm' && segments[1] === CRM_RECORD_SEGMENT && segments[2] !== '') {
     try {
       const id = decodeURIComponent(segments[2]);
@@ -132,6 +168,10 @@ export function buildHash(route) {
       return '#/crm/configuracoes/funis';
     case 'crm-settings-origins':
       return '#/crm/configuracoes/origens';
+    case 'crm-catalog-new':
+      return hasCatalog(route.catalog) ? `#/crm/configuracoes/${route.catalog}/novo` : '#/';
+    case 'crm-catalog-item':
+      return hasCatalog(route.catalog) ? `#/crm/configuracoes/${route.catalog}/${encodeURIComponent(route.id)}` : '#/';
     case 'crm-record':
       return `#/crm/${CRM_RECORD_SEGMENT}/${encodeURIComponent(route.id)}`;
     case 'approvals':
@@ -165,11 +205,15 @@ export function buildHash(route) {
 
 // A TELA que uma rota mostra (quem decide qual view entra na página). O destaque do menu é outra coisa: ver menuItemOf em nav.mjs.
 //   'crm'        a lista/ficha/novo registro (as rotas #/crm e #/crm/clientes mostram a mesma tela)
-//   'crm-future' as páginas EM DESENVOLVIMENTO do CRM (Dashboard Comercial, Metas, Configurações e seus cadastros)
+//   'crm-catalogs' as telas administrativas dos catálogos do CRM (Serviços, Nichos e Origens dos Leads, com o painel de novo item e o de edição)
+//   'crm-settings' a página Configurações do CRM (os acessos aos cadastros)
+//   'crm-future' as páginas EM DESENVOLVIMENTO do CRM (Dashboard Comercial, Metas e Gestão de Funis e Etapas)
 export function sectionOf(route) {
   const name = route && route.name;
+  if (catalogOfRoute(route) !== null) return 'crm-catalogs';
+  if (name === 'crm-settings') return 'crm-settings';
   if (name === 'crm-list' || name === 'crm-clients' || name === 'crm-new' || name === 'crm-record') return 'crm';
-  if (name === 'crm-dashboard' || name === 'crm-goals' || name === 'crm-settings' || (typeof name === 'string' && name.startsWith('crm-settings-'))) return 'crm-future';
+  if (name === 'crm-dashboard' || name === 'crm-goals' || (typeof name === 'string' && name.startsWith('crm-settings-'))) return 'crm-future';
   if (name === 'approvals' || name === 'approval-lead') return 'approvals';
   if (name === 'agents') return 'agents';
   if (name === 'funnels') return 'funnels';

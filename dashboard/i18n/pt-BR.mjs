@@ -140,7 +140,7 @@ export const PAGE_TITLES = Object.freeze({
   'not-found': 'Página não encontrada',
 });
 
-// As páginas futuras do CRM: o que cada uma vai ser. Nenhuma tem dado, botão de ação ou número — só a explicação honesta de que ainda não existe.
+// As páginas futuras do CRM: o que cada uma vai ser. (Serviços, Nichos e Cores, Origens dos Leads e a página Configurações do CRM já existem — Fase 2B-2 —, por isso não estão mais aqui.) Nenhuma tem dado, botão de ação ou número — só a explicação honesta de que ainda não existe.
 export const FUTURE_PAGES = Object.freeze({
   'crm-dashboard': {
     title: 'Dashboard Comercial',
@@ -152,30 +152,10 @@ export const FUTURE_PAGES = Object.freeze({
     summary: 'Metas por período, funil e responsável, comparadas com o que foi realizado.',
     plans: ['Metas de quantidade de negociações e de valor vendido', 'Meta versus realizado', 'Ticket médio e tempo médio de fechamento'],
   },
-  'crm-settings': {
-    title: 'Configurações do CRM',
-    summary: 'Os cadastros que organizam o CRM: serviços, nichos, funis e origens dos leads.',
-    plans: ['Serviços e preços de referência', 'Nichos e as cores que os identificam', 'Funis de vendas e suas etapas', 'Origens dos leads'],
-  },
-  'crm-settings-services': {
-    title: 'Serviços',
-    summary: 'O catálogo de serviços que a agência vende, com o preço de referência de cada um.',
-    plans: ['Nome, descrição e categoria', 'Preço de referência e recorrência', 'Ativar e desativar serviços'],
-  },
-  'crm-settings-niches': {
-    title: 'Nichos e Cores',
-    summary: 'Os nichos de atuação dos clientes e a cor que identifica cada um nos cartões de negociação.',
-    plans: ['Criar, editar e arquivar nichos', 'Escolher a cor de cada nicho entre 20 opções acessíveis'],
-  },
   'crm-settings-funnels': {
     title: 'Gestão de Funis e Etapas',
     summary: 'A administração dos funis de vendas e das etapas de cada um.',
     plans: ['Criar, renomear, reordenar e arquivar funis', 'Criar, renomear e reordenar etapas', 'Excluir etapas vazias, quando for seguro'],
-  },
-  'crm-settings-origins': {
-    title: 'Origens dos Leads',
-    summary: 'De onde vêm os leads: prospecção por IA, formulários de Meta Ads e Google Ads, WhatsApp, indicação e cadastro manual.',
-    plans: ['Cadastro e classificação das origens', 'Preparação para receber leads de outros canais no futuro'],
   },
 });
 

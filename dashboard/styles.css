@@ -866,7 +866,7 @@ table.list.queue .reason-text { max-width: 320px; overflow-wrap: anywhere; displ
    classe define três tons: fundo (tinta clara do chip), texto (contraste >= 7:1 sobre o fundo) e ponto (a cor de destaque,
    contraste >= 3:1). O chip SEMPRE traz o nome do nicho em texto: a cor nunca é a única informação. Uma chave desconhecida, ou
    a ausência de classe de cor, cai no tom neutro (ardósia). tests/server/dashboard-catalog-colors.test.js confere que estas
-   classes e a paleta do servidor são idênticas e recalcula os contrastes. Ainda NÃO há tela que use isto (Fase 2B-2). */
+   classes e a paleta do servidor são idênticas e recalcula os contrastes. As telas de Nichos e Cores (Fase 2B-2) usam estas classes. */
 .nicho-chip { --cor-fundo: #edeff2; --cor-texto: #404f64; --cor-ponto: #3c4653; display: inline-flex; align-items: center; gap: 6px; max-width: 100%; padding: 2px 10px; border-radius: 999px; background: var(--cor-fundo); color: var(--cor-texto); font-size: 12.5px; font-weight: 600; }
 .nicho-chip::before { content: ""; flex: none; width: 8px; height: 8px; border-radius: 50%; background: var(--cor-ponto); }
 .cor-vermelho { --cor-fundo: #fde4e3; --cor-texto: #8f2119; --cor-ponto: #d91f12; }
@@ -889,3 +889,72 @@ table.list.queue .reason-text { max-width: 320px; overflow-wrap: anywhere; displ
 .cor-carmim { --cor-fundo: #fde3e7; --cor-texto: #931a2e; --cor-ponto: #aa0e28; }
 .cor-marrom { --cor-fundo: #f7efe9; --cor-texto: #68482c; --cor-ponto: #b37c4d; }
 .cor-ardosia { --cor-fundo: #edeff2; --cor-texto: #404f64; --cor-ponto: #3c4653; }
+
+/* --- telas dos catálogos do CRM (CRM 5.0, Fase 2B-2) ------------------------------------------------- */
+/* Serviços, Nichos e Cores e Origens dos Leads: uma lista de linhas que viram cartões no celular, o painel lateral com o formulário e o seletor das 20 cores. Só classes (nenhum estilo inline):
+   a cor de um nicho vem da classe .cor-<chave> (acima), que define --cor-fundo, --cor-texto e --cor-ponto. Sem classe de cor, o tom cai no neutro (ardósia). */
+.catalog-card { padding: 4px 16px 14px; }
+.catalog-list { display: grid; margin: 0; padding: 0; list-style: none; }
+.catalog-row { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 8px 16px; padding: 12px 0; border-bottom: 1px solid var(--line); }
+.catalog-row:last-child { border-bottom: 0; }
+.catalog-row.is-niche { padding-left: 12px; border-left: 6px solid var(--cor-ponto, #3c4653); }
+.catalog-row.is-inactive { background: #fafbfc; }
+.catalog-row.is-inactive .catalog-name { color: var(--muted); }
+.catalog-row.selected { background: var(--brand-soft); }
+.catalog-row-main { display: grid; flex: 1 1 320px; gap: 4px; min-width: 0; }
+.catalog-row-title { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 10px; min-width: 0; }
+.catalog-name { padding: 2px 0; border: 0; background: none; color: var(--text); font: inherit; font-weight: 700; text-align: left; overflow-wrap: anywhere; cursor: pointer; }
+.catalog-name:hover:not(:disabled) { color: var(--primary); text-decoration: underline; }
+.catalog-name:focus-visible { outline: 2px solid var(--brand-strong); outline-offset: 3px; border-radius: 4px; }
+.catalog-name:disabled { cursor: not-allowed; }
+.catalog-meta, .catalog-desc { margin: 0; font-size: 13.5px; overflow-wrap: anywhere; }
+.catalog-desc { display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
+.catalog-row-actions { display: flex; flex: 0 0 auto; flex-wrap: wrap; align-items: center; gap: 6px; }
+.catalog-hint { margin: 0 0 10px; font-size: 13.5px; }
+.catalog-error { display: grid; gap: 8px; justify-items: start; padding: 10px 0; }
+.catalog-error .message { margin: 0; }
+.catalog-form { display: grid; gap: 4px; }
+.catalog-form .form-messages:empty, .catalog-form .form-usage:empty { display: none; }
+.catalog-form .required-note { margin: 0 0 6px; font-size: 13px; }
+.catalog-form .audit-line { margin: 12px 0 0; font-size: 13px; }
+.catalog-form .message { margin: 0 0 10px; }
+.catalog-form-actions { display: flex; flex-wrap: wrap; justify-content: flex-end; gap: 10px; }
+.field-label { margin: 0; font-weight: 600; }
+.field-label.required::after { content: " *"; color: var(--bad-text); }
+.color-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(124px, 1fr)); gap: 8px; margin-top: 4px; }
+.color-swatch { position: relative; display: flex; align-items: center; gap: 8px; min-height: 44px; padding: 6px 28px 6px 10px; border: 2px solid var(--cor-fundo); border-radius: 10px; background: var(--cor-fundo); color: var(--cor-texto); font: inherit; font-size: 13.5px; font-weight: 600; text-align: left; cursor: pointer; }
+.color-swatch .swatch-dot { flex: none; width: 18px; height: 18px; border: 2px solid #ffffff; border-radius: 50%; background: var(--cor-ponto); box-shadow: 0 0 0 1px var(--cor-ponto); }
+.color-swatch .swatch-name { min-width: 0; overflow-wrap: anywhere; }
+.color-swatch .swatch-check { position: absolute; top: 50%; right: 8px; display: none; font-weight: 700; transform: translateY(-50%); }
+.color-swatch:hover:not(:disabled) { border-color: var(--cor-ponto); }
+.color-swatch.selected { border-color: var(--cor-texto); box-shadow: 0 0 0 1px var(--cor-texto); }
+.color-swatch.selected .swatch-check { display: inline; }
+.color-swatch:focus-visible { outline: 3px solid var(--brand-strong); outline-offset: 2px; }
+.color-swatch:disabled { opacity: 0.6; cursor: not-allowed; }
+.niche-preview { display: grid; gap: 6px; margin-top: 8px; }
+.preview-card { display: grid; gap: 6px; max-width: 360px; padding: 12px 14px; border: 1px solid var(--line); border-left: 6px solid var(--cor-ponto, #3c4653); border-radius: 10px; background: #ffffff; box-shadow: var(--shadow); }
+.preview-card .preview-line { font-size: 12.5px; }
+.preview-card .preview-title { font-size: 15px; }
+.preview-nicho-name { overflow-wrap: anywhere; }
+.preview-note { margin: 0; font-size: 13px; }
+/* Configurações do CRM: os cartões de acesso aos cadastros, e o caminho de volta nas telas dos catálogos */
+.settings-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(260px, 1fr)); gap: 14px; }
+.settings-card { display: grid; align-content: start; gap: 6px; padding: 16px 18px; border: 1px solid var(--line); border-radius: var(--radius); background: var(--surface); box-shadow: var(--shadow); color: var(--text); text-decoration: none; }
+a.settings-card:hover { border-color: var(--brand-strong); }
+a.settings-card:focus-visible { outline: 3px solid var(--brand-strong); outline-offset: 2px; }
+.settings-card-title { font-size: 16px; font-weight: 700; }
+.settings-card-text { font-size: 14px; line-height: 1.45; }
+.settings-card-go { margin-top: 4px; color: var(--brand-ink); font-weight: 600; font-size: 14px; }
+.settings-card.is-soon { border-style: dashed; background: #fbfcfd; box-shadow: none; }
+.settings-card.is-soon .settings-card-title { color: var(--muted); }
+.settings-card-soon { justify-self: start; margin-top: 4px; }
+.breadcrumb { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; margin: 0 0 8px; font-size: 13.5px; color: var(--muted); }
+.breadcrumb a { color: var(--brand-ink); font-weight: 600; }
+.breadcrumb [aria-current="page"] { color: var(--text); font-weight: 600; }
+@media (max-width: 760px) {
+  .catalog-row-actions { width: 100%; }
+  .catalog-row-actions .btn { flex: 1 1 auto; min-height: 40px; }
+  .catalog-row.is-niche { padding-left: 10px; }
+  .color-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .catalog-form-actions .btn { flex: 1 1 100%; }
+}

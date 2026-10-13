@@ -138,14 +138,10 @@ test('[MENU-3] os LINKS ANTIGOS seguem funcionando: a ficha #/crm/registro/<id> 
   assert.match(texto(direto), /Odonto Beta/);
 });
 
-test('[MENU-4] as PÁGINAS FUTURAS (metas, configurações e os 4 cadastros) dizem EM DESENVOLVIMENTO e não têm dado, formulário nem botão de ação; cada uma acende a sua entrada e abre o ramo; nenhuma chama a API', async () => {
+test('[MENU-4] as PÁGINAS FUTURAS (metas e a gestão de funis; Configurações do CRM, Serviços, Nichos e Origens já são telas reais — ver dashboard-crm-settings.test.js) dizem EM DESENVOLVIMENTO e não têm dado, formulário nem botão de ação; cada uma acende a sua entrada e abre o ramo; nenhuma chama a API', async () => {
   const paginas = [
     ['#/crm/metas', 'Metas e Indicadores', 'Metas e Indicadores · CRM'],
-    ['#/crm/configuracoes', 'Configurações do CRM', 'Configurações do CRM'],
-    ['#/crm/configuracoes/servicos', 'Serviços', 'Serviços · Configurações do CRM'],
-    ['#/crm/configuracoes/nichos', 'Nichos e Cores', 'Nichos e Cores · Configurações do CRM'],
     ['#/crm/configuracoes/funis', 'Gestão de Funis e Etapas', 'Gestão de Funis e Etapas · Configurações do CRM'],
-    ['#/crm/configuracoes/origens', 'Origens dos Leads', 'Origens dos Leads · Configurações do CRM'],
   ];
   for (const [hash, nome, titulo] of paginas) {
     const t = await iniciar({ hash });

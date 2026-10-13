@@ -11,6 +11,7 @@ export { createOverlayManager, focusableIn } from './overlays.mjs';
 export { createToaster } from './toasts.mjs';
 export { createDataBus, createPoller } from './dataBus.mjs';
 export { createRoutedDrawer } from './routedDrawer.mjs';
+export { colorPicker } from './colorPicker.mjs';
 export { statusBadge, emptyState, loadingState, skeleton, pageHeader, kvList, section, searchField, selectField, pagination, createTabs, formField } from './components.mjs';
 
 export function createUi({ document, host, getInertTargets = () => [], schedule }) {

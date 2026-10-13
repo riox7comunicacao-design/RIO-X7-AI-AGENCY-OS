@@ -81,11 +81,13 @@ test('[DASH-MODEL-4] as permissões do Dashboard são as do servidor: os nomes b
   assert.equal(PERMISSIONS.REVIEW, authConstants.PERMISSION.APPROVE_LEAD_APPROVAL);
   assert.equal(PERMISSIONS.PROPOSE_LEAD_APPROVAL, authConstants.PERMISSION.PROPOSE_LEAD_APPROVAL);
   assert.equal(PERMISSIONS.MANAGE_PROSPECTING_EXCLUSIONS, authConstants.PERMISSION.MANAGE_PROSPECTING_EXCLUSIONS);
+  assert.equal(PERMISSIONS.MANAGE_CRM_CATALOGS, authConstants.PERMISSION.MANAGE_CRM_CATALOGS);
+  assert.equal(PERMISSIONS.MANAGE_FUNNELS, authConstants.PERMISSION.MANAGE_FUNNELS);
 
   const admin = permissionsOf({ role: 'ADMIN', permissions: [...authConstants.getRolePermissions(authConstants.ROLE.ADMIN)] });
   const closer = permissionsOf({ role: 'COMMERCIAL_CLOSER', permissions: [...authConstants.getRolePermissions(authConstants.ROLE.COMMERCIAL_CLOSER)] });
-  assert.deepEqual(admin, { canReadCrm: true, canWriteCrm: true, canDeleteCrm: true, canProposeCrm: true, canReview: true, canProposeLead: true, canManageProspectingExclusions: true });
-  assert.deepEqual(closer, { canReadCrm: true, canWriteCrm: false, canDeleteCrm: false, canProposeCrm: true, canReview: true, canProposeLead: false, canManageProspectingExclusions: false });
+  assert.deepEqual(admin, { canReadCrm: true, canWriteCrm: true, canDeleteCrm: true, canProposeCrm: true, canReview: true, canProposeLead: true, canManageProspectingExclusions: true, canManageCrmCatalogs: true, canManageFunnels: true });
+  assert.deepEqual(closer, { canReadCrm: true, canWriteCrm: false, canDeleteCrm: false, canProposeCrm: true, canReview: true, canProposeLead: false, canManageProspectingExclusions: false, canManageCrmCatalogs: false, canManageFunnels: false });
 
   // A role NUNCA decide: um ADMIN sem WRITE:CRM/DELETE:CRM na lista não escreve/exclui, e a role forjada de um closer não muda nada.
   assert.equal(permissionsOf({ role: 'ADMIN', permissions: ['READ:CRM'] }).canWriteCrm, false);
@@ -93,7 +95,7 @@ test('[DASH-MODEL-4] as permissões do Dashboard são as do servidor: os nomes b
   assert.equal(permissionsOf({ role: 'ADMIN', permissions: ['READ:CRM'] }).canProposeCrm, false);
   assert.equal(permissionsOf({ role: 'ADMIN', permissions: [] }).canReadCrm, false);
   for (const estranho of [undefined, null, {}, { permissions: 'WRITE:CRM' }, { permissions: null }, 'ADMIN', 42]) {
-    assert.deepEqual(permissionsOf(estranho), { canReadCrm: false, canWriteCrm: false, canDeleteCrm: false, canProposeCrm: false, canReview: false, canProposeLead: false, canManageProspectingExclusions: false });
+    assert.deepEqual(permissionsOf(estranho), { canReadCrm: false, canWriteCrm: false, canDeleteCrm: false, canProposeCrm: false, canReview: false, canProposeLead: false, canManageProspectingExclusions: false, canManageCrmCatalogs: false, canManageFunnels: false });
   }
 });
 

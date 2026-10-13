@@ -31,14 +31,15 @@ export const NAV_TREE = Object.freeze([
       {
         id: 'crm-settings',
         label: NAV_LABELS.crmSettings,
-        route: { name: 'crm-settings' },
+        route: { name: 'crm-settings' }, // a página de acessos aos cadastros (views/crmSettings.mjs); o pai só aparece se algum filho aparecer
         needs: 'canReadCrm',
-        soon: true,
         children: [
-          { id: 'crm-settings-services', label: NAV_LABELS.crmServices, route: { name: 'crm-settings-services' }, needs: 'canReadCrm', soon: true },
-          { id: 'crm-settings-niches', label: NAV_LABELS.crmNiches, route: { name: 'crm-settings-niches' }, needs: 'canReadCrm', soon: true },
-          { id: 'crm-settings-funnels', label: NAV_LABELS.crmFunnelAdmin, route: { name: 'crm-settings-funnels' }, needs: 'canReadCrm', soon: true },
-          { id: 'crm-settings-origins', label: NAV_LABELS.crmOrigins, route: { name: 'crm-settings-origins' }, needs: 'canReadCrm', soon: true },
+          // Os três catálogos são telas ADMINISTRATIVAS reais (Fase 2B-2): só aparecem para quem pode administrá-los (MANAGE:CRM_CATALOGS). A Gestão de Funis e Etapas continua EM DESENVOLVIMENTO
+          // e, por ser administrativa, só aparece para quem tem MANAGE:FUNNELS. Quem só pode ler o CRM não vê nenhum item de Configurações (o pai some quando fica sem filhos).
+          { id: 'crm-settings-services', label: NAV_LABELS.crmServices, route: { name: 'crm-settings-services' }, needs: 'canManageCrmCatalogs' },
+          { id: 'crm-settings-niches', label: NAV_LABELS.crmNiches, route: { name: 'crm-settings-niches' }, needs: 'canManageCrmCatalogs' },
+          { id: 'crm-settings-funnels', label: NAV_LABELS.crmFunnelAdmin, route: { name: 'crm-settings-funnels' }, needs: 'canManageFunnels', soon: true },
+          { id: 'crm-settings-origins', label: NAV_LABELS.crmOrigins, route: { name: 'crm-settings-origins' }, needs: 'canManageCrmCatalogs' },
         ],
       },
     ],
@@ -147,6 +148,10 @@ export function menuItemOf(route) {
       return 'crm-settings-funnels';
     case 'crm-settings-origins':
       return 'crm-settings-origins';
+    // o painel de novo item / de edição de um catálogo mantém aceso o item do menu do catálogo
+    case 'crm-catalog-new':
+    case 'crm-catalog-item':
+      return route.catalog === 'servicos' ? 'crm-settings-services' : route.catalog === 'nichos' ? 'crm-settings-niches' : route.catalog === 'origens' ? 'crm-settings-origins' : null;
     case 'prospecting':
     case 'prospecting-run':
     case 'prospecting-brief':

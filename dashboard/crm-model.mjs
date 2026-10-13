@@ -436,6 +436,10 @@ export const PERMISSIONS = Object.freeze({
   PROPOSE_LEAD_APPROVAL: 'PROPOSE:LEAD_APPROVAL',
   // Administrar Exclusões Permanentes de Prospecção (Workbench, Etapa 2) — só ADMIN.
   MANAGE_PROSPECTING_EXCLUSIONS: 'MANAGE:PROSPECTING_EXCLUSIONS',
+  // Administrar os catálogos do CRM — Serviços, Nichos e Origens dos Leads (Fase 2B-1/2B-2, decisão 0026) — só ADMIN. Consultar os itens ATIVOS exige só READ:CRM.
+  MANAGE_CRM_CATALOGS: 'MANAGE:CRM_CATALOGS',
+  // Administrar a estrutura dos funis (MANAGE:FUNNELS, só ADMIN): aqui só decide se o item de menu "Gestão de Funis e Etapas" aparece.
+  MANAGE_FUNNELS: 'MANAGE:FUNNELS',
 });
 
 // `me`: o que /api/me devolveu. As permissões vêm do servidor (derivadas da role dele), nunca do navegador.
@@ -449,6 +453,8 @@ export function permissionsOf(me) {
     canReview: list.includes(PERMISSIONS.REVIEW),
     canProposeLead: list.includes(PERMISSIONS.PROPOSE_LEAD_APPROVAL),
     canManageProspectingExclusions: list.includes(PERMISSIONS.MANAGE_PROSPECTING_EXCLUSIONS),
+    canManageCrmCatalogs: list.includes(PERMISSIONS.MANAGE_CRM_CATALOGS),
+    canManageFunnels: list.includes(PERMISSIONS.MANAGE_FUNNELS),
   };
 }
 

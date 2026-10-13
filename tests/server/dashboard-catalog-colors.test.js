@@ -1,8 +1,8 @@
 // A PALETA DE 20 CORES dos nichos no Dashboard (dashboard/styles.css — CRM 5.0, Fase 2B-1): as classes `.cor-<chave>` e o chip `.nicho-chip` são
 // IDÊNTICOS à paleta do servidor (src/crm/catalogConstants.js#NICHE_COLORS), o contraste é recalculado a partir do que está no CSS, e a regra
 // de segurança segue valendo: cores só por classe de CSS (CSP style-src 'self'; DASH-GUARD-8), nunca estilo inline nem hex no JavaScript.
-// Ainda NÃO há tela que use estas classes (Fase 2B-2): o teste garante que o contrato entre o backend (guarda só a CHAVE) e a interface já
-// está fechado, sem acoplar um ao outro — o Dashboard nunca importa nada de src/ (R11).
+// As telas de Nichos e Cores (Fase 2B-2) usam estas classes. O contrato entre o backend (guarda só a CHAVE) e a interface é este teste, sem acoplar um ao outro — o Dashboard nunca
+// importa nada de src/ (R11). A lista de opções do seletor mora num ÚNICO módulo (dashboard/catalog-colors.mjs), conferido contra o servidor em dashboard-catalog-ui-colors.test.js.
 
 const test = require('node:test');
 const assert = require('node:assert/strict');
@@ -80,11 +80,12 @@ test('[CATCOLOR-4] CSP e DASH-GUARD-8: as cores vivem SÓ no CSS — nenhum .mjs
   assert.doesNotMatch(CSS_SEM_COMENTARIOS, /!important[^;}]*--cor-/);
 });
 
-test('[CATCOLOR-5] ACOPLAMENTO: o Dashboard não importa nada de src/ (R11) nem repete a lista de chaves da paleta no JavaScript; o servidor guarda só a CHAVE e o CSS resolve a cor — a ligação entre os dois é este teste', () => {
+test('[CATCOLOR-5] ACOPLAMENTO: o Dashboard não importa nada de src/ (R11) e só dashboard/catalog-colors.mjs lista as chaves da paleta; o servidor guarda só a CHAVE e o CSS resolve a cor — a ligação entre os dois é este teste', () => {
   for (const arquivo of listSourceFiles(DASHBOARD_ROOT).filter((f) => f.endsWith('.mjs'))) {
     const nome = toPosix(path.relative(DASHBOARD_ROOT, arquivo));
     const analise = analyzeSource(fs.readFileSync(arquivo, 'utf8'), nome);
     for (const ref of analise.refs) assert.doesNotMatch(ref.specifier, /(^|\/)src\//, `${nome} não pode importar de src/`);
+    if (nome === 'catalog-colors.mjs') continue; // o ÚNICO módulo que carrega as 20 opções do seletor (conferido contra o servidor em dashboard-catalog-ui-colors.test.js)
     const textos = analise.strings.map((s) => s.value);
     const chavesNoJs = NICHE_COLOR_KEYS.filter((chave) => textos.includes(chave));
     assert.ok(chavesNoJs.length < 5, `${nome}: não deve repetir a paleta (achei ${chavesNoJs.join(', ')})`);

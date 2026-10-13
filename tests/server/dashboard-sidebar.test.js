@@ -16,9 +16,9 @@ const loadPrefs = () => import('../../dashboard/preferences.mjs');
 const loadRouter = () => import('../../dashboard/router.mjs');
 const loadDom = () => import('../../dashboard/dom.mjs');
 
-const TUDO = Object.freeze({ canReadCrm: true, canWriteCrm: true, canReview: true, canProposeLead: true, canManageProspectingExclusions: true });
-const VENDEDOR = Object.freeze({ canReadCrm: true, canWriteCrm: false, canReview: true, canProposeLead: false, canManageProspectingExclusions: false });
-const SO_FILA = Object.freeze({ canReadCrm: false, canWriteCrm: false, canReview: false, canProposeLead: false, canManageProspectingExclusions: false });
+const TUDO = Object.freeze({ canReadCrm: true, canWriteCrm: true, canReview: true, canProposeLead: true, canManageProspectingExclusions: true, canManageCrmCatalogs: true, canManageFunnels: true });
+const VENDEDOR = Object.freeze({ canReadCrm: true, canWriteCrm: false, canReview: true, canProposeLead: false, canManageProspectingExclusions: false, canManageCrmCatalogs: false, canManageFunnels: false });
+const SO_FILA = Object.freeze({ canReadCrm: false, canWriteCrm: false, canReview: false, canProposeLead: false, canManageProspectingExclusions: false, canManageCrmCatalogs: false, canManageFunnels: false });
 
 const memoria = () => {
   const dados = new Map();
@@ -97,6 +97,14 @@ test('[SIDE-2] PERMISSÕES: cada entrada some quando a permissão falta (e os pa
   assert.ok(vendedor.includes('CRM') && vendedor.includes('Clientes') && vendedor.includes('Fila de Aprovação') && vendedor.includes('Leads Reprovados'));
   for (const sumiu of ['Nova Prospecção', 'Histórico', 'Exclusões Permanentes']) assert.equal(vendedor.includes(sumiu), false, sumiu);
   assert.ok(vendedor.includes('Prospecção'), 'o grupo fica porque ainda tem filhos');
+  // Configurações do CRM é administrativa (Fase 2B-2): sem MANAGE:CRM_CATALOGS e sem MANAGE:FUNNELS nenhum item dela aparece, e o pai some junto
+  for (const sumiu of ['Configurações do CRM', 'Serviços', 'Nichos e Cores', 'Origens dos Leads', 'Gestão de Funis e Etapas']) assert.equal(vendedor.includes(sumiu), false, sumiu);
+  const soCatalogos = rotulos(visibleTree(NAV_TREE, { ...VENDEDOR, canManageCrmCatalogs: true }));
+  for (const aparece of ['Configurações do CRM', 'Serviços', 'Nichos e Cores', 'Origens dos Leads']) assert.ok(soCatalogos.includes(aparece), aparece);
+  assert.equal(soCatalogos.includes('Gestão de Funis e Etapas'), false, 'a gestão de funis pede MANAGE:FUNNELS, não a permissão dos catálogos');
+  const soFunis = rotulos(visibleTree(NAV_TREE, { ...VENDEDOR, canManageFunnels: true }));
+  assert.ok(soFunis.includes('Gestão de Funis e Etapas') && soFunis.includes('Configurações do CRM'));
+  for (const sumiu of ['Serviços', 'Nichos e Cores', 'Origens dos Leads']) assert.equal(soFunis.includes(sumiu), false, `${sumiu}: pede MANAGE:CRM_CATALOGS`);
 
   const soFila = rotulos(visibleTree(NAV_TREE, SO_FILA));
   assert.equal(soFila.includes('CRM'), false, 'sem READ:CRM o CRM e tudo dentro dele somem');
@@ -599,7 +607,14 @@ test('[SIDE-18] ROTAS: as novas existem (dashboard, clientes, metas, configuraç
   assert.equal(sectionOf({ name: 'crm-list' }), 'crm');
   assert.equal(sectionOf({ name: 'crm-clients' }), 'crm');
   assert.equal(sectionOf({ name: 'crm-record' }), 'crm');
-  for (const nome of ['crm-dashboard', 'crm-goals', 'crm-settings', 'crm-settings-services', 'crm-settings-niches', 'crm-settings-funnels', 'crm-settings-origins']) assert.equal(sectionOf({ name: nome }), 'crm-future', nome);
+  for (const nome of ['crm-dashboard', 'crm-goals', 'crm-settings-funnels']) assert.equal(sectionOf({ name: nome }), 'crm-future', nome);
+  // Configurações do CRM é uma página real (os acessos aos cadastros): tem a sua própria seção
+  assert.equal(sectionOf({ name: 'crm-settings' }), 'crm-settings');
+  // os três catálogos (Fase 2B-2) são telas reais, com o painel de novo item e o de edição na mesma seção
+  for (const nome of ['crm-settings-services', 'crm-settings-niches', 'crm-settings-origins']) assert.equal(sectionOf({ name: nome }), 'crm-catalogs', nome);
+  assert.equal(sectionOf({ name: 'crm-catalog-new', catalog: 'servicos' }), 'crm-catalogs');
+  assert.equal(sectionOf({ name: 'crm-catalog-item', catalog: 'nichos', id: 'niche:x' }), 'crm-catalogs');
+  assert.equal(sectionOf({ name: 'crm-catalog-item', catalog: 'desconhecido', id: 'x' }), null, 'um catálogo desconhecido não é uma tela');
   assert.equal(sectionOf({ name: 'funnels' }), 'funnels');
   assert.equal(sectionOf({ name: 'approvals' }), 'approvals');
 });

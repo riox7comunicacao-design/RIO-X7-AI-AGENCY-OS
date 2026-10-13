@@ -56,12 +56,14 @@ test('[CATCOMPAT-2] só o SERVIDOR (rotas e composição) e as fábricas ligam o
   assert.deepEqual(importadores.sort(), ['src/auth/index.js', 'src/crm-adapters/index.js', 'src/server/index.js'], 'quem importa módulos de catálogo');
 });
 
-test('[CATCOMPAT-3] o PREÇO DE REFERÊNCIA nunca vira o valor de uma proposta: só quatro módulos o conhecem, e eles não citam valorProposta nem valorTotal em código; nada do CRM, da promoção ou do Dashboard o usa', () => {
+test('[CATCOMPAT-3] o PREÇO DE REFERÊNCIA nunca vira o valor de uma proposta: só sete módulos o conhecem (os quatro dos catálogos no servidor e as três peças da interface dos catálogos no Dashboard), e eles não citam valorProposta nem valorTotal em código; nada do CRM, da promoção nem das outras telas o usa', () => {
   const comPreco = [...arvore('src'), ...arvore('dashboard'), ...arvore('scripts')]
     .filter((f) => /\.(js|mjs)$/.test(f))
     .filter((f) => /precoReferencia|preco_referencia/.test(semComentarios(read(f))));
-  assert.deepEqual(comPreco.sort(), ['src/crm-adapters/crmSupabaseCatalogRepository.js', 'src/crm/catalogConstants.js', 'src/crm/catalogDomain.js', 'src/crm/catalogRepositoryPort.js']);
-  for (const arquivo of arvore('src').filter((f) => /\/catalog[A-Za-z]*\.js$/.test(f) || /crmSupabaseCatalogRepository\.js$/.test(f))) {
+  // Fase 2B-2: a interface administrativa dos catálogos mostra e edita o preço de referência (informativo) — só o modelo, o formulário e a tela dos catálogos; o CRM, a Fila e as demais telas não.
+  assert.deepEqual(comPreco.sort(), ['dashboard/catalog-model.mjs', 'dashboard/views/catalogForm.mjs', 'dashboard/views/catalogs.mjs', 'src/crm-adapters/crmSupabaseCatalogRepository.js', 'src/crm/catalogConstants.js', 'src/crm/catalogDomain.js', 'src/crm/catalogRepositoryPort.js']);
+  const dosCatalogos = [...arvore('src').filter((f) => /\/catalog[A-Za-z]*\.js$/.test(f) || /crmSupabaseCatalogRepository\.js$/.test(f)), 'dashboard/catalog-model.mjs', 'dashboard/views/catalogForm.mjs', 'dashboard/views/catalogs.mjs'];
+  for (const arquivo of dosCatalogos) {
     assert.doesNotMatch(semComentarios(read(arquivo)), /valorProposta|valorTotal|valor_proposta|valor_total/, `${arquivo}: o preço de referência não alimenta valores de proposta`);
   }
   // a migration também não relaciona os dois

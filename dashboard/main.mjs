@@ -18,13 +18,15 @@
 import { h } from './dom.mjs';
 import { createApiClient } from './api.mjs';
 import { roleLabel } from './format.mjs';
-import { parseRoute, buildHash, sectionOf } from './router.mjs';
+import { parseRoute, buildHash, sectionOf, catalogListRouteName } from './router.mjs';
 import { NAV_TREE, visibleTree, menuItemOf } from './nav.mjs';
 import { PAGE_TITLES, SHELL_TEXT } from './i18n/pt-BR.mjs';
 import { permissionsOf } from './crm-model.mjs';
 import { createAgentsView } from './views/agents.mjs';
 import { createApprovalsView } from './views/approvals.mjs';
 import { createCrmView } from './views/crm.mjs';
+import { createCatalogsView } from './views/catalogs.mjs';
+import { createCrmSettingsView } from './views/crmSettings.mjs';
 import { createFunnelsView } from './views/funnels.mjs';
 import { createProspectingView } from './views/prospecting.mjs';
 import { createProspectingExclusionsView } from './views/prospectingExclusions.mjs';
@@ -276,6 +278,10 @@ export function startDashboard({ document, root, fetchImpl, sdk, navigation, pre
       // só a confirmação humana inicia uma prospecção; o acompanhamento só consulta o status de um job em andamento, com a tela à vista.
       const prospectingContainer = container();
       const prospectingView = createProspectingView({ document, root: prospectingContainer, api, permissions, ui, bus, navigation });
+      // Os catálogos do CRM (Serviços, Nichos e Cores, Origens dos Leads — Fase 2B-2) também são PERSISTENTES: busca, filtro e rolagem sobrevivem a abrir o painel lateral (que tem URL) e a trocar de módulo.
+      // Só quem tem MANAGE:CRM_CATALOGS entra; o servidor também recusa as chamadas de quem não tem.
+      const catalogsContainer = container();
+      const catalogsView = createCatalogsView({ document, root: catalogsContainer, api, permissions, ui, bus, navigation });
       let currentSection = null;
       let transient = null; // a tela sem estado guardado (Visão Geral, Aprovações) que está na página agora
 
@@ -284,17 +290,20 @@ export function startDashboard({ document, root, fetchImpl, sdk, navigation, pre
 
       function renderRoute(route) {
         const section = sectionOf(route);
-        // Sair do CRM com edição não salva (ou salvando): o navegador já mudou o endereço, mas NADA muda na tela até a pessoa decidir. Descartar segue para onde ia; continuar editando volta o endereço.
-        if (currentSection === 'crm' && section !== 'crm' && typeof crmView.leaveState === 'function' && crmView.leaveState() !== null) {
-          crmView.confirmLeave({ discard: () => renderRoute(route), stay: () => navigation.restore(renderedHash) });
+        // Sair do CRM (ou de um catálogo do CRM) com edição não salva (ou salvando): o navegador já mudou o endereço, mas NADA muda na tela até a pessoa decidir. Descartar segue para onde ia;
+        // continuar editando volta o endereço.
+        const guarded = currentSection === 'crm' ? crmView : currentSection === 'crm-catalogs' ? catalogsView : null;
+        if (guarded && section !== currentSection && typeof guarded.leaveState === 'function' && guarded.leaveState() !== null) {
+          guarded.confirmLeave({ discard: () => renderRoute(route), stay: () => navigation.restore(renderedHash) });
           return;
         }
         renderedHash = navigation.current();
-        document.title = `${PAGE_TITLES[route.name] || BASE_TITLE} — ${BASE_TITLE}`;
+        document.title = `${PAGE_TITLES[catalogListRouteName(route) || route.name] || BASE_TITLE} — ${BASE_TITLE}`;
         sidebar.setActive(menuItemOf(route));
         if (transient && typeof transient.destroy === 'function') transient.destroy();
         transient = null;
         if (currentSection === 'crm' && section !== 'crm') crmView.hide(); // saiu do CRM: a ficha aberta fecha; busca, filtros e página ficam guardados
+        if (currentSection === 'crm-catalogs' && section !== 'crm-catalogs') catalogsView.hide(); // saiu dos catálogos: o painel lateral fecha; busca, filtro e rolagem ficam guardados
         if (currentSection === 'approvals' && section !== 'approvals') approvalsView.hide(); // saiu da fila: as camadas fecham e as consultas param
         if (currentSection === 'rejected-leads' && section !== 'rejected-leads') rejectedView.hide();
         if (currentSection === 'prospecting-history' && section !== 'prospecting-history') historyView.hide();
@@ -308,6 +317,24 @@ export function startDashboard({ document, root, fetchImpl, sdk, navigation, pre
           }
           main.replaceChildren(crmContainer);
           crmView.show(route);
+        } else if (section === 'crm-catalogs') {
+          // Administrar os catálogos exige MANAGE:CRM_CATALOGS (só ADMIN): sem ela nada é mostrado nem chamado.
+          if (!permissions.canManageCrmCatalogs) {
+            main.replaceChildren(h(document, 'p', { className: 'message error', role: 'alert', text: NO_ACCESS }));
+            return;
+          }
+          main.replaceChildren(catalogsContainer);
+          catalogsView.show(route);
+        } else if (section === 'crm-settings') {
+          // Configurações do CRM: os acessos aos cadastros. Só mostra o que a conta pode administrar; sem nenhuma permissão administrativa não há o que mostrar.
+          if (!permissions.canManageCrmCatalogs && !permissions.canManageFunnels) {
+            main.replaceChildren(h(document, 'p', { className: 'message error', role: 'alert', text: NO_ACCESS }));
+            return;
+          }
+          const target = container();
+          main.replaceChildren(target);
+          transient = createCrmSettingsView({ document, root: target, permissions });
+          transient.render();
         } else if (section === 'crm-future') {
           // Dashboard Comercial, Metas e Configurações do CRM: páginas EM DESENVOLVIMENTO, sem dado nenhum
           if (!permissions.canReadCrm) {
@@ -387,7 +414,7 @@ export function startDashboard({ document, root, fetchImpl, sdk, navigation, pre
       const stopRouting = navigation.subscribe(() => renderRoute(parseRoute(navigation.current())));
       session = {
         stopRouting,
-        views: [{ destroy: () => sidebar.destroy() }, crmView, approvalsView, rejectedView, historyView, prospectingView, { destroy: stopReconsider }, { destroy: () => transient && typeof transient.destroy === 'function' && transient.destroy() }, { destroy: stopCounts }, { destroy: () => ui.destroy() }],
+        views: [{ destroy: () => sidebar.destroy() }, crmView, catalogsView, approvalsView, rejectedView, historyView, prospectingView, { destroy: stopReconsider }, { destroy: () => transient && typeof transient.destroy === 'function' && transient.destroy() }, { destroy: stopCounts }, { destroy: () => ui.destroy() }],
       };
       renderRoute(parseRoute(navigation.current()));
     }

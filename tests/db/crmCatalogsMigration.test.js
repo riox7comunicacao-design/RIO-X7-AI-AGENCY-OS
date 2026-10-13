@@ -188,7 +188,7 @@ test('[MIG-CAT-13] NADA EXECUTA a migration: nenhum arquivo de src/ ou scripts/ 
     assert.doesNotMatch(texto, /supabase[\\/]+migrations/, `${path.relative(REPO_ROOT, arquivo)} não lê a pasta de migrations`);
   }
   const pacote = JSON.parse(fs.readFileSync(path.join(REPO_ROOT, 'package.json'), 'utf8'));
-  assert.deepEqual(Object.keys(pacote.scripts).sort(), ['dev', 'smoke:researcher', 'start', 'test']);
+  assert.deepEqual(Object.keys(pacote.scripts).sort(), ['dev', 'smoke:researcher', 'start', 'test', 'test:integration']); // test:integration = só os testes de rede externa, sob autorização explícita (Fase 2B-2)
   assert.equal(JSON.stringify(pacote).includes('db push') || JSON.stringify(pacote).includes('migrate'), false);
 });
 

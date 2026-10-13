@@ -19,30 +19,47 @@
 // onSessionLost(): a UI volta para o login. fetchImpl: para testes (o padrão é o fetch do navegador).
 
 import { WRITABLE_KEYS } from './crm-model.mjs';
+import { CATALOG_KEYS, CATALOG_WRITABLE_FIELDS } from './catalog-model.mjs';
 
 export class ApiError extends Error {
-  constructor(status, code, message) {
+  constructor(status, code, message, details = []) {
     super(message || code);
     this.name = 'ApiError';
     this.status = status;
     this.code = code;
     this.serverMessage = message || '';
+    // Os detalhes de uma recusa de validação (400): [{ path, code }] — só o CAMINHO do campo e o CÓDIGO do problema, nunca o valor recusado.
+    this.details = details;
   }
+}
+
+// Mantém só entradas { path, code } de texto curto: o que o servidor devolve em error.details numa recusa de validação.
+function readDetails(raw) {
+  if (!Array.isArray(raw)) return [];
+  const out = [];
+  for (const entry of raw.slice(0, 50)) {
+    if (entry && typeof entry === 'object' && typeof entry.code === 'string' && entry.code.length <= 80) {
+      out.push({ path: typeof entry.path === 'string' && entry.path.length <= 80 ? entry.path : '', code: entry.code });
+    }
+  }
+  return out;
 }
 
 async function readApiError(response) {
   let code = `HTTP_${response.status}`;
   let message = '';
+  let details = [];
   try {
     const data = await response.json();
     if (data && data.error) {
       code = typeof data.error.code === 'string' ? data.error.code : code;
       message = typeof data.error.message === 'string' ? data.error.message : '';
+      details = readDetails(data.error.details);
     }
   } catch {
     // corpo que não é JSON (um proxy, por exemplo): fica só o status.
   }
-  return new ApiError(response.status, code, message);
+  return new ApiError(response.status, code, message, details);
 }
 
 // Os campos de um registro do CRM que vão no corpo: um objeto simples só com chaves de WRITABLE_KEYS. Qualquer outra
@@ -70,6 +87,21 @@ function crmCreateOptions(options) {
 }
 
 const crmPath = (id, suffix = '') => `/api/crm/${encodeURIComponent(id)}${suffix}`;
+
+// Catálogos do CRM (Fase 2B-2): o catálogo é uma das três chaves conhecidas e o corpo de uma escrita só leva os campos GRAVÁVEIS dele (nunca id, ordem, ativo, datas nem quem alterou —
+// isso o servidor define). Um erro de programação aqui vira uma promessa rejeitada, sem requisição.
+function catalogPath(catalogo, suffix = '') {
+  if (!CATALOG_KEYS.includes(catalogo)) throw new Error(`catálogo desconhecido: ${String(catalogo)}`);
+  return `/api/crm-catalogs/${catalogo}${suffix}`;
+}
+
+function catalogFields(catalogo, fields) {
+  if (fields === null || typeof fields !== 'object' || Array.isArray(fields)) throw new Error('catálogo: os campos devem ser um objeto');
+  const allowed = CATALOG_WRITABLE_FIELDS[catalogo] || [];
+  const unknown = Object.keys(fields).filter((key) => !allowed.includes(key));
+  if (unknown.length > 0) throw new Error(`catálogo: campo não permitido no corpo: ${unknown.join(', ')}`);
+  return { ...fields };
+}
 
 export function createApiClient({ getAccessToken, refreshAccessToken, onSessionLost, fetchImpl }) {
   const doFetch = fetchImpl || ((...args) => globalThis.fetch(...args));
@@ -192,5 +224,16 @@ export function createApiClient({ getAccessToken, refreshAccessToken, onSessionL
     updateProspectingExclusion: (id, patch) => request('PATCH', `/api/prospecting/exclusions/${encodeURIComponent(id)}`, patch),
     deactivateProspectingExclusion: (id) => request('POST', `/api/prospecting/exclusions/${encodeURIComponent(id)}/deactivate`, {}),
     activateProspectingExclusion: (id) => request('POST', `/api/prospecting/exclusions/${encodeURIComponent(id)}/activate`, {}),
+
+    // Catálogos do CRM — Serviços, Nichos e Origens dos Leads (Fase 2B-2). Administrar exige MANAGE:CRM_CATALOGS (só ADMIN) e consultar os itens ativos, READ:CRM — o servidor decide.
+    // `todos: true` inclui os desativados (visão administrativa). Não existe exclusão: "excluir" é desativar. Nenhuma chamada leva userId, role ou permissions.
+    listCatalog: async (catalogo, { todos = false } = {}) => request('GET', catalogPath(catalogo, todos ? '?todos=1' : '')),
+    getCatalogItem: async (catalogo, id) => request('GET', catalogPath(catalogo, `/${encodeURIComponent(id)}`)),
+    createCatalogItem: async (catalogo, fields) => request('POST', catalogPath(catalogo), catalogFields(catalogo, fields)),
+    updateCatalogItem: async (catalogo, id, patch) => request('PATCH', catalogPath(catalogo, `/${encodeURIComponent(id)}`), catalogFields(catalogo, patch)),
+    activateCatalogItem: async (catalogo, id) => request('POST', catalogPath(catalogo, `/${encodeURIComponent(id)}/activate`), {}),
+    deactivateCatalogItem: async (catalogo, id) => request('POST', catalogPath(catalogo, `/${encodeURIComponent(id)}/deactivate`), {}),
+    // A nova ordem: os ids de TODOS os itens do catálogo (ativos e desativados), cada um uma vez, na ordem desejada.
+    reorderCatalog: async (catalogo, orderedIds) => request('POST', catalogPath(catalogo, '/reorder'), { orderedIds: Array.isArray(orderedIds) ? [...orderedIds] : orderedIds }),
   };
 }

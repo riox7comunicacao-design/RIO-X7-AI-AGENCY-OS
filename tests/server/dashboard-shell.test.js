@@ -469,7 +469,7 @@ test('[DASH-SHELL-15] COMMERCIAL_CLOSER no painel: vê o menu, a lista e a ficha
   assert.match(textoDaTela(t.browser), /Vendedor/);
   // COMMERCIAL_CLOSER não tem PROPOSE:LEAD_APPROVAL (mesma decisão já vigente do Prospecting Service): "Prospecção"
   // não aparece — diferente de "Funis" (READ:CRM, que o closer tem).
-  assert.deepEqual(linksDoMenu(t.browser).map((link) => link.textContent), ['Visão Geral', 'CRM', 'Dashboard Comercial', 'Clientes', 'Funis de Vendas', 'Metas e Indicadores', 'Configurações do CRM', 'Serviços', 'Nichos e Cores', 'Gestão de Funis e Etapas', 'Origens dos Leads', 'Fila de Aprovação', 'Leads Reprovados', 'Central de Agentes']);
+  assert.deepEqual(linksDoMenu(t.browser).map((link) => link.textContent), ['Visão Geral', 'CRM', 'Dashboard Comercial', 'Clientes', 'Funis de Vendas', 'Metas e Indicadores', 'Fila de Aprovação', 'Leads Reprovados', 'Central de Agentes']); // sem "Configurações do CRM": os cadastros são administrativos (Fase 2B-2)
   t.browser.window.location.hash = '#/crm';
   await t.browser.flush();
   assert.match(textoDaTela(t.browser), /Odonto Beta/);
