@@ -269,13 +269,22 @@ test('[CATFULL-5] ESTRUTURA DE DADOS AUSENTE (migration NÃO aplicada): com o ad
   assert.doesNotMatch(texto(s), /PGRST|crm_services|schema cache/, 'o detalhe técnico do banco nunca chega à tela');
   assert.equal(linhas(s).length, 0);
   assert.ok(botao(s, 'Tentar novamente'));
-  // criar: o servidor recusa, a tela não confirma e o rascunho fica
+  // a indisponibilidade foi CONFIRMADA pelo servidor (503): criar não é possível — o botão está desabilitado, o painel não abre (nem por link direto) e NENHUMA gravação é enviada
+  assert.equal(botao(s, 'Novo Serviço').disabled, true);
   await clicar(s, botao(s, 'Novo Serviço'));
-  digitar(s, campo(s, 'nome'), 'Serviço de teste');
-  await salvar(s);
-  assert.ok(gaveta(s));
-  assert.match(gaveta(s).textContent, /ainda não foi preparada neste ambiente\. Nada foi alterado\./);
-  assert.equal(campo(s, 'nome').value, 'Serviço de teste');
+  assert.equal(gaveta(s), null);
+  await ir(s, '#/crm/configuracoes/servicos/novo');
+  assert.equal(gaveta(s), null, 'nem por link direto');
+  assert.equal(s.win.location.hash, '#/crm/configuracoes/servicos', 'o endereço volta à lista');
+  assert.match(texto(s), /Não é possível criar agora: os cadastros estão indisponíveis\./);
+  assert.deepEqual(s.fetchImpl.calls.filter((c) => c.method !== 'GET'), [], 'nenhuma gravação saiu da tela');
+  assert.ok(chamadasAoPostgrest.every((c) => c.startsWith('GET ')), 'e nenhuma gravação chegou ao PostgREST');
+  // a navegação e a nova tentativa de carregar continuam: o servidor segue indisponível, e nada é gravado
+  const leiturasAntes = chamadasAoPostgrest.length;
+  await clicar(s, botao(s, 'Tentar novamente'));
+  assert.equal(ultima(s).status, 503);
+  assert.ok(chamadasAoPostgrest.length > leiturasAntes, 'tentar de novo é uma nova LEITURA');
+  assert.equal(botao(s, 'Novo Serviço').disabled, true);
   assert.doesNotMatch(texto(s), /Serviço criado/);
   assert.ok(chamadasAoPostgrest.every((c) => c.includes('/rest/v1/')), 'só PostgREST falso; nenhuma outra chamada');
   assert.ok(!chamadasAoPostgrest.some((c) => c.startsWith('DELETE')), 'e nunca um DELETE');

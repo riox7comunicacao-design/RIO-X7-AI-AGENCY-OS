@@ -911,6 +911,9 @@ table.list.queue .reason-text { max-width: 320px; overflow-wrap: anywhere; displ
 .catalog-desc { display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
 .catalog-row-actions { display: flex; flex: 0 0 auto; flex-wrap: wrap; align-items: center; gap: 6px; }
 .catalog-hint { margin: 0 0 10px; font-size: 13.5px; }
+.catalog-availability:empty, .form-availability:empty { display: none; }
+.catalog-unavailable { display: grid; gap: 8px; justify-items: start; margin: 0 0 12px; }
+.catalog-unavailable .message { margin: 0; }
 .catalog-error { display: grid; gap: 8px; justify-items: start; padding: 10px 0; }
 .catalog-error .message { margin: 0; }
 .catalog-form { display: grid; gap: 4px; }
@@ -921,10 +924,13 @@ table.list.queue .reason-text { max-width: 320px; overflow-wrap: anywhere; displ
 .catalog-form-actions { display: flex; flex-wrap: wrap; justify-content: flex-end; gap: 10px; }
 .field-label { margin: 0; font-weight: 600; }
 .field-label.required::after { content: " *"; color: var(--bad-text); }
-.color-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(124px, 1fr)); gap: 8px; margin-top: 4px; }
-.color-swatch { position: relative; display: flex; align-items: center; gap: 8px; min-height: 44px; padding: 6px 28px 6px 10px; border: 2px solid var(--cor-fundo); border-radius: 10px; background: var(--cor-fundo); color: var(--cor-texto); font: inherit; font-size: 13.5px; font-weight: 600; text-align: left; cursor: pointer; }
+/* O seletor das 20 cores: cada opção tem que caber o NOME INTEIRO, em uma linha (nunca partido no meio da palavra). A conta: o nome mais largo ("Esmeralda") mede ~63 px em 13,5 px/600 (medido no
+   navegador) e o resto da opção — bordas, margem esquerda, amostra, espaço e a reserva da marca de selecionada — ocupa 66 px; por isso a coluna mínima é de 140 px (74 px de texto, ~18% de folga).
+   Se uma fonte mais larga ainda estourar, o nome continua inteiro (white-space: nowrap) e avança sobre a reserva da marca, em vez de quebrar. tests/server/dashboard-catalog-ui-colors.test.js confere os números. */
+.color-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(140px, 1fr)); gap: 8px; margin-top: 4px; }
+.color-swatch { position: relative; display: flex; align-items: center; gap: 8px; min-height: 44px; padding: 6px 26px 6px 10px; border: 2px solid var(--cor-fundo); border-radius: 10px; background: var(--cor-fundo); color: var(--cor-texto); font: inherit; font-size: 13.5px; font-weight: 600; text-align: left; cursor: pointer; }
 .color-swatch .swatch-dot { flex: none; width: 18px; height: 18px; border: 2px solid #ffffff; border-radius: 50%; background: var(--cor-ponto); box-shadow: 0 0 0 1px var(--cor-ponto); }
-.color-swatch .swatch-name { min-width: 0; overflow-wrap: anywhere; }
+.color-swatch .swatch-name { min-width: 0; white-space: nowrap; overflow-wrap: normal; word-break: normal; hyphens: none; }
 .color-swatch .swatch-check { position: absolute; top: 50%; right: 8px; display: none; font-weight: 700; transform: translateY(-50%); }
 .color-swatch:hover:not(:disabled) { border-color: var(--cor-ponto); }
 .color-swatch.selected { border-color: var(--cor-texto); box-shadow: 0 0 0 1px var(--cor-texto); }
@@ -955,6 +961,5 @@ a.settings-card:focus-visible { outline: 3px solid var(--brand-strong); outline-
   .catalog-row-actions { width: 100%; }
   .catalog-row-actions .btn { flex: 1 1 auto; min-height: 40px; }
   .catalog-row.is-niche { padding-left: 10px; }
-  .color-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
   .catalog-form-actions .btn { flex: 1 1 100%; }
 }

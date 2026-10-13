@@ -46,11 +46,17 @@ const NO_COLOR_MESSAGE = 'Escolha uma das 20 cores para identificar o nicho.';
 // catalog: 'servicos' | 'nichos' | 'origens'. mode: 'create' | 'edit'. item: o item atual (edição). onSubmit(body) -> Promise: o dono da tela grava, confirma e fecha o painel; se rejeitar,
 // o formulário mostra o erro e continua aberto. onBusy(bool): o dono avisa o gerenciador de camadas (um painel salvando não fecha por ESC/X). onCancel(): fecha pelo caminho normal (pergunta antes
 // se houver alteração).
-export function createCatalogForm({ document, catalog, mode, item = null, onSubmit, onBusy = () => {}, onCancel = () => {} }) {
+//
+// DISPONIBILIDADE: quando o servidor confirma que os cadastros estão indisponíveis (503), a tela dona chama setAvailability({ unavailable: true }): o formulário mostra o aviso (com o que foi
+// digitado mantido), DESABILITA o Salvar e não envia nada — nem por Enter. "Verificar novamente" (onRecheck) pede à tela dona que tente carregar de novo. Uma falha de REDE não é isso: o Salvar
+// continua habilitado e a pessoa pode tentar de novo.
+export function createCatalogForm({ document, catalog, mode, item = null, onSubmit, onBusy = () => {}, onCancel = () => {}, onUnavailable = () => {}, onRecheck = () => {} }) {
   const text = FORM_TEXT[catalog];
   const initial = mode === 'edit' ? formValuesFromItem(catalog, item) : emptyFormValues(catalog);
   const idOf = (field) => `catalog-field-${field}`;
   let busy = false;
+  let unavailable = false;
+  let checking = false;
   let nameLocked = false;
   let baseline = initial; // o ponto de partida da PROTEÇÃO (não o do envio): descartar de propósito o reajusta ao que está na tela
 
@@ -145,6 +151,7 @@ export function createCatalogForm({ document, catalog, mode, item = null, onSubm
 
   // --- mensagens do formulário ---
   const messageRegion = h(document, 'div', { className: 'form-messages' });
+  const availabilityRegion = h(document, 'div', { className: 'form-availability' });
   const usageRegion = h(document, 'div', { className: 'form-usage' });
   function setMessage(kind, content) {
     fill(messageRegion, content ? h(document, 'p', { className: `message ${kind}`, role: kind === 'error' ? 'alert' : 'status', text: content }) : null);
@@ -180,9 +187,38 @@ export function createCatalogForm({ document, catalog, mode, item = null, onSubm
   const saveButton = h(document, 'button', { type: 'button', className: 'btn primary', 'data-action': 'save', text: 'Salvar', onclick: () => submit() });
   const cancelButton = h(document, 'button', { type: 'button', className: 'btn secondary', 'data-action': 'cancel', text: 'Cancelar', onclick: () => onCancel() });
 
+  // o Salvar só fica habilitado se não há envio em andamento e a indisponibilidade NÃO está confirmada
+  const refreshSave = () => {
+    saveButton.disabled = busy || unavailable;
+  };
+
+  function paintAvailability() {
+    const kept = mode === 'create' || isDirty() ? MESSAGES.draftKept : '';
+    fill(
+      availabilityRegion,
+      unavailable
+        ? h(
+            document,
+            'div',
+            { className: 'catalog-unavailable' },
+            h(document, 'p', { className: 'message error', role: 'alert', text: `${MESSAGES.unavailable} ${MESSAGES.writesPaused} ${kept}`.trim() }),
+            h(document, 'button', { type: 'button', className: 'btn secondary', 'data-action': 'recheck', disabled: checking, text: checking ? 'Verificando…' : 'Verificar novamente', onclick: () => onRecheck() })
+          )
+        : null
+    );
+  }
+
+  function setAvailability({ unavailable: value, checking: isChecking = false } = {}) {
+    unavailable = Boolean(value);
+    checking = Boolean(isChecking);
+    if (unavailable) setMessage('error', null); // o aviso de indisponibilidade tem o seu lugar; não repete o erro da tentativa
+    paintAvailability();
+    refreshSave();
+  }
+
   function setBusy(value) {
     busy = Boolean(value);
-    saveButton.disabled = busy;
+    refreshSave();
     cancelButton.disabled = busy;
     saveButton.textContent = busy ? 'Salvando…' : 'Salvar';
     for (const field of Object.keys(controls)) {
@@ -196,6 +232,11 @@ export function createCatalogForm({ document, catalog, mode, item = null, onSubm
 
   async function submit() {
     if (busy) return;
+    // indisponibilidade confirmada: NADA é enviado (nem por Enter); o aviso já está na tela
+    if (unavailable) {
+      paintAvailability();
+      return;
+    }
     clearErrors();
     const current = values();
     let prepared;
@@ -224,6 +265,12 @@ export function createCatalogForm({ document, catalog, mode, item = null, onSubm
       setBusy(false);
       const info = catalogErrorInfo(error);
       if (info === null) return; // a sessão acabou: o fluxo de login cuida
+      if (info.kind === 'unavailable') {
+        // confirmado pelo servidor: avisa a tela dona (que pausa as gravações) e mantém o rascunho
+        setAvailability({ unavailable: true });
+        onUnavailable(info);
+        return;
+      }
       showError(info);
     }
   }
@@ -254,6 +301,7 @@ export function createCatalogForm({ document, catalog, mode, item = null, onSubm
     'form',
     { className: 'catalog-form', id: `catalog-form-${catalog}`, novalidate: 'novalidate', 'aria-label': mode === 'edit' ? `Editar ${text.singular}` : `Novo ${text.singular}`, onsubmit: (event) => event.preventDefault() },
     messageRegion,
+    availabilityRegion,
     inactiveNotice,
     requiredNote,
     controls.nome.element,
@@ -307,6 +355,10 @@ export function createCatalogForm({ document, catalog, mode, item = null, onSubm
       return busy;
     },
     setBusy,
+    setAvailability,
+    get unavailable() {
+      return unavailable;
+    },
     setUsage,
     showError,
     values,

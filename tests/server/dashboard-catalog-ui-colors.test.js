@@ -193,8 +193,119 @@ test('[CATUI-7] CSS do seletor e da lista: classes responsivas, foco visível e 
   assert.match(regra('.preview-card'), /border-left: 6px solid var\(--cor-ponto, #3c4653\)/, 'a borda esquerda do cartão usa a cor escolhida (neutra sem escolha)');
   assert.match(regra('.catalog-row.is-niche'), /border-left: 6px solid var\(--cor-ponto, #3c4653\)/);
   assert.match(CSS, /@media \(max-width: 760px\)\s*\{[^@]*\.catalog-row-actions \{ width: 100%; \}/, 'a lista vira cartões e as ações ocupam a linha no celular');
-  assert.match(CSS, /\.color-grid \{ grid-template-columns: repeat\(2, minmax\(0, 1fr\)\); \}/);
+  // as 20 opções: o NOME INTEIRO, numa linha, em qualquer largura (ver CATUI-9 e CATUI-10)
+  assert.match(regra('.color-swatch .swatch-name'), /white-space: nowrap/);
+  assert.doesNotMatch(CSS, /\.color-grid \{ grid-template-columns: repeat\(2/, 'sem colunas fixas que estreitem as opções no celular');
   const trecho = CSS.slice(CSS.indexOf('telas dos catálogos do CRM'));
   assert.doesNotMatch(trecho, /url\(/);
   assert.doesNotMatch(trecho, /@import|expression\(/);
+});
+
+// ---------------------------------------------------------------------------------------------------------------------------------------------
+// os NOMES das 20 cores: inteiros, numa linha, em qualquer largura (refinamento da 2B-2: "Vermelho" e "Esmeralda" quebravam no meio da palavra)
+// ---------------------------------------------------------------------------------------------------------------------------------------------
+
+test('[CATUI-8] OS 20 NOMES: cada um aparece INTEIRO, num único texto (sem hífen condicional, espaço invisível nem quebra de linha embutida), na ordem do servidor — e dentro do formulário de nicho também', async () => {
+  const { picker, opcoesDom, browser } = await montar();
+  const nomes = opcoesDom().map((o) => browser.find(o, (el) => el.className === 'swatch-name'));
+  assert.equal(nomes.length, 20);
+  assert.deepEqual(nomes.map((n) => n.textContent), NICHE_COLORS.map((c) => c.nome));
+  for (const n of nomes) {
+    assert.equal(n.childNodes.length, 1, `${n.textContent}: um único nó de texto`);
+    assert.equal(n.childNodes[0].nodeType, 3);
+    assert.doesNotMatch(n.textContent, /[­​-‍⁠﻿\n\r\t]/, `${n.textContent}: nenhum ponto de quebra escondido`);
+    assert.equal(n.textContent, n.textContent.trim());
+    assert.equal(browser.findAll(n, (el) => el.localName === 'wbr' || el.localName === 'br').length, 0);
+  }
+  assert.ok(nomes.some((n) => n.textContent === 'Vermelho') && nomes.some((n) => n.textContent === 'Esmeralda'), 'os dois que quebravam');
+  assert.equal(picker.swatch('vermelho').getAttribute('aria-label'), null, 'o nome acessível é o texto visível (nada de rótulo diferente)');
+  // dentro do formulário de nicho (o caminho real da tela)
+  const H = require('../helpers/catalogHarness');
+  const s = await H.abrir({ catalogo: 'nichos', api: H.apiFalsa({ nichos: [H.nicho(1)] }) });
+  await H.clicar(s, H.botao(s, 'Novo Nicho'));
+  const noForm = s.browser.findAll(H.gaveta(s), (el) => el.className === 'swatch-name').map((n) => n.textContent);
+  assert.deepEqual(noForm, NICHE_COLORS.map((c) => c.nome));
+});
+
+test('[CATUI-9] REGRESSÃO da seleção e da prévia nas 20 cores: clicar e usar o teclado em CADA cor marca só ela, move o foco, atualiza a classe e o texto da prévia e mantém o nome visível', async () => {
+  const H = require('../helpers/catalogHarness');
+  const s = await H.abrir({ catalogo: 'nichos', api: H.apiFalsa({ nichos: [H.nicho(1)] }) });
+  await H.clicar(s, H.botao(s, 'Novo Nicho'));
+  const g = H.gaveta(s);
+  const radios = () => s.browser.findAll(g, (el) => el.getAttribute('role') === 'radio');
+  const previa = () => s.browser.find(g, (el) => /\bpreview-card\b/.test(el.className));
+  const marcadas = () => radios().filter((r) => r.getAttribute('aria-checked') === 'true').map((r) => r.getAttribute('data-color'));
+  const ehMesmo = (a, b, mensagem) => assert.ok(a === b, mensagem);
+  // clique, uma a uma
+  for (const cor of NICHE_COLORS) {
+    const opcao = radios().find((r) => r.getAttribute('data-color') === cor.chave);
+    s.browser.click(opcao);
+    assert.deepEqual(marcadas(), [cor.chave], cor.chave);
+    assert.ok(new RegExp(`\\bcor-${cor.chave}\\b`).test(previa().className), `prévia: ${cor.chave}`);
+    assert.equal(previa().getAttribute('data-color'), cor.chave);
+    assert.ok(g.textContent.includes(`Cor escolhida: ${cor.nome}.`), `nota da prévia: ${cor.nome}`);
+    assert.equal(s.browser.find(opcao, (el) => el.className === 'swatch-name').textContent, cor.nome, 'o nome continua visível na opção escolhida');
+  }
+  // teclado: ArrowRight percorre as 20 na ordem e volta ao começo
+  radios()[0].focus();
+  s.browser.press('Home');
+  const vistas = [marcadas()[0]];
+  for (let i = 0; i < 19; i += 1) {
+    s.browser.press('ArrowRight');
+    vistas.push(marcadas()[0]);
+    ehMesmo(s.browser.document.activeElement, radios().find((r) => r.getAttribute('data-color') === marcadas()[0]), 'o foco acompanha a escolha');
+    assert.ok(new RegExp(`\\bcor-${marcadas()[0]}\\b`).test(previa().className));
+  }
+  assert.deepEqual(vistas, NICHE_COLORS.map((c) => c.chave), 'as 20, na ordem do servidor');
+  s.browser.press('ArrowRight');
+  assert.deepEqual(marcadas(), ['vermelho'], 'e volta ao começo');
+  assert.equal(radios().filter((r) => r.getAttribute('tabindex') === '0').length, 1, 'uma única parada do Tab');
+  // escolher a cor continua levando só a chave ao servidor
+  H.digitar(s, H.campo(s, 'nome'), 'Nicho de teste');
+  await H.salvar(s);
+  assert.deepEqual(s.api.chamadas.filter(([n]) => n === 'criar')[0].slice(1), ['nichos', { nome: 'Nicho de teste', cor: 'vermelho' }]);
+});
+
+test('[CATUI-10] RESPONSIVIDADE do seletor: a coluna mínima vem da MEDIDA do nome mais largo; em todas as larguras de painel (celular de 320 px ao desktop) há ao menos 2 colunas e cada opção tem folga para o nome inteiro, que nunca quebra no meio', () => {
+  const regra = (seletor) => {
+    const inicio = CSS.indexOf(`${seletor} {`);
+    assert.ok(inicio >= 0, seletor);
+    return CSS.slice(inicio, CSS.indexOf('}', inicio) + 1);
+  };
+  const nome = regra('.color-swatch .swatch-name');
+  assert.match(nome, /white-space: nowrap/);
+  assert.match(nome, /overflow-wrap: normal/);
+  assert.match(nome, /word-break: normal/);
+  assert.match(nome, /hyphens: none/);
+  assert.doesNotMatch(nome, /anywhere|break-word|break-all/, 'nenhuma regra que parta uma palavra');
+  assert.doesNotMatch(CSS, /\.color-swatch[^{]*\{[^}]*(overflow-wrap: anywhere|word-break: break-all)/);
+
+  // os números do CSS
+  const grade = regra('.color-grid');
+  const minimo = Number(/minmax\((\d+)px, 1fr\)/.exec(grade)[1]);
+  const folga = Number(/gap: (\d+)px/.exec(grade)[1]);
+  const opcao = regra('.color-swatch');
+  const padding = /padding: (\d+)px (\d+)px (\d+)px (\d+)px/.exec(opcao);
+  const direita = Number(padding[2]);
+  const esquerda = Number(padding[4]);
+  const borda = Number(/border: (\d+)px solid/.exec(opcao)[1]);
+  const espaco = Number(/gap: (\d+)px/.exec(opcao)[1]);
+  const amostra = Number(/width: (\d+)px/.exec(regra('.color-swatch .swatch-dot'))[1]);
+  const reserva = 2 * borda + esquerda + amostra + espaco + direita; // tudo na opção que não é o nome
+  // MEDIDA no navegador (Chromium, system-ui 600 13,5 px): o nome mais largo é "Esmeralda", 62,68 px; com 10% de folga para fontes mais largas
+  const MAIS_LARGO = 62.68;
+  assert.ok(minimo >= reserva + MAIS_LARGO * 1.1, `coluna mínima ${minimo}px >= reserva ${reserva}px + nome mais largo com folga ${(MAIS_LARGO * 1.1).toFixed(1)}px`);
+  assert.match(opcao, /font-size: 13\.5px/, 'a fonte não foi reduzida para caber');
+  // simula o auto-fill da grade nas larguras úteis do painel: 320 px (celular pequeno), 375, 600 e as largas
+  const larguras = { 'celular 320': 320 - 32, 'celular 375': 375 - 32, 'tablet 600': 600 - 32, 'painel 576': 576, 'painel 592': 592, 'painel 656': 656, 'tela cheia 760': 760 - 32 };
+  for (const [rotulo, largura] of Object.entries(larguras)) {
+    const colunas = Math.max(1, Math.floor((largura + folga) / (minimo + folga)));
+    const colunaReal = (largura - (colunas - 1) * folga) / colunas;
+    assert.ok(colunas >= 2, `${rotulo}: ${colunas} colunas (>= 2)`);
+    assert.ok(colunaReal - reserva >= MAIS_LARGO * 1.1, `${rotulo}: sobram ${(colunaReal - reserva).toFixed(1)}px para o nome`);
+  }
+  // a prévia e a seleção continuam como eram
+  assert.match(regra('.color-swatch.selected'), /border-color: var\(--cor-texto\)/);
+  assert.match(regra('.preview-card'), /border-left: 6px solid var\(--cor-ponto, #3c4653\)/);
+  assert.match(regra('.color-swatch:focus-visible'), /outline: 3px solid/);
 });

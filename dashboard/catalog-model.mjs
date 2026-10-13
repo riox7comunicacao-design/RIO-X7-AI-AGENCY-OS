@@ -262,6 +262,10 @@ export const MESSAGES = Object.freeze({
   duplicateName: 'Já existe um item com este nome, mesmo desativado. Use outro nome ou reative o item existente.',
   nameInUse: 'Este item já é usado em registros do CRM, então o nome não pode ser alterado nesta fase. As demais informações podem ser editadas.',
   nothingToChange: 'Nenhuma alteração foi feita.',
+  // Indisponibilidade CONFIRMADA pelo servidor (503): enquanto durar, nada é enviado.
+  writesPaused: 'Enquanto isso, nada é enviado: criar, editar, ativar, desativar e reordenar ficam pausados.',
+  draftKept: 'O que você digitou foi mantido nesta tela. Quando os cadastros voltarem a responder, use "Verificar novamente" e salve.',
+  createBlocked: 'Não é possível criar agora: os cadastros estão indisponíveis. Use "Tentar novamente" para verificar de novo.',
   staleList: 'A lista mudou desde a última atualização. Atualize a página e tente reordenar de novo.',
 });
 

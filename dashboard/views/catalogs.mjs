@@ -121,7 +121,8 @@ function createCatalogScreen({ document, catalog, api, ui, bus = null, navigatio
   const cfg = CONFIG[catalog];
   const overlays = ui.overlays;
   const toasts = ui.toasts;
-  const state = { status: 'idle', error: null, items: [], query: '', statusFilter: 'TODOS', busyId: null, reordering: false, loadedAt: null, visible: false, scrollTop: 0, message: null };
+  // unavailable: o SERVIDOR confirmou (503) que os cadastros estão indisponíveis — enquanto durar, nenhuma gravação é enviada. Uma falha de rede NÃO liga isto: é transitória. checking: uma nova verificação está em curso.
+  const state = { status: 'idle', error: null, items: [], query: '', statusFilter: 'TODOS', busyId: null, reordering: false, loadedAt: null, visible: false, scrollTop: 0, message: null, unavailable: false, checking: false };
   let destroyed = false;
   let loadToken = 0;
   let current = null; // { form, handle, id } enquanto o painel está aberto
@@ -134,10 +135,11 @@ function createCatalogScreen({ document, catalog, api, ui, bus = null, navigatio
   const content = el('div', { className: 'approvals-view catalog-view', 'data-catalog': catalog });
   const messageRegion = el('div', { className: 'message-region' });
   const hintRegion = el('div', { className: 'catalog-hint-region' });
+  const availabilityRegion = el('div', { className: 'catalog-availability' });
   const counterEl = el('p', { className: 'pending-count toolbar-count' });
   const listRegion = el('div', { className: 'list-region' });
   const refreshButton = el('button', { type: 'button', className: 'btn secondary', 'data-action': 'refresh', text: 'Atualizar', onclick: () => refresh() });
-  const newButton = el('button', { type: 'button', className: 'btn primary', id: `catalog-new-${catalog}`, 'data-action': 'new', text: cfg.newLabel, onclick: () => drawerCtl.open(NEW_ID) });
+  const newButton = el('button', { type: 'button', className: 'btn primary', id: `catalog-new-${catalog}`, 'data-action': 'new', text: cfg.newLabel, onclick: () => openNew() });
   const search = searchField(document, {
     id: `catalog-search-${catalog}`,
     label: cfg.searchLabel,
@@ -167,6 +169,7 @@ function createCatalogScreen({ document, catalog, api, ui, bus = null, navigatio
       pageHeader(document, { title: cfg.title, titleId: `catalog-title-${catalog}`, subtitle: cfg.subtitle, actions: [refreshButton, newButton] }),
       el('div', { className: 'toolbar toolbar-stacked' }, el('div', { className: 'toolbar-row toolbar-tools' }, search.element, statusSelect.element, counterEl)),
       messageRegion,
+      availabilityRegion,
       hintRegion,
       el('div', { className: 'list-card catalog-card' }, listRegion)
     )
@@ -189,6 +192,60 @@ function createCatalogScreen({ document, catalog, api, ui, bus = null, navigatio
     if (bus) bus.publish('crm-catalogs:changed', { catalog, action, id });
   }
 
+  // ---- disponibilidade -------------------------------------------------------------------
+  // O que a tela faz quando o servidor CONFIRMA a indisponibilidade (503): avisa com clareza, pausa TODA gravação (criar, editar, ativar/desativar, reordenar — nada é enviado), mantém a navegação,
+  // a leitura e o "Tentar novamente", e preserva o rascunho de um painel já aberto. Só uma resposta bem-sucedida da lista a desliga. Falha de rede e erros comuns NÃO a ligam.
+  const unavailableError = () => Object.assign(new Error('UNAVAILABLE'), { status: 503, code: 'CRM_CATALOG_PERSISTENCE' });
+
+  function paintAvailability() {
+    // sem itens na tela, o bloco de erro da lista já explica e oferece "Tentar novamente"; com itens, o aviso fica acima da lista
+    const visible = state.unavailable && state.status !== 'error';
+    fill(
+      availabilityRegion,
+      visible
+        ? el(
+            'div',
+            { className: 'catalog-unavailable' },
+            el('p', { className: 'message error', role: 'alert', text: `${MESSAGES.unavailable} ${MESSAGES.writesPaused}` }),
+            el('button', { type: 'button', className: 'btn secondary', 'data-action': 'recheck', disabled: state.checking, text: state.checking ? 'Verificando…' : 'Tentar novamente', onclick: () => recheck() })
+          )
+        : null
+    );
+  }
+
+  function applyAvailability() {
+    newButton.disabled = state.unavailable;
+    paintAvailability();
+    paintList();
+    if (current) current.form.setAvailability({ unavailable: state.unavailable, checking: state.checking });
+  }
+
+  function markUnavailable() {
+    if (state.unavailable && !state.checking) return;
+    state.unavailable = true;
+    applyAvailability();
+  }
+
+  async function recheck() {
+    if (state.checking || destroyed) return;
+    state.checking = true;
+    applyAvailability();
+    try {
+      await load({ quiet: true });
+    } finally {
+      state.checking = false;
+      if (!destroyed) applyAvailability();
+    }
+  }
+
+  function openNew() {
+    if (state.unavailable) {
+      notify('warning', MESSAGES.createBlocked);
+      return;
+    }
+    drawerCtl.open(NEW_ID);
+  }
+
   // ---- carga -------------------------------------------------------------------
 
   async function load({ quiet = false } = {}) {
@@ -197,6 +254,7 @@ function createCatalogScreen({ document, catalog, api, ui, bus = null, navigatio
     refreshButton.disabled = true;
     paintList();
     let failure = null;
+    let failureKind = null;
     try {
       const data = await api.listCatalog(catalog, { todos: true });
       if (token !== loadToken || destroyed) return;
@@ -208,13 +266,17 @@ function createCatalogScreen({ document, catalog, api, ui, bus = null, navigatio
       const info = catalogErrorInfo(error);
       if (info === null) return; // a sessão acabou: o fluxo de login cuida
       failure = info.message;
+      failureKind = info.kind;
     }
     state.status = failure && state.items.length === 0 ? 'error' : 'ready';
     state.error = failure && state.items.length === 0 ? failure : null;
     refreshButton.disabled = false;
-    if (failure && state.items.length > 0) notify('error', failure, 'load'); // a lista que já estava na tela fica; o erro aparece como aviso
+    // a disponibilidade só muda por uma resposta CONFIRMADA: lista carregada = disponível; 503 = indisponível; falha de rede ou outro erro = continua como estava
+    if (failure === null) state.unavailable = false;
+    else if (failureKind === 'unavailable') state.unavailable = true;
+    if (failure && failureKind !== 'unavailable' && state.items.length > 0) notify('error', failure, 'load'); // a lista que já estava na tela fica; o erro aparece como aviso
     else if (failure === null && state.message && state.message.source === 'load') setMessage('info', null);
-    paintList();
+    applyAvailability();
   }
 
   function refresh() {
@@ -234,7 +296,7 @@ function createCatalogScreen({ document, catalog, api, ui, bus = null, navigatio
   const canReorder = () => state.query.trim() === '' && state.statusFilter === 'TODOS';
 
   async function move(id, delta) {
-    if (!canReorder() || state.busyId !== null || state.reordering || destroyed) return;
+    if (!canReorder() || state.busyId !== null || state.reordering || state.unavailable || destroyed) return;
     const from = state.items.findIndex((item) => item.id === id);
     const to = from + delta;
     if (from < 0 || to < 0 || to >= state.items.length) return;
@@ -264,6 +326,10 @@ function createCatalogScreen({ document, catalog, api, ui, bus = null, navigatio
       state.reordering = false;
       const info = catalogErrorInfo(error);
       paintList();
+      if (info !== null && info.kind === 'unavailable') {
+        markUnavailable(); // o aviso persistente (com "Tentar novamente") substitui o aviso de uma tentativa só
+        return;
+      }
       if (info !== null) notify('error', info.kind === 'validation' ? MESSAGES.staleList : /Nada foi alterado\.$/.test(info.message) ? info.message : `${info.message} A ordem não foi alterada.`);
       if (info !== null && (info.kind === 'validation' || info.kind === 'not-found')) load({ quiet: true });
     }
@@ -274,6 +340,7 @@ function createCatalogScreen({ document, catalog, api, ui, bus = null, navigatio
   // Chama a API e atualiza a lista SÓ depois da confirmação. Lança Error com a mensagem para a pessoa (a confirmação a mostra sem fechar).
   async function runToggle(item, active) {
     if (state.busyId !== null || state.reordering) throw new Error('Aguarde a operação em andamento terminar.');
+    if (state.unavailable) throw new Error(MESSAGES.unavailable); // indisponibilidade confirmada: nada é enviado
     state.busyId = item.id;
     paintList();
     try {
@@ -286,6 +353,7 @@ function createCatalogScreen({ document, catalog, api, ui, bus = null, navigatio
     } catch (error) {
       const info = catalogErrorInfo(error);
       if (info !== null && info.kind === 'not-found') load({ quiet: true });
+      if (info !== null && info.kind === 'unavailable') markUnavailable();
       throw new Error(info !== null ? info.message : MESSAGES.generic);
     } finally {
       state.busyId = null;
@@ -304,7 +372,7 @@ function createCatalogScreen({ document, catalog, api, ui, bus = null, navigatio
   }
 
   function askDeactivate(item) {
-    if (state.busyId !== null || state.reordering) return;
+    if (state.busyId !== null || state.reordering || state.unavailable) return;
     overlays.openConfirm({
       key: `catalog-deactivate:${catalog}:${item.id}`,
       title: cfg.deactivateTitle,
@@ -360,6 +428,8 @@ function createCatalogScreen({ document, catalog, api, ui, bus = null, navigatio
       mode: isNew ? 'create' : 'edit',
       item,
       onSubmit: (body) => save(id, body),
+      onUnavailable: () => markUnavailable(),
+      onRecheck: () => recheck(),
       onBusy: (busy) => {
         if (handle) handle.setBusy(busy);
       },
@@ -382,6 +452,7 @@ function createCatalogScreen({ document, catalog, api, ui, bus = null, navigatio
       },
     });
     current = { form, handle, id };
+    if (state.unavailable) form.setAvailability({ unavailable: true, checking: state.checking }); // o painel abre já avisando (e sem enviar nada)
     if (!isNew) loadUsage(id, form);
     return handle;
   }
@@ -401,6 +472,7 @@ function createCatalogScreen({ document, catalog, api, ui, bus = null, navigatio
   // Grava, e só depois de a API confirmar mostra o sucesso, atualiza a lista e fecha o painel. Se rejeitar, o formulário mostra o erro e continua aberto.
   async function save(id, body) {
     const isNew = id === NEW_ID;
+    if (state.unavailable) throw unavailableError(); // indisponibilidade confirmada: não envia uma gravação que já se sabe que falhará
     let data;
     try {
       data = await (isNew ? api.createCatalogItem(catalog, body) : api.updateCatalogItem(catalog, id, body));
@@ -546,9 +618,9 @@ function createCatalogScreen({ document, catalog, api, ui, bus = null, navigatio
       el(
         'div',
         { className: 'catalog-row-actions' },
-        el('button', { type: 'button', className: 'btn small secondary', 'data-item': item.id, 'data-action': 'up', 'aria-label': `Subir ${cfg.singular} ${name} na ordem`, text: '↑', disabled: disabledMove(-1) || locked, onclick: () => move(item.id, -1) }),
-        el('button', { type: 'button', className: 'btn small secondary', 'data-item': item.id, 'data-action': 'down', 'aria-label': `Descer ${cfg.singular} ${name} na ordem`, text: '↓', disabled: disabledMove(1) || locked, onclick: () => move(item.id, 1) }),
-        el('button', { type: 'button', className: 'btn small secondary', 'data-item': item.id, 'data-action': 'toggle', 'aria-label': `${active ? 'Desativar' : 'Reativar'} ${cfg.singular} ${name}`, text: toggling ? (active ? 'Desativando…' : 'Reativando…') : active ? 'Desativar' : 'Reativar', disabled: locked, onclick: () => (active ? askDeactivate(item) : reactivate(item)) })
+        el('button', { type: 'button', className: 'btn small secondary', 'data-item': item.id, 'data-action': 'up', 'aria-label': `Subir ${cfg.singular} ${name} na ordem`, text: '↑', disabled: disabledMove(-1) || locked || state.unavailable, onclick: () => move(item.id, -1) }),
+        el('button', { type: 'button', className: 'btn small secondary', 'data-item': item.id, 'data-action': 'down', 'aria-label': `Descer ${cfg.singular} ${name} na ordem`, text: '↓', disabled: disabledMove(1) || locked || state.unavailable, onclick: () => move(item.id, 1) }),
+        el('button', { type: 'button', className: 'btn small secondary', 'data-item': item.id, 'data-action': 'toggle', 'aria-label': `${active ? 'Desativar' : 'Reativar'} ${cfg.singular} ${name}`, text: toggling ? (active ? 'Desativando…' : 'Reativando…') : active ? 'Desativar' : 'Reativar', disabled: locked || state.unavailable, onclick: () => (active ? askDeactivate(item) : reactivate(item)) })
       )
     );
   }
@@ -575,7 +647,7 @@ function createCatalogScreen({ document, catalog, api, ui, bus = null, navigatio
       return;
     }
     if (total === 0) {
-      fill(listRegion, el('div', { id: `catalog-empty-${catalog}` }, emptyState(document, { title: cfg.emptyTitle, text: cfg.emptyText, action: el('button', { type: 'button', className: 'btn primary', 'data-action': 'new-empty', text: cfg.newLabel, onclick: () => drawerCtl.open(NEW_ID) }) })));
+      fill(listRegion, el('div', { id: `catalog-empty-${catalog}` }, emptyState(document, { title: cfg.emptyTitle, text: cfg.emptyText, action: el('button', { type: 'button', className: 'btn primary', 'data-action': 'new-empty', text: cfg.newLabel, disabled: state.unavailable, onclick: () => openNew() }) })));
       return;
     }
     if (shown.length === 0) {
@@ -644,8 +716,16 @@ function createCatalogScreen({ document, catalog, api, ui, bus = null, navigatio
       if (state.loadedAt === null) await load();
       else if (entering) load({ quiet: true });
       if (destroyed || drawerCtl.state.routeId !== id) return;
+      // criar com a indisponibilidade confirmada: o painel NÃO abre (o aviso já está na tela) e o endereço volta à lista
+      if (id === NEW_ID && state.unavailable) {
+        notify('warning', MESSAGES.createBlocked);
+        drawerCtl.setRoute(null);
+        if (navigation) navigation.replace(buildHash({ name: cfg.listRoute }));
+        return;
+      }
       if (id !== NEW_ID && !byId(id)) {
-        notify('warning', `Este ${cfg.singular} não foi encontrado na lista.`);
+        // a lista nem carregou (erro já explicado na tela): não se diz que o item "não foi encontrado"
+        if (state.status !== 'error') notify('warning', `Este ${cfg.singular} não foi encontrado na lista.`);
         drawerCtl.setRoute(null);
         if (navigation) navigation.replace(buildHash({ name: cfg.listRoute }));
         return;
@@ -681,8 +761,10 @@ function createCatalogScreen({ document, catalog, api, ui, bus = null, navigatio
     leaveState,
     confirmLeave,
     currentHash,
+    recheck,
+    isUnavailable: () => state.unavailable,
     hasUnsavedChanges: () => hasUnsavedChanges(),
-    openNew: () => drawerCtl.open(NEW_ID),
+    openNew: () => openNew(), // pela checagem de disponibilidade, como o botão e o link direto
     openItem: (id) => drawerCtl.open(id),
     closePanel: () => drawerCtl.close({ silent: false, reason: 'api' }),
     isPanelOpen: () => drawerCtl.isOpen(),

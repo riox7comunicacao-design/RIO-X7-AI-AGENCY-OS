@@ -284,23 +284,38 @@ test('[CATSCR-7] ERROS DA API ao salvar aparecem junto do campo certo e NADA dig
   assert.equal(erroDoCampo(s, 'nome').hidden, true);
   mesmo(emFoco(s), campo(s, 'categoria'), 'o foco vai ao primeiro campo com erro na ordem da tela');
 
-  api.mem.falhas.criar = await erroApi(503, 'CRM_CATALOG_PERSISTENCE');
-  await salvar(s);
-  assert.match(gaveta(s).textContent, /ainda não foi preparada neste ambiente\. Nada foi alterado\./);
-  assert.doesNotMatch(texto(s), /Serviço criado/);
+  // falha de REDE: transitória — não é "estrutura ausente": o Salvar continua habilitado e dá para tentar de novo
   api.mem.falhas.criar = await erroApi(0, 'NETWORK');
   await salvar(s);
   assert.match(gaveta(s).textContent, /Sem conexão com o servidor/);
+  assert.equal(botao(s, 'Salvar', gaveta(s)).disabled, false, 'uma falha de rede não bloqueia as gravações');
+  assert.equal(s.view.screen('servicos').isUnavailable(), false);
   api.mem.falhas.criar = await erroApi(403, 'FORBIDDEN');
   await salvar(s);
   assert.match(gaveta(s).textContent, /Sua conta não tem permissão para administrar estes cadastros\./);
 
-  assert.equal(campo(s, 'descricao').value, 'Texto que não pode sumir', 'depois de 5 falhas o rascunho continua inteiro');
+  // 503: o servidor CONFIRMA que os cadastros estão indisponíveis — o rascunho fica, o Salvar é pausado e nada mais é enviado
+  api.mem.falhas.criar = await erroApi(503, 'CRM_CATALOG_PERSISTENCE');
+  await salvar(s);
+  assert.match(gaveta(s).textContent, /ainda não foi preparada neste ambiente\. Nada foi alterado\./);
+  assert.match(gaveta(s).textContent, /O que você digitou foi mantido nesta tela\./);
+  assert.doesNotMatch(texto(s), /Serviço criado/);
+  assert.equal(botao(s, 'Salvar', gaveta(s)).disabled, true);
+  assert.equal(api.quantas('criar'), 5, '409, 400, rede, 403 e o 503: cinco tentativas até aqui');
+  await salvar(s);
+  s.browser.press('Enter', { target: campo(s, 'nome') });
+  await s.browser.flush(4);
+  assert.equal(api.quantas('criar'), 5, 'com a indisponibilidade confirmada nada é enviado, nem por Enter');
+
+  assert.equal(campo(s, 'descricao').value, 'Texto que não pode sumir', 'o rascunho continua inteiro');
   assert.equal(campo(s, 'nome').value, 'Mentoria');
   assert.equal(api.mem.servicos.length, 3, 'nada foi criado');
   assert.deepEqual(avisos(s), []);
 
-  // e a sexta tentativa, sem falha, funciona
+  // "Verificar novamente" traz o servidor de volta: o Salvar volta e a sexta tentativa funciona
+  await clicar(s, botao(s, 'Verificar novamente', gaveta(s)));
+  assert.equal(botao(s, 'Salvar', gaveta(s)).disabled, false);
+  assert.equal(s.browser.by.cls(gaveta(s), 'catalog-unavailable').length, 0, 'o aviso some');
   await salvar(s);
   assert.equal(gaveta(s), null);
   assert.deepEqual(avisos(s), ['Serviço criado.']);
@@ -453,6 +468,18 @@ test('[CATSCR-10] DESATIVAR pede confirmação (nada é apagado); cancelar não 
   assert.equal(api.quantas('desativar'), 2, 'foram duas tentativas: a primeira confirmada, a segunda recusada');
   assert.match(linhaDe(s, 'service:2').textContent, /Ativo/);
   await clicar(s, botao(s, 'Cancelar', confirmacao(s)));
+  // o 503 CONFIRMOU a indisponibilidade: toda gravação fica pausada (nada é enviado) até uma nova verificação dar certo
+  assert.equal(s.view.screen('servicos').isUnavailable(), true);
+  assert.equal(botao(s, 'Novo Serviço').disabled, true);
+  for (const id of ['service:1', 'service:2', 'service:3']) for (const nomeDaAcao of ['up', 'down', 'toggle']) assert.equal(acao(s, id, nomeDaAcao).disabled, true, `${id} ${nomeDaAcao}`);
+  assert.equal(acao(s, 'service:2', 'edit').disabled, false, 'a navegação (abrir o item para ler) continua');
+  const escritasAteAqui = api.escritas().length;
+  s.browser.click(acao(s, 'service:2', 'toggle'));
+  await s.browser.flush(4);
+  assert.equal(api.escritas().length, escritasAteAqui, 'um botão pausado não envia nada');
+  await clicar(s, botao(s, 'Tentar novamente'));
+  assert.equal(s.view.screen('servicos').isUnavailable(), false);
+  assert.equal(acao(s, 'service:2', 'toggle').disabled, false, 'depois de uma verificação bem-sucedida as ações voltam');
 
   // falha ao reativar: aviso de erro, nada muda
   api.mem.falhas.ativar = await erroApi(0, 'NETWORK');
@@ -508,7 +535,13 @@ test('[CATSCR-11] REORDENAR: subir e descer (com rótulo acessível); as pontas 
   assert.deepEqual(nomes(s), antes, 'a ordem anterior foi restaurada');
   assert.match(texto(s), /ainda não foi preparada neste ambiente\. Nada foi alterado\./);
   assert.doesNotMatch(texto(s), /Nada foi alterado\. A ordem não foi alterada/, 'a mensagem não se repete');
-  assert.equal(acao(s, 'service:4', 'up').disabled, false, 'dá para tentar de novo');
+  assert.equal(acao(s, 'service:4', 'up').disabled, true, 'o 503 confirmou a indisponibilidade: a reordenação fica pausada');
+  const reordenacoes = api.quantas('reordenar');
+  s.browser.click(acao(s, 'service:4', 'up'));
+  await s.browser.flush(4);
+  assert.equal(api.quantas('reordenar'), reordenacoes, 'nada é enviado enquanto a indisponibilidade persistir');
+  await clicar(s, botao(s, 'Tentar novamente'));
+  assert.equal(acao(s, 'service:4', 'up').disabled, false, 'depois de uma verificação bem-sucedida dá para tentar de novo');
   // lista defasada (o servidor recusa a lista de ids): avisa e recarrega
   api.mem.falhas.reordenar = await erroApi(400, 'CRM_CATALOG_INVALID_INPUT', [{ path: 'orderedIds', code: 'LISTA_INVALIDA' }]);
   api.mem.servicos.push(servico(5, { ordem: 4 }));
