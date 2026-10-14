@@ -89,7 +89,7 @@ Todos os demais estados (`APROVADO_PARA_CRM`, `REJEITADO`, `DUPLICADO`, `DNC`, `
 
 O ID de cada item é estável entre execuções — `buildStableId()` reaproveita `identityKeys()` (domínio → telefone → Instagram → nome+cidade, mesma prioridade oficial). Ao redescobrir um prospect já existente na fila:
 
-- Se o estado atual é **terminal** (`APROVADO_PARA_CRM`, `REJEITADO`, `DNC`, `DUPLICADO` ou `DADOS_INSUFICIENTES`): o estado **nunca** muda automaticamente. Só se registra uma entrada de histórico "redescoberto" e a data de última observação (`lastSeenAt`) é atualizada.
+- Se o estado atual é **terminal** (`APROVADO_PARA_CRM`, `REJEITADO`, `DNC`, `DUPLICADO` ou `DADOS_INSUFICIENTES`): o estado **nunca** muda automaticamente. Só se registra uma entrada de histórico "redescoberto" e a data de última observação (`lastSeenAt`) é atualizada. *(Nota de 2026-10-14, Fase 2B-3.2A: até então o código também regravava o snapshot do item terminal, contrariando esta regra; hoje o conteúdo decidido é de fato congelado, a entrada de redescoberta lista só os nomes dos campos que diferem e a única mudança de dado permitida é registrar `statusDNC` BLOQUEADO — ver [0016](./0016-crm-integration.md).)*
 - Se o estado atual é `AGUARDANDO_REVISAO` (ainda sem decisão): o sistema pode reclassificá-lo (para `DUPLICADO`, `DNC` ou `DADOS_INSUFICIENTES`, ou mantê-lo) com base na nova leitura de `discovery.js` — isso é sempre uma transição válida a partir de `AGUARDANDO_REVISAO`, nunca uma reversão de decisão humana.
 
 ## Auditoria

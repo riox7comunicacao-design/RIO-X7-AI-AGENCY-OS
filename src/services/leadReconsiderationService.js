@@ -79,11 +79,16 @@ const sameIdentity = (a, b) => {
   return Boolean((x.domain && x.domain === y.domain) || (x.phone && x.phone === y.phone) || (x.instagram && x.instagram === y.instagram) || (x.nameCity && x.nameCity === y.nameCity));
 };
 
-// Quando, por quem e por que o item chegou ao estado atual: a última entrada de histórico que TERMINA nele.
+// Quando, por quem e por que o item chegou ao estado atual: a última entrada de histórico que TERMINA nele. Uma anotação de
+// REDESCOBERTA (o sistema viu o lead de novo, `from === to`) não é uma decisão: nunca ocupa o lugar da decisão humana
+// (Fase 2B-3.2A; vale também para as anotações "Redescoberto — …" já gravadas em arquivos antigos).
 function lastDecision(item) {
   const entries = Array.isArray(item.historico) ? item.historico : [];
   for (let index = entries.length - 1; index >= 0; index -= 1) {
-    if (entries[index] && entries[index].to === item.estado) return entries[index];
+    const entry = entries[index];
+    if (!entry || entry.to !== item.estado) continue;
+    if (entry.actor === 'SYSTEM' && entry.from === entry.to) continue;
+    return entry;
   }
   return null;
 }

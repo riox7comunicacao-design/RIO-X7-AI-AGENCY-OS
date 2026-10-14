@@ -74,6 +74,19 @@ const PROMOTION_BLOCK = Object.freeze({ DNC: 'DNC', DUPLICADO: 'DUPLICADO', DADO
 const MAX_CRM_RECORD_ID_LENGTH = 200;
 const MAX_BLOCK_REASON_LENGTH = 500;
 
+// Redescoberta de um item que JÁ NÃO ESTÁ em revisão (decisão 0016, Fase 2B-3.2A). Um item fora de AGUARDANDO_REVISAO tem o
+// conteúdo (o snapshot) CONGELADO: uma nova pesquisa nunca o substitui — a redescoberta não é uma nova aprovação. A única
+// exceção é conservadora e de segurança: se a nova pesquisa traz `statusDNC` = BLOQUEADO (o contato é proibido) e o snapshot
+// ainda não o tinha, SÓ esse campo passa a BLOQUEADO (a promoção então falha fechada). Nenhuma redescoberta remove um BLOQUEADO.
+//   DNC_BLOCKED — duplica de propósito o literal DNC_STATUS.BLOQUEADO de discovery.js (este módulo não o importa, como
+//                 deriveSystemState já faz); um teste vigia que os dois não divirjam.
+//   REDISCOVERY_HISTORY_TYPE / MAX_REDISCOVERY_HISTORY_ENTRIES — o histórico da redescoberta é LIMITADO: entradas idênticas e
+//                 consecutivas viram uma só (com contador) e, passado o teto, as novas se fundem na última. A entrada que
+//                 registra uma atualização de DNC nunca é fundida (e só pode existir uma por item: BLOQUEADO não se desfaz).
+const DNC_BLOCKED = 'BLOQUEADO';
+const REDISCOVERY_HISTORY_TYPE = 'REDESCOBERTA';
+const MAX_REDISCOVERY_HISTORY_ENTRIES = 20;
+
 // Único mapa de transições permitidas. Qualquer estado sem entrada aqui é
 // terminal — nenhuma função deste módulo consegue transicionar a partir dele.
 // Isso implementa, com um único mecanismo, tanto "não permitir transições
@@ -303,6 +316,110 @@ function sanitizeSnapshot(discoveryResult) {
   };
 }
 
+// Rótulos (pt-BR) dos campos do snapshot, usados SÓ para dizer, no histórico, QUAIS campos a nova pesquisa trouxe diferentes.
+// Nunca um valor: telefone, e-mail, endereço etc. não são regravados no histórico.
+const SNAPSHOT_FIELD_LABELS = Object.freeze({
+  empresa: 'empresa',
+  tipoLead: 'tipo de lead',
+  tipo: 'tipo',
+  cidade: 'cidade',
+  estadoUf: 'UF',
+  nicho: 'nicho',
+  site: 'site',
+  instagram: 'Instagram',
+  facebook: 'Facebook',
+  linkedin: 'LinkedIn',
+  youtube: 'YouTube',
+  telefone: 'telefone',
+  whatsapp: 'WhatsApp',
+  email: 'e-mail',
+  endereco: 'endereço',
+  statusIdentidade: 'status da identidade',
+  statusDados: 'status dos dados',
+  statusDuplicidade: 'status de duplicidade',
+  matchedOn: 'critérios de duplicidade',
+  statusDNC: 'status de DNC',
+  fontes: 'fontes',
+  dataDaPesquisa: 'data da pesquisa',
+  observacoes: 'observações',
+  hipoteseDeOportunidade: 'hipótese de oportunidade',
+  estadoOperacionalDiscovery: 'estado operacional da pesquisa',
+});
+
+const isPlainObject = (value) => typeof value === 'object' && value !== null && !Array.isArray(value);
+// `undefined` e `null` são o mesmo "sem valor" (o JSON do arquivo não guarda `undefined`).
+const comparable = (value) => JSON.stringify(value === undefined ? null : value);
+
+// Os campos (na ordem do snapshot) em que a nova pesquisa difere do que está registrado. Só NOMES de campo.
+function differingFields(previous, fresh) {
+  return Object.keys(SNAPSHOT_FIELD_LABELS).filter((field) => comparable(previous[field]) !== comparable(fresh[field]));
+}
+
+// O texto do histórico é montado A PARTIR dos dados estruturados da entrada — assim ele diz sempre exatamente o que aconteceu,
+// inclusive depois que entradas iguais são somadas ou fundidas.
+function rediscoveryReason(info) {
+  const inicio = info.repeticoes > 1 ? `Redescoberto ${info.repeticoes} vezes` : 'Redescoberto';
+  const naoAplicados = info.camposDiferentes.filter((field) => !(info.dncAtualizado && field === 'statusDNC'));
+  const lista = naoAplicados.map((field) => SNAPSHOT_FIELD_LABELS[field] || field).join(', ');
+  if (info.dncAtualizado) {
+    const extra = naoAplicados.length > 0 ? `; a nova pesquisa também difere em: ${lista} (não aplicado)` : '';
+    return `${inicio} — restrição de contato (DNC) registrada a partir da nova pesquisa${extra}. Estado e demais dados já decididos preservados`;
+  }
+  if (naoAplicados.length === 0) return `${inicio} — nenhum dado diferente do registrado; estado e conteúdo já decididos preservados`;
+  return `${inicio} — a nova pesquisa difere em: ${lista}. Nada foi substituído; estado e conteúdo já decididos preservados`;
+}
+
+const isRediscoveryEntry = (entry) => isPlainObject(entry) && entry.tipo === REDISCOVERY_HISTORY_TYPE && isPlainObject(entry.redescoberta);
+
+// Redescoberta de um item que NÃO está mais em revisão (APROVADO_PARA_CRM, REJEITADO, DNC, DUPLICADO, DADOS_INSUFICIENTES, EXPIRADO).
+// O estado e o conteúdo já decididos ficam EXATAMENTE como estão. Única mudança de dado permitida: `statusDNC` → BLOQUEADO, e só
+// quando a nova pesquisa o traz e o snapshot ainda não o tinha (nunca o contrário). Devolve o que aconteceu, para o histórico.
+function recordRediscovery(existing, fresh, now) {
+  const previous = isPlainObject(existing.discoverySnapshot) ? existing.discoverySnapshot : null;
+  let camposDiferentes;
+  let dncAtualizado = false;
+  if (previous === null) {
+    // Item sem snapshot utilizável (arquivo antigo/corrompido): não há conteúdo decidido a preservar.
+    existing.discoverySnapshot = fresh;
+    camposDiferentes = Object.keys(SNAPSHOT_FIELD_LABELS).filter((field) => comparable(fresh[field]) !== comparable(undefined));
+  } else {
+    camposDiferentes = differingFields(previous, fresh);
+    if (fresh.statusDNC === DNC_BLOCKED && previous.statusDNC !== DNC_BLOCKED) {
+      previous.statusDNC = DNC_BLOCKED;
+      dncAtualizado = true;
+    }
+  }
+
+  const info = { camposDiferentes, conteudoPreservado: previous !== null, dncAtualizado, repeticoes: 1, ultimaEm: now };
+  const history = existing.historico;
+  const last = history[history.length - 1];
+
+  // 1) Igual à entrada anterior (e nenhuma das duas é uma atualização de DNC): soma, em vez de repetir a linha.
+  if (!dncAtualizado && isRediscoveryEntry(last) && last.redescoberta.dncAtualizado === false && last.from === existing.estado && comparable(last.redescoberta.camposDiferentes) === comparable(camposDiferentes) && last.redescoberta.conteudoPreservado === info.conteudoPreservado) {
+    last.redescoberta.repeticoes = (Number.isInteger(last.redescoberta.repeticoes) ? last.redescoberta.repeticoes : 1) + 1;
+    last.redescoberta.ultimaEm = now;
+    last.motivo = rediscoveryReason(last.redescoberta);
+    return existing;
+  }
+
+  // 2) Passado o teto de entradas de redescoberta (as de DNC não contam), funde na última delas.
+  if (!dncAtualizado) {
+    const plain = history.filter((entry) => isRediscoveryEntry(entry) && entry.redescoberta.dncAtualizado === false);
+    if (plain.length >= MAX_REDISCOVERY_HISTORY_ENTRIES) {
+      const target = plain[plain.length - 1];
+      const merged = new Set([...target.redescoberta.camposDiferentes, ...camposDiferentes]);
+      target.redescoberta.camposDiferentes = Object.keys(SNAPSHOT_FIELD_LABELS).filter((field) => merged.has(field));
+      target.redescoberta.repeticoes = (Number.isInteger(target.redescoberta.repeticoes) ? target.redescoberta.repeticoes : 1) + 1;
+      target.redescoberta.ultimaEm = now;
+      target.motivo = rediscoveryReason(target.redescoberta);
+      return existing;
+    }
+  }
+
+  history.push({ timestamp: now, from: existing.estado, to: existing.estado, actor: ACTOR.SYSTEM, motivo: rediscoveryReason(info), tipo: REDISCOVERY_HISTORY_TYPE, redescoberta: info });
+  return existing;
+}
+
 // Adiciona um prospect novo, ou trata reentrada de um já conhecido.
 // Nunca escreve no CRM. Nunca envia mensagem. Nunca aprova sozinho.
 function addProspect(queue, discoveryResult) {
@@ -316,21 +433,20 @@ function addProspect(queue, discoveryResult) {
 
   if (existing) {
     existing.lastSeenAt = now;
-    existing.discoverySnapshot = sanitizeSnapshot(discoveryResult);
 
     const podeReclassificar = Boolean(ALLOWED_TRANSITIONS[existing.estado]);
     if (!podeReclassificar) {
-      // Estado terminal (aprovado/rejeitado/DNC/duplicado/dados insuficientes)
-      // — decisão preservada, apenas registra que foi redescoberto.
-      existing.historico.push({
-        timestamp: now,
-        from: existing.estado,
-        to: existing.estado,
-        actor: ACTOR.SYSTEM,
-        motivo: 'Redescoberto — estado já decidido/travado, nenhuma alteração automática',
-      });
-      return existing;
+      // Estado terminal (aprovado/rejeitado/DNC/duplicado/dados insuficientes/expirado): a redescoberta NÃO é uma nova
+      // aprovação — o conteúdo já decidido não é substituído (só um DNC novo é registrado; ver recordRediscovery).
+      return recordRediscovery(existing, sanitizeSnapshot(discoveryResult), now);
     }
+
+    // Em revisão: a regra de sempre — o snapshot acompanha a pesquisa mais recente. Com UMA proteção de segurança: se o
+    // snapshot já tinha o contato proibido (um item reprovado que voltou à revisão depois de uma redescoberta com DNC), uma
+    // pesquisa mais limpa não o remove.
+    const bloqueadoAntes = isPlainObject(existing.discoverySnapshot) && existing.discoverySnapshot.statusDNC === DNC_BLOCKED;
+    existing.discoverySnapshot = sanitizeSnapshot(discoveryResult);
+    if (bloqueadoAntes) existing.discoverySnapshot.statusDNC = DNC_BLOCKED;
 
     const novoEstado = deriveSystemState(discoveryResult);
     if (novoEstado === existing.estado) {
@@ -663,6 +779,9 @@ module.exports = {
   PERMISSION,
   PROMOTION_RESULT,
   PROMOTION_BLOCK,
+  DNC_BLOCKED,
+  REDISCOVERY_HISTORY_TYPE,
+  MAX_REDISCOVERY_HISTORY_ENTRIES,
   ALLOWED_TRANSITIONS,
   RECONSIDERATION_TRANSITIONS,
   DEFAULT_QUEUE_PATH,
