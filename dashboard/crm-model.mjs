@@ -77,7 +77,7 @@ export const FIELD_GROUPS = Object.freeze([
     field('nicho', 'Nicho'),
     field('cidade', 'Cidade'),
     field('estado', 'Estado (UF)'),
-    field('origem', 'Origem'),
+    field('origem', 'Origem do Lead'),
   ]),
   group('contato', 'Contato', [
     field('contato', 'Nome do contato'),

@@ -266,14 +266,14 @@ test('[CRM-UX-7] a ficha abre numa GAVETA por cima da lista (a lista continua po
   assert.equal(abaSelecionada(s), 'resumo');
   assert.equal(s.browser.by.tag(g, 'form').length, 0, 'somente leitura: nenhum formulário aberto');
 
-  assert.deepEqual(rotulos(s, painelDaAba(s, 'resumo')), ['Empresa', 'Nicho', 'Cidade', 'Estado (UF)', 'Origem', 'Status', 'Data de entrada', 'Responsável', 'Última interação', 'Próxima ação', 'Data da próxima ação']);
+  assert.deepEqual(rotulos(s, painelDaAba(s, 'resumo')), ['Empresa', 'Nicho', 'Cidade', 'Estado (UF)', 'Origem do Lead', 'Status', 'Data de entrada', 'Responsável', 'Última interação', 'Próxima ação', 'Data da próxima ação']);
   assert.deepEqual(rotulos(s, painelDaAba(s, 'contato')), ['Nome do contato', 'Cargo', 'Telefone', 'WhatsApp', 'E-mail', 'Site', 'Instagram', 'Facebook', 'Perfil no Google']);
   assert.deepEqual(rotulos(s, painelDaAba(s, 'comercial')), ['Serviço potencial', 'Temperatura', 'Problema identificado', 'Raio-X de nicho', 'Raio-X personalizado', 'Status do diagnóstico', 'Link do Raio-X', 'Data da análise', 'Valor da proposta', 'Valor total', 'Observações', 'Data da reunião', 'Link do Google Meet']);
   const todos = FIELD_GROUPS.flatMap((grupo) => grupo.fields.map((campo) => campo.label));
   assert.deepEqual(s.browser.by.tag(g, 'dt').map((dt) => dt.textContent.trim()).sort(), [...todos].sort(), 'só campos que existem, todos');
   const valor = (chave, rotulo) => { const dt = s.browser.find(painelDaAba(s, chave), (e) => e.localName === 'dt' && e.textContent.trim() === rotulo); return dt.parentNode.children[dt.parentNode.children.indexOf(dt) + 1].textContent; };
   assert.equal(valor('resumo', 'Cidade'), 'Petrópolis');
-  assert.equal(valor('resumo', 'Origem'), '—', 'campo vazio vira "—" (nunca um valor inventado)');
+  assert.equal(valor('resumo', 'Origem do Lead'), '—', 'campo vazio vira "—" (nunca um valor inventado)');
   assert.equal(valor('contato', 'Telefone'), '(24) 90000-0001');
   assert.equal(valor('contato', 'Site'), 'alfa.example.test');
   assert.equal(valor('comercial', 'Valor da proposta').replace(/\u00a0/g, ' '), 'R$ 1.500,00');

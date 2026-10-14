@@ -47,10 +47,35 @@ export function crmRecord(overrides = {}) {
   return { ...record, ...overrides };
 }
 
+// Um item de catálogo no formato que a API devolve (com os campos que a SELEÇÃO não precisa — preço, cor, descrição, auditoria —, para provar que o Dashboard não os guarda). Dados fictícios.
+let catalogSequence = 0;
+export function catalogItem(catalogo, nome, overrides = {}) {
+  catalogSequence += 1;
+  const prefix = { servicos: 'service', nichos: 'niche', origens: 'origin' }[catalogo];
+  const normalized = String(nome).normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLowerCase().replace(/[^a-z0-9]+/g, ' ').trim();
+  const specific = catalogo === 'servicos' ? { categoria: 'Marketing', precoReferencia: 1999.9, tipoCobranca: 'UNICA', recorrencia: null } : catalogo === 'nichos' ? { cor: 'azul' } : { canal: 'INDICACAO' };
+  return {
+    id: `${prefix}:00000000-0000-4000-8000-${String(catalogSequence).padStart(12, '0')}`,
+    nome,
+    nomeNormalizado: normalized,
+    descricao: 'descrição fictícia',
+    ativo: true,
+    ordem: catalogSequence,
+    criadoEm: '2026-10-01T10:00:00.000Z',
+    atualizadoEm: '2026-10-01T10:00:00.000Z',
+    criadoPorUserId: 'user-breno',
+    criadoPorNome: 'Breno Bento',
+    atualizadoPorUserId: 'user-breno',
+    atualizadoPorNome: 'Breno Bento',
+    ...specific,
+    ...overrides,
+  };
+}
+
 // ---------------------------------------------------------------------------
 // O cliente de API falso
 // ---------------------------------------------------------------------------
-// options: { items, approvals, me, history: { [id]: [...] } }. Cada método registra { name, args } em `calls`.
+// options: { items, approvals, me, history: { [id]: [...] }, catalogs: { servicos, nichos, origens } }. Sem `catalogs`, a API NÃO tem listCatalog (a tela do CRM fica sem integração com os catálogos, como sempre foi). Cada método registra { name, args } em `calls`.
 // api.failNext(name, error) faz a PRÓXIMA chamada rejeitar; api.failAll(name, error) faz todas; api.hold(name) devolve
 // { release(valor), fail(erro) } e deixa a próxima chamada PENDENTE até o teste liberar — para testar respostas tardias.
 export function createFakeApi(options = {}) {
@@ -59,6 +84,8 @@ export function createFakeApi(options = {}) {
     approvals: options.approvals || [],
     me: options.me || { userId: 'user-breno', name: 'Breno Bento', role: 'ADMIN', permissions: ['READ:CRM', 'WRITE:CRM', 'APPROVE:LEAD_APPROVAL'], status: 'ACTIVE' },
     histories: options.history || {},
+    catalogs: options.catalogs ? structuredClone(options.catalogs) : null,
+    catalogFailures: {}, // { [catalogo]: erro } — a leitura DAQUELE catálogo falha enquanto o erro estiver aqui
   };
   const calls = [];
   const failures = new Map();
@@ -157,6 +184,16 @@ export function createFakeApi(options = {}) {
         return { item: clone(item) };
       }),
   };
+  if (store.catalogs) {
+    // GET /api/crm-catalogs/<catalogo>[?todos=1]: sem `todos` só os ATIVOS (READ:CRM); com `todos` também os desativados (MANAGE:CRM_CATALOGS).
+    api.listCatalog = (catalogo, opts = {}) =>
+      run('listCatalog', [catalogo, opts], () => {
+        if (store.catalogFailures[catalogo]) throw store.catalogFailures[catalogo];
+        const items = store.catalogs[catalogo];
+        if (!Array.isArray(items)) throw new ApiError(404, 'NOT_FOUND', 'Catálogo não encontrado.');
+        return { items: clone(opts && opts.todos ? items : items.filter((item) => item.ativo === true)) };
+      });
+  }
   return api;
 }
 

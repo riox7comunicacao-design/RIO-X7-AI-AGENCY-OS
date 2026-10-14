@@ -27,8 +27,10 @@
 
 import { h, fill } from '../dom.mjs';
 import { textOf, safeHttpUrl, roleLabel } from '../format.mjs';
-import { buildHash } from '../router.mjs';
+import { buildHash, CATALOG_LIST_ROUTES } from '../router.mjs';
 import { createUi, createRoutedDrawer, createTabs, statusBadge as uiStatusBadge, emptyState, skeleton, pageHeader, searchField, selectField, pagination, section } from '../ui/index.mjs';
+import { createCatalogField, createCatalogNotice } from '../ui/catalogField.mjs';
+import { CATALOG_FIELDS, createCatalogLookup } from '../crm-catalog-lookup.mjs';
 import {
   CRM_STATUSES,
   DEFAULT_INITIAL_STATUS,
@@ -71,6 +73,11 @@ export function createCrmView({ document, root, api, permissions, navigate = () 
   // Deliberadamente independente de canWrite: excluir é uma ação diferente de criar/editar/mudar status, e continua disponível mesmo num registro bloqueado
   // como DNC (ver paintActions).
   const canDelete = Boolean(permissions && permissions.canDeleteCrm);
+  // Fase 2B-3.1 (decisão 0026): Nicho, Origem e Serviço potencial passam a ser escolhidos nos catálogos oficiais, mas o registro continua guardando o NOME como TEXTO. A consulta é só de leitura
+  // (READ:CRM) e preguiçosa: nada é pedido até um formulário abrir. Só quem administra os catálogos (MANAGE:CRM_CATALOGS) vê "Informar outro valor" e o atalho para o cadastro; o servidor
+  // continua a autoridade. Sem permissão de leitura ou sem a chamada na API, os campos ficam como sempre foram (texto livre).
+  const canManageCatalogs = Boolean(permissions && permissions.canManageCrmCatalogs);
+  const catalogLookup = createCatalogLookup({ api, bus, canRead: Boolean(permissions && permissions.canReadCrm), canManage: canManageCatalogs });
   const state = {
     route: { name: 'crm-list' },
     visible: false,
@@ -501,6 +508,7 @@ export function createCrmView({ document, root, api, permissions, navigate = () 
       getReturnFocus: hooks.getReturnFocus,
       isDirty: () => editDirty(),
       onClose: (reason) => {
+        if (current) disposePanel(current.panelApi);
         current = null;
         resetRecord();
         hooks.onClose(reason);
@@ -692,6 +700,11 @@ export function createCrmView({ document, root, api, permissions, navigate = () 
     });
   }
 
+  // Um painel que sai de cena solta o que assinou (os campos de catálogo do formulário de edição).
+  function disposePanel(panelApi) {
+    if (panelApi && typeof panelApi.dispose === 'function') panelApi.dispose();
+  }
+
   function paintPanel() {
     if (!current) return;
     const { refs } = current;
@@ -700,6 +713,7 @@ export function createCrmView({ document, root, api, permissions, navigate = () 
       current.panelApi.setLocked();
       return;
     }
+    disposePanel(current.panelApi);
     current.panelApi = null;
     if (state.panel === null || state.record.status !== 'ready') {
       state.panel = null;
@@ -785,6 +799,7 @@ export function createCrmView({ document, root, api, permissions, navigate = () 
       form,
       initial,
       isDirty,
+      dispose: () => form.destroy(),
       focus: form.focusFirst,
       setMessage: shell.setMessage,
       setBusy(busy) {
@@ -1146,6 +1161,17 @@ export function createCrmView({ document, root, api, permissions, navigate = () 
     const controls = new Map();
     const errorSlots = new Map();
     const datalists = new Map();
+    const catalogFields = []; // os campos de seleção assistida deste formulário (cada um assina o seu catálogo até ser descartado)
+    // O aviso ÚNICO de catálogos indisponíveis (os três pelo mesmo motivo): no início do formulário, em vez de três avisos iguais. Criado antes dos campos, que o consultam.
+    const catalogNotice = catalogLookup.enabled
+      ? createCatalogNotice(document, {
+          lookup: catalogLookup,
+          labels: ['nicho', 'origem', 'servicoPotencial'].map((key) => FIELD_BY_KEY.get(key).label),
+          onRecovered: () => {
+            if (catalogFields.length > 0) catalogFields[0].control.focus();
+          },
+        })
+      : null;
     let tabsApi = null;
     const tabOfKey = new Map(RECORD_TABS.flatMap((tab) => tab.sections.flatMap((spec) => spec.keys.map((key) => [key, tab.key]))));
 
@@ -1153,8 +1179,27 @@ export function createCrmView({ document, root, api, permissions, navigate = () 
       const id = `crm-field-${entry.key}`;
       const value = values[entry.key] || '';
       const suggest = SUGGESTION_KEYS.includes(entry.key);
+      const label = el('label', { for: id, text: entry.required ? `${entry.label} (obrigatório)` : entry.label });
+      const catalog = Object.prototype.hasOwnProperty.call(CATALOG_FIELDS, entry.key) ? CATALOG_FIELDS[entry.key] : null;
       let input;
-      if (entry.kind === 'textarea') {
+      let catalogField = null;
+      if (catalog !== null && catalogLookup.enabled && entry.kind === 'text') {
+        // Nicho, Origem e Serviço potencial: lista oficial quando há itens ativos; texto livre quando o catálogo está vazio, indisponível ou falhou (o CRM nunca fica bloqueado por isso)
+        catalogField = createCatalogField(document, {
+          id,
+          name: entry.key,
+          catalog,
+          value,
+          lookup: catalogLookup,
+          label,
+          listId: suggest ? `crm-suggest-${entry.key}` : null,
+          maxLength: MAX_LINE,
+          adminLink: canManageCatalogs ? buildHash({ name: CATALOG_LIST_ROUTES[catalog] }) : null,
+          notice: catalogNotice,
+        });
+        catalogFields.push(catalogField);
+        input = catalogField.control;
+      } else if (entry.kind === 'textarea') {
         input = el('textarea', { id, name: entry.key, rows: '3', maxlength: MAX_TEXT, text: value });
       } else if (entry.kind === 'number') {
         // Texto, não type="number": um <input type="number"> devolve '' para o que o navegador não entende (ex.: "1.500,50"), e na
@@ -1182,7 +1227,7 @@ export function createCrmView({ document, root, api, permissions, navigate = () 
       const wide = entry.kind === 'textarea';
       const datalist = suggest ? el('datalist', { id: `crm-suggest-${entry.key}` }) : null;
       if (datalist) datalists.set(entry.key, datalist);
-      return el('div', { className: wide ? 'field wide' : 'field' }, el('label', { for: id, text: entry.required ? `${entry.label} (obrigatório)` : entry.label }), input, slot, datalist);
+      return el('div', { className: wide ? 'field wide' : 'field' }, label, catalogField ? catalogField.element : input, slot, datalist);
     }
 
     function managed(entry) {
@@ -1207,11 +1252,12 @@ export function createCrmView({ document, root, api, permissions, navigate = () 
         active: 'resumo',
         tabs: RECORD_TABS.filter((tab) => tab.sections.length > 0).map((tab) => ({ key: tab.key, label: tab.label, content: el('div', { className: 'edit-tab-body' }, ...tab.sections.map(sectionNode)) })),
       });
-      element = el('div', { className: 'field-form field-form-tabs' }, tabsApi.element);
+      element = el('div', { className: 'field-form field-form-tabs' }, catalogNotice ? catalogNotice.element : null, tabsApi.element);
     } else {
       element = el(
         'div',
         { className: 'field-form' },
+        catalogNotice ? catalogNotice.element : null,
         ...FIELD_GROUPS.map((group) =>
           el(
             'fieldset',
@@ -1259,6 +1305,12 @@ export function createCrmView({ document, root, api, permissions, navigate = () 
       paintSuggestions(items) {
         for (const [key, datalist] of datalists) fill(datalist, ...distinctValues(items, key).map((value) => el('option', { value })));
       },
+      // O formulário saiu de cena: os campos de catálogo deixam de assinar as mudanças (nada fica pendurado no lookup).
+      destroy() {
+        for (const field of catalogFields) field.destroy();
+        catalogFields.length = 0;
+        if (catalogNotice) catalogNotice.destroy();
+      },
     };
   }
 
@@ -1267,6 +1319,7 @@ export function createCrmView({ document, root, api, permissions, navigate = () 
   // ==========================================================================
   // Devolve { element, focus() }: o foco só pode ir para o campo depois de a tela estar no documento.
   function buildNewScreen() {
+    if (newForm) newForm.destroy();
     newForm = null;
     newDraft = null;
     const back = el('p', { className: 'back' }, anchor(listHash, '← Voltar à lista'));
@@ -1411,6 +1464,7 @@ export function createCrmView({ document, root, api, permissions, navigate = () 
 
     const returning = newHost.parentNode === content;
     if (returning) fill(newHost); // o formulário de "Novo registro" não fica guardado: a página só existe enquanto a rota existir
+    if (newForm) newForm.destroy();
     newForm = null;
     showScreen('list');
     if (entering || returning) restoreScroll();
@@ -1501,8 +1555,10 @@ export function createCrmView({ document, root, api, permissions, navigate = () 
       state.record = { id: null, item: null, status: 'idle', error: null };
       state.history = { status: 'idle', entries: [], error: null };
       current = null;
+      if (newForm) newForm.destroy();
       newForm = null;
       newDraft = null;
+      catalogLookup.destroy();
       if (ownsUi) ui.destroy();
       fill(root);
     },

@@ -417,6 +417,24 @@ table.crm-table td.empty { color: var(--muted); }
 .field-error { margin: 0; color: var(--bad-text); font-size: 13px; }
 .field-error:empty, .panel-message:empty, .crm-message:empty { display: none; }
 .hint { margin: 4px 0 0; color: var(--muted); font-size: 13px; }
+/* Campo de seleção assistida dos catálogos (CRM 5.0, Fase 2B-3.1): a lista oficial (select) OU o texto livre, mais o aviso (fora do catálogo, grafia, desativado, catálogo vazio ou indisponível) com as ações. */
+.catalog-field { display: grid; gap: 6px; min-width: 0; }
+.catalog-field [hidden] { display: none; }
+.catalog-field-note { display: grid; gap: 6px; justify-items: start; margin: 0; color: var(--muted); font-size: 13px; }
+.catalog-field-note:empty { display: none; }
+.catalog-field-message, .catalog-field-value { overflow-wrap: anywhere; }
+/* Um campo com aviso fica mais alto que o vizinho: a grade do formulário alinha pelo topo (senão o campo vizinho esticaria). */
+.field-form .form-grid { align-items: start; }
+.catalog-field-note .btn { min-height: 36px; }
+/* O aviso ÚNICO de catálogos indisponíveis, no início do formulário (em vez de um aviso igual em cada campo). */
+.catalog-notice { display: grid; gap: 8px; justify-items: start; margin: 0 0 12px; padding: 10px 12px; border: 1px solid var(--line); border-radius: 10px; background: var(--info-bg); color: var(--info-text); font-size: 13.5px; }
+.catalog-notice[hidden] { display: none; }
+.catalog-notice-message { overflow-wrap: anywhere; }
+.catalog-notice .btn { min-height: 36px; }
+select[aria-invalid="true"] { border-color: var(--danger); }
+@media (max-width: 760px) {
+  .catalog-field-note .btn, .catalog-notice .btn { min-height: 40px; }
+}
 .form-actions {
   position: sticky;
   bottom: 0;
