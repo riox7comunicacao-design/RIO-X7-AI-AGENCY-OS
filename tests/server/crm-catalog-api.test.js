@@ -35,7 +35,7 @@ const ambiente = (t, extras = {}) => montarAmbiente(t, { usuarios: [BRENO, RAFAE
 const sha = (arquivo) => (fs.existsSync(arquivo) ? crypto.createHash('sha256').update(fs.readFileSync(arquivo)).digest('hex') : null);
 
 const CASOS = Object.freeze({
-  servicos: { nome: 'Site institucional', categoria: 'Web', precoReferencia: 1500, tipoCobranca: 'RECORRENTE', recorrencia: 'MENSAL' },
+  servicos: { nome: 'Site institucional', categoria: 'Web', precoReferencia: 1500, permitePagamentoUnico: true, permitePagamentoRecorrente: true, periodicidades: ['MENSAL', 'TRIMESTRAL'] },
   nichos: { nome: 'Estética', cor: 'azul' },
   origens: { nome: 'Indicação', canal: 'INDICACAO' },
 });
@@ -77,7 +77,7 @@ test('[CATAPI-3] ADMIN percorre o ciclo completo nos TRÊS catálogos: criar (20
     assert.equal(item.ativo, true);
     assert.equal(item.ordem, 0);
     assert.equal(item.criadoPorNome, BRENO.name);
-    const segundo = (await chamar(env, BRENO, { method: 'POST', url: base(catalogo), body: { nome: `Outro de ${catalogo}` } })).json().item;
+    const segundo = (await chamar(env, BRENO, { method: 'POST', url: base(catalogo), body: { nome: `Outro de ${catalogo}`, ...(catalogo === 'servicos' ? { permitePagamentoUnico: true } : {}) } })).json().item;
     assert.equal(segundo.ordem, 1);
 
     const lista = await chamar(env, BRENO, { url: base(catalogo) });

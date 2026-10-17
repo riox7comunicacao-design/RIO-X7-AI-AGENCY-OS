@@ -17,6 +17,12 @@
 // SEGREDO: a service_role key fica só em memória, só no cabeçalho Authorization de cada requisição — nunca logada, nunca numa mensagem
 // de erro (os erros citam só o status HTTP e a mensagem que o PostgREST devolveu).
 //
+// MODALIDADES DE PAGAMENTO (serviços, Fase C1, migration 20261018090000_crm_services_payment_modalities.sql): as colunas `permite_pagamento_unico`,
+// `permite_pagamento_recorrente` (booleanas) e `periodicidades` (TEXT[]) são lidas e gravadas. As colunas LEGADAS `tipo_cobranca` e `recorrencia` continuam
+// sendo LIDAS (somente leitura: `legacy` abaixo) e NUNCA mais gravadas — nem num insert nem num patch. Esta leitura funciona com o esquema ANTIGO (sem as
+// colunas novas: ficam falso, falso, lista vazia); gravar um serviço com o esquema antigo falha (o PostgREST recusa a coluna) e o domínio trata como falha
+// de armazenamento — por isso a migration vem ANTES do servidor novo.
+//
 // `updated_at` e REORDENAÇÃO: um gatilho do banco atualiza `updated_at` a cada UPDATE, então este adapter NÃO envia `atualizadoEm` em
 // um update (o valor devolvido é o do banco). A reordenação chama a função SQL `reorder_crm_catalog` por RPC — atômica: ou todas as
 // posições mudam, ou nenhuma — em vez de N PATCHes soltos.
@@ -52,7 +58,9 @@ const UPDATABLE_COMMON = Object.freeze(['nome', 'nomeNormalizado', 'descricao', 
 const CATALOG_TABLES = Object.freeze({
   servicos: Object.freeze({
     table: 'crm_services',
-    specific: Object.freeze({ categoria: 'categoria', precoReferencia: 'preco_referencia', tipoCobranca: 'tipo_cobranca', recorrencia: 'recorrencia' }),
+    specific: Object.freeze({ categoria: 'categoria', precoReferencia: 'preco_referencia', permitePagamentoUnico: 'permite_pagamento_unico', permitePagamentoRecorrente: 'permite_pagamento_recorrente', periodicidades: 'periodicidades' }),
+    // colunas LEGADAS: só leitura (nunca entram num insert nem num patch)
+    legacy: Object.freeze({ tipoCobranca: 'tipo_cobranca', recorrencia: 'recorrencia' }),
   }),
   nichos: Object.freeze({ table: 'crm_niches', specific: Object.freeze({ cor: 'cor' }) }),
   origens: Object.freeze({ table: 'crm_lead_origins', specific: Object.freeze({ canal: 'canal' }) }),
@@ -87,8 +95,17 @@ function toNumberOrNull(value) {
   return Number.isFinite(number) ? number : null;
 }
 
+// O valor de um campo específico como o domínio o espera: o preço é número; as permissões são booleanas (a coluna ausente — esquema antigo — é falso);
+// as periodicidades são uma lista (a coluna ausente ou que não é lista é uma lista vazia); o resto, o valor ou null.
+function specificFromRow(field, value) {
+  if (field === 'precoReferencia') return toNumberOrNull(value);
+  if (field === 'permitePagamentoUnico' || field === 'permitePagamentoRecorrente') return value === true;
+  if (field === 'periodicidades') return Array.isArray(value) ? value.filter((entry) => typeof entry === 'string') : [];
+  return value ?? null;
+}
+
 function rowToItem(catalog, row) {
-  const { specific } = tableOf(catalog);
+  const { specific, legacy = {} } = tableOf(catalog);
   const item = {
     id: row.id,
     nome: row.nome,
@@ -103,7 +120,8 @@ function rowToItem(catalog, row) {
     atualizadoPorUserId: row.updated_by_user_id ?? null,
     atualizadoPorNome: row.updated_by_name ?? null,
   };
-  for (const [field, column] of Object.entries(specific)) item[field] = field === 'precoReferencia' ? toNumberOrNull(row[column]) : (row[column] ?? null);
+  for (const [field, column] of Object.entries(specific)) item[field] = specificFromRow(field, row[column]);
+  for (const [field, column] of Object.entries(legacy)) item[field] = row[column] ?? null;
   return item;
 }
 

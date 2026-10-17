@@ -37,7 +37,7 @@ const REQUIRED_CATALOG_REPOSITORY_METHODS = Object.freeze(['list', 'getById', 'i
 // campos ESPECÍFICOS (categoria, cor, canal...) só valem no catálogo a que pertencem: um `cor` num serviço é um erro de programação.
 const COMMON_UPDATABLE_FIELDS = Object.freeze(['nome', 'nomeNormalizado', 'descricao', 'ativo', 'ordem', 'atualizadoEm', 'atualizadoPorUserId', 'atualizadoPorNome']);
 // A união de todos (comuns + específicos dos três catálogos) — só para conferência em teste.
-const UPDATABLE_FIELDS = Object.freeze([...COMMON_UPDATABLE_FIELDS, 'categoria', 'precoReferencia', 'tipoCobranca', 'recorrencia', 'cor', 'canal']);
+const UPDATABLE_FIELDS = Object.freeze([...COMMON_UPDATABLE_FIELDS, 'categoria', 'precoReferencia', 'permitePagamentoUnico', 'permitePagamentoRecorrente', 'periodicidades', 'cor', 'canal']);
 
 function assertValidCatalogRepository(repository) {
   if (!repository || typeof repository !== 'object') {

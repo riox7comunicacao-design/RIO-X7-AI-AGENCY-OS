@@ -1,7 +1,7 @@
 // O MODELO dos catálogos do CRM no Dashboard (CRM 5.0, Fase 2B-2): Serviços, Nichos e Origens dos Leads. Só funções e dados PUROS — nada aqui toca o DOM, a rede ou o navegador.
 //
 // O QUE ESTE ARQUIVO É: a tradução entre o formulário e o contrato do servidor (campos graváveis, rótulos em português, dinheiro em reais, o que enviar numa criação e numa edição) e entre os
-// erros do servidor e as mensagens que a pessoa lê. O QUE ELE NÃO É: a regra de negócio. Unicidade do nome, nome em uso pelo CRM, coerência de cobrança, limites e permissões continuam
+// erros do servidor e as mensagens que a pessoa lê. O QUE ELE NÃO É: a regra de negócio. Unicidade do nome, nome em uso pelo CRM, coerência das modalidades de pagamento, limites e permissões continuam
 // sendo do servidor, que sempre tem a palavra final; as poucas conferências feitas aqui (nome preenchido, preço em reais com centavos) só evitam uma ida ao servidor à toa.
 //
 // O contrato vem de src/crm/catalogConstants.js (copiado aqui como dado estático — o navegador nunca importa src/, regra R11). tests/server/dashboard-catalog-model.test.js compara as duas
@@ -17,7 +17,7 @@ export const CATALOG_KEYS = Object.freeze(['servicos', 'nichos', 'origens']);
 
 // Os campos GRAVÁVEIS de cada catálogo (nunca id, ordem, ativo, datas ou responsáveis: isso o servidor define; ativar/desativar e reordenar têm chamadas próprias).
 export const CATALOG_WRITABLE_FIELDS = Object.freeze({
-  servicos: Object.freeze(['nome', 'descricao', 'categoria', 'precoReferencia', 'tipoCobranca', 'recorrencia']),
+  servicos: Object.freeze(['nome', 'descricao', 'categoria', 'precoReferencia', 'permitePagamentoUnico', 'permitePagamentoRecorrente', 'periodicidades']),
   nichos: Object.freeze(['nome', 'descricao', 'cor']),
   origens: Object.freeze(['nome', 'descricao', 'canal']),
 });
@@ -26,8 +26,7 @@ export const LIMITS = Object.freeze({ NOME: 80, DESCRICAO: 500, CATEGORIA: 60, P
 
 const option = (value, label) => Object.freeze({ value, label });
 
-// Tipo de cobrança e recorrência dos serviços; canal das origens. O valor é o que viaja para o servidor; o rótulo é o que a pessoa lê.
-export const BILLING_OPTIONS = Object.freeze([option('UNICA', 'Pagamento único'), option('RECORRENTE', 'Cobrança recorrente')]);
+// Periodicidades de pagamento dos serviços; canal das origens. O valor é o que viaja para o servidor; o rótulo é o que a pessoa lê.
 export const RECURRENCE_OPTIONS = Object.freeze([option('MENSAL', 'Mensal'), option('TRIMESTRAL', 'Trimestral'), option('SEMESTRAL', 'Semestral'), option('ANUAL', 'Anual')]);
 export const CHANNEL_OPTIONS = Object.freeze([
   option('PROSPECCAO_ATIVA', 'Prospecção ativa'),
@@ -42,9 +41,32 @@ const labelIn = (options, value) => {
   const found = options.find((entry) => entry.value === value);
   return found ? found.label : '';
 };
-export const billingLabel = (value) => labelIn(BILLING_OPTIONS, value);
 export const recurrenceLabel = (value) => labelIn(RECURRENCE_OPTIONS, value);
 export const channelLabel = (value) => labelIn(CHANNEL_OPTIONS, value);
+
+// ---------------------------------------------------------------------------
+// Modalidades de pagamento dos serviços (Fase C1): único e/ou recorrente, com as periodicidades permitidas
+// ---------------------------------------------------------------------------
+export const UNIQUE_LABEL = 'Pagamento único';
+export const RECURRING_LABEL = 'Pagamento recorrente';
+export const NO_MODALITY_LABEL = 'Modalidades de pagamento não informadas';
+
+// As periodicidades de um item, só as válidas e na ordem canônica (mensal, trimestral, semestral, anual).
+export const periodicitiesOf = (item) => {
+  const list = item && Array.isArray(item.periodicidades) ? item.periodicidades : [];
+  return RECURRENCE_OPTIONS.map((entry) => entry.value).filter((value) => list.includes(value));
+};
+
+// O texto das modalidades de UM serviço, sem duplicá-lo: "Pagamento único + Pagamento recorrente (mensal, trimestral)". Sem nenhuma (um serviço antigo): o aviso.
+export function modalitiesSummary(item) {
+  const parts = [];
+  if (item && item.permitePagamentoUnico === true) parts.push(UNIQUE_LABEL);
+  if (item && item.permitePagamentoRecorrente === true) {
+    const names = periodicitiesOf(item).map((value) => recurrenceLabel(value).toLowerCase());
+    parts.push(names.length > 0 ? `${RECURRING_LABEL} (${names.join(', ')})` : RECURRING_LABEL);
+  }
+  return parts.length > 0 ? parts.join(' + ') : NO_MODALITY_LABEL;
+}
 
 // ---------------------------------------------------------------------------
 // Busca e filtro da lista (só exibição: nada disto muda dado algum)
@@ -107,7 +129,8 @@ const collapse = (value) => (typeof value === 'string' ? value.replace(/\s+/g, '
 const trimmed = (value) => (typeof value === 'string' ? value.replace(/\r\n?/g, '\n').trim() : '');
 
 export function emptyFormValues(catalogo) {
-  if (catalogo === 'servicos') return { nome: '', descricao: '', categoria: '', precoReferencia: '', tipoCobranca: '', recorrencia: '' };
+  // as permissões são 'SIM' (marcada) ou '' (desmarcada); as periodicidades, os valores marcados separados por vírgula, na ordem canônica
+  if (catalogo === 'servicos') return { nome: '', descricao: '', categoria: '', precoReferencia: '', permitePagamentoUnico: '', permitePagamentoRecorrente: '', periodicidades: '' };
   if (catalogo === 'nichos') return { nome: '', descricao: '', cor: '' };
   return { nome: '', descricao: '', canal: '' };
 }
@@ -120,8 +143,9 @@ export function formValuesFromItem(catalogo, item) {
   if (catalogo === 'servicos') {
     values.categoria = textOf(source.categoria);
     values.precoReferencia = moneyFieldText(source.precoReferencia);
-    values.tipoCobranca = textOf(source.tipoCobranca);
-    values.recorrencia = textOf(source.recorrencia);
+    values.permitePagamentoUnico = source.permitePagamentoUnico === true ? 'SIM' : '';
+    values.permitePagamentoRecorrente = source.permitePagamentoRecorrente === true ? 'SIM' : '';
+    values.periodicidades = periodicitiesOf(source).join(',');
   } else if (catalogo === 'nichos') {
     values.cor = textOf(source.cor);
   } else {
@@ -130,12 +154,21 @@ export function formValuesFromItem(catalogo, item) {
   return values;
 }
 
+// As periodicidades marcadas ('MENSAL,TRIMESTRAL') como lista, na ordem canônica e sem repetição.
+const periodicitiesFromText = (text) => {
+  const wanted = typeof text === 'string' ? text.split(',').map((entry) => entry.trim()) : [];
+  return RECURRENCE_OPTIONS.map((entry) => entry.value).filter((value) => wanted.includes(value));
+};
+const sameWire = (a, b) => (Array.isArray(a) || Array.isArray(b) ? JSON.stringify(a) === JSON.stringify(b) : Object.is(a, b));
+
 // O valor que um campo leva para o servidor: texto vazio = null; preço = número; os demais = o texto limpo. { ok: false, code } quando o preço não é um valor em reais.
 function wireValue(field, values) {
   const text = values[field];
   if (field === 'nome' || field === 'categoria') return { ok: true, value: collapse(text) === '' ? null : collapse(text) };
   if (field === 'descricao') return { ok: true, value: trimmed(text) === '' ? null : trimmed(text) };
   if (field === 'precoReferencia') return parseMoney(text);
+  if (field === 'permitePagamentoUnico' || field === 'permitePagamentoRecorrente') return { ok: true, value: text === 'SIM' };
+  if (field === 'periodicidades') return { ok: true, value: periodicitiesFromText(text) };
   return { ok: true, value: textOf(text) === '' ? null : textOf(text) };
 }
 
@@ -152,9 +185,24 @@ export function changedFields(catalogo, initial, values) {
       if (textOf(initial[field]) !== textOf(values[field])) changed.push(field);
       continue;
     }
-    if (!Object.is(before.value, now.value)) changed.push(field);
+    if (!sameWire(before.value, now.value)) changed.push(field);
   }
   return changed;
+}
+
+const MODALITY_FIELDS = Object.freeze(['permitePagamentoUnico', 'permitePagamentoRecorrente', 'periodicidades']);
+
+// As conferências das modalidades que dá para fazer SEM ir ao servidor (o servidor repete todas e tem a palavra final). `mustHaveOne`: cadastro novo, ou edição de um serviço que
+// JÁ tinha uma modalidade (nunca se remove a última). Um serviço antigo, sem nenhuma, pode seguir sem nenhuma enquanto a pessoa não mexer nelas.
+function modalityErrors(values, { mustHaveOne }) {
+  const errors = {};
+  const unique = values.permitePagamentoUnico === 'SIM';
+  const recurring = values.permitePagamentoRecorrente === 'SIM';
+  const periodicities = periodicitiesFromText(values.periodicidades);
+  if (mustHaveOne && !unique && !recurring) errors.modalidades = fieldMessage('modalidades', 'MODALIDADE_OBRIGATORIA');
+  if (recurring && periodicities.length === 0) errors.periodicidades = fieldMessage('periodicidades', 'PERIODICIDADE_OBRIGATORIA');
+  if (!recurring && periodicities.length > 0) errors.periodicidades = fieldMessage('periodicidades', 'PERIODICIDADE_NAO_PERMITIDA');
+  return errors;
 }
 
 // O corpo de uma CRIAÇÃO: o nome e só os campos opcionais preenchidos. { ok, body, errors } — errors: { campo: mensagem } (só o que dá para conferir no navegador).
@@ -174,19 +222,26 @@ export function buildCreateBody(catalogo, values) {
       body[field] = wired.value;
     }
   }
+  if (catalogo === 'servicos') {
+    // um cadastro novo SEMPRE leva as três (falso, falso e lista vazia também são uma resposta: o laço acima já as inclui, pois nenhuma é null), e exige ao menos uma modalidade
+    Object.assign(errors, modalityErrors(values, { mustHaveOne: true }));
+  }
   return { ok: Object.keys(errors).length === 0, body, errors };
 }
 
-// O corpo de uma EDIÇÃO: SÓ os campos que mudaram (o servidor recusa um corpo vazio). Mudar o tipo de cobrança leva a recorrência junto (a coerência é conferida sobre o estado final).
+// O corpo de uma EDIÇÃO: SÓ os campos que mudaram (o servidor recusa um corpo vazio). Mudar QUALQUER modalidade leva as três juntas (a coerência é conferida sobre o estado final); um PATCH que não
+// mexe nelas nunca as envia, então nunca as apaga.
 // { ok, body, errors, empty } — empty: nada mudou.
 export function buildPatchBody(catalogo, initial, values) {
   const errors = {};
   const body = {};
   const changed = changedFields(catalogo, initial, values);
   const send = new Set(changed);
-  if (catalogo === 'servicos' && (send.has('tipoCobranca') || send.has('recorrencia'))) {
-    send.add('tipoCobranca');
-    send.add('recorrencia');
+  const touchesModalities = catalogo === 'servicos' && MODALITY_FIELDS.some((field) => send.has(field));
+  if (touchesModalities) for (const field of MODALITY_FIELDS) send.add(field);
+  if (touchesModalities) {
+    const hadOne = initial.permitePagamentoUnico === 'SIM' || initial.permitePagamentoRecorrente === 'SIM';
+    Object.assign(errors, modalityErrors(values, { mustHaveOne: hadOne }));
   }
   for (const field of fieldsOf(catalogo)) {
     if (!send.has(field)) continue;
@@ -212,8 +267,10 @@ const FIELD_NOUN = Object.freeze({
   descricao: 'a descrição',
   categoria: 'a categoria',
   precoReferencia: 'o preço de referência',
-  tipoCobranca: 'o tipo de cobrança',
-  recorrencia: 'a recorrência',
+  permitePagamentoUnico: 'o pagamento único',
+  permitePagamentoRecorrente: 'o pagamento recorrente',
+  modalidades: 'as formas de pagamento',
+  periodicidades: 'as periodicidades',
   cor: 'a cor',
   canal: 'o canal',
 });
@@ -243,10 +300,14 @@ export function fieldMessage(path, code) {
       return 'Use no máximo duas casas decimais (os centavos).';
     case 'FORMATO_INVALIDO':
       return 'Informe o valor em reais, como 1.500,00.';
-    case 'RECORRENCIA_OBRIGATORIA':
-      return 'Escolha a recorrência: a cobrança é recorrente.';
-    case 'RECORRENCIA_NAO_PERMITIDA':
-      return 'A recorrência só vale para cobrança recorrente.';
+    case 'MODALIDADE_OBRIGATORIA':
+      return 'Marque pelo menos uma forma de pagamento: único, recorrente ou os dois.';
+    case 'PERIODICIDADE_OBRIGATORIA':
+      return 'Escolha ao menos uma periodicidade: o pagamento recorrente está permitido.';
+    case 'PERIODICIDADE_NAO_PERMITIDA':
+      return 'As periodicidades só valem quando o pagamento recorrente está permitido.';
+    case 'PERIODICIDADE_REPETIDA':
+      return 'Há uma periodicidade repetida: cada uma pode aparecer uma vez.';
     default:
       return `Confira ${noun}.`;
   }
@@ -269,7 +330,7 @@ export const MESSAGES = Object.freeze({
   staleList: 'A lista mudou desde a última atualização. Atualize a página e tente reordenar de novo.',
 });
 
-const FIELD_PATHS = Object.freeze(['nome', 'descricao', 'categoria', 'precoReferencia', 'tipoCobranca', 'recorrencia', 'cor', 'canal']);
+const FIELD_PATHS = Object.freeze(['nome', 'descricao', 'categoria', 'precoReferencia', 'permitePagamentoUnico', 'permitePagamentoRecorrente', 'modalidades', 'periodicidades', 'cor', 'canal']);
 
 // O que mostrar de um erro da API (ApiError): { message, fields, kind }. 401 devolve null (o fluxo de login cuida). `fields` = { campo: mensagem } para colocar perto do campo.
 export function catalogErrorInfo(error) {

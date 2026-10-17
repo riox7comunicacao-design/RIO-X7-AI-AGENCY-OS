@@ -76,7 +76,9 @@ function requireCatalogKey(catalogKey) {
 // A projeção de um item para o consumidor: só os campos conhecidos do catálogo, nunca um objeto vivo do armazenamento. Quem não
 // administra não recebe os campos de auditoria.
 function project(catalogKey, item, { manager, emUso }) {
-  const fields = [...COMMON_ITEM_FIELDS, ...CATALOG_DEFINITIONS[catalogKey].specificFields].filter((field) => manager || !AUDIT_FIELDS.includes(field));
+  // Os campos LEGADOS (serviços: tipoCobranca, recorrencia) continuam sendo devolvidos, só para leitura: nunca são gravados (Fase C1).
+  const definition = CATALOG_DEFINITIONS[catalogKey];
+  const fields = [...COMMON_ITEM_FIELDS, ...definition.specificFields, ...(definition.legacyFields || [])].filter((field) => manager || !AUDIT_FIELDS.includes(field));
   const projected = {};
   for (const field of fields) projected[field] = hasOwn(item, field) && item[field] !== undefined ? item[field] : null;
   if (emUso !== undefined) projected.emUso = emUso;

@@ -6,12 +6,12 @@ const test = require('node:test');
 const assert = require('node:assert/strict');
 
 const H = require('../helpers/catalogHarness');
-const { servico, apiFalsa, abrir, gaveta, confirmacao, botao, campo, erroDoCampo, linhas, linhaDe, nomes, acao, avisos, texto, hash, clicar, digitar, salvar, emFoco, erroApi } = H;
+const { servico, apiFalsa, abrir, gaveta, confirmacao, botao, campo, erroDoCampo, linhas, linhaDe, nomes, acao, avisos, texto, hash, clicar, digitar, marcar, salvar, emFoco, erroApi } = H;
 
 const TRES = () => [
-  servico(1, { nome: 'Gestão de redes', descricao: 'Posts e stories', categoria: 'Marketing', precoReferencia: 1500, tipoCobranca: 'RECORRENTE', recorrencia: 'MENSAL' }),
-  servico(2, { nome: 'Criação de site', tipoCobranca: 'UNICA', precoReferencia: 4800.5 }),
-  servico(3, { nome: 'Consultoria', ativo: false }),
+  servico(1, { nome: 'Gestão de redes', descricao: 'Posts e stories', categoria: 'Marketing', precoReferencia: 1500, permitePagamentoUnico: false, permitePagamentoRecorrente: true, periodicidades: ['MENSAL'] }),
+  servico(2, { nome: 'Criação de site', permitePagamentoUnico: true, precoReferencia: 4800.5 }),
+  servico(3, { nome: 'Consultoria', ativo: false, permitePagamentoUnico: false }), // LEGADO: sem nenhuma modalidade informada
 ];
 // Elementos do DOM de teste nunca vão para assert.equal: uma falha tentaria imprimir o documento inteiro (e estoura a memória). A identidade é conferida assim.
 const mesmo = (a, b, mensagem) => assert.ok(a === b, mensagem || 'deveria ser o mesmo elemento');
@@ -31,10 +31,11 @@ test('[CATSCR-1] SERVIÇOS carrega pela rota #/crm/configuracoes/servicos: títu
   assert.deepEqual(nomes(s), ['Gestão de redes', 'Criação de site', 'Consultoria']);
   assert.match(texto(s), /3 serviços/);
   assert.match(linhaDe(s, 'service:1').textContent, /Ativo/);
-  assert.match(linhaDe(s, 'service:1').textContent, /Marketing · Preço de referência: R\$\s1\.500,00 · Cobrança recorrente \(mensal\)/);
+  assert.match(linhaDe(s, 'service:1').textContent, /Marketing · Preço de referência: R\$\s1\.500,00 · Pagamento recorrente \(mensal\)/);
   assert.match(linhaDe(s, 'service:1').textContent, /Posts e stories/);
   assert.match(linhaDe(s, 'service:2').textContent, /Preço de referência: R\$\s4\.800,50 · Pagamento único/);
   assert.match(linhaDe(s, 'service:3').textContent, /Inativo/);
+  assert.match(linhaDe(s, 'service:3').textContent, /Modalidades de pagamento não informadas/, 'serviço legado: nada é inferido nem escondido');
   assert.match(linhaDe(s, 'service:3').className, /\bis-inactive\b/);
   assert.deepEqual(api.chamadas, [['listar', 'servicos', { todos: true }]], 'uma leitura da lista COM os desativados; nada além disso');
   assert.equal(api.escritas().length, 0);
@@ -134,6 +135,7 @@ test('[CATSCR-4] ATUALIZAÇÃO sem F5: criar mostra o item na hora (sem recarreg
   const s = await abrir({ api });
   await clicar(s, botao(s, 'Novo Serviço'));
   digitar(s, campo(s, 'nome'), 'Tráfego pago');
+  marcar(s, 'permitePagamentoUnico');
   await salvar(s);
   assert.deepEqual(nomes(s), ['Gestão de redes', 'Criação de site', 'Consultoria', 'Tráfego pago']);
   assert.match(texto(s), /4 serviços/);
@@ -169,7 +171,9 @@ test('[CATSCR-5] CRIAR: o painel lateral abre sobre a lista (endereço próprio)
   mesmo(emFoco(s), campo(s, 'nome'), 'o foco vai ao primeiro campo');
 
   // os campos reais (e só eles)
-  for (const nome of ['nome', 'descricao', 'categoria', 'precoReferencia', 'tipoCobranca', 'recorrencia']) assert.ok(campo(s, nome), nome);
+  for (const nome of ['nome', 'descricao', 'categoria', 'precoReferencia', 'modalidades', 'permitePagamentoUnico', 'permitePagamentoRecorrente', 'periodicidades', 'periodicidades-mensal', 'periodicidades-trimestral', 'periodicidades-semestral', 'periodicidades-anual']) assert.ok(campo(s, nome), nome);
+  assert.equal(campo(s, 'tipoCobranca'), null, 'o campo legado saiu da tela');
+  assert.equal(campo(s, 'recorrencia'), null, 'o campo legado saiu da tela');
   mesmo(s.browser.by.label(g, 'Nome do serviço'), campo(s, 'nome'));
   assert.equal(s.browser.by.label(g, 'Preço de referência (R$)'), campo(s, 'precoReferencia'));
   assert.equal(campo(s, 'nome').getAttribute('aria-required'), 'true');
@@ -177,20 +181,26 @@ test('[CATSCR-5] CRIAR: o painel lateral abre sobre a lista (endereço próprio)
   assert.equal(campo(s, 'descricao').getAttribute('maxlength'), '500');
   assert.equal(campo(s, 'categoria').getAttribute('maxlength'), '60');
   assert.equal(campo(s, 'precoReferencia').getAttribute('inputmode'), 'decimal');
-  assert.deepEqual([...campo(s, 'tipoCobranca').childNodes].map((o) => [o.value, o.textContent]), [['', 'Não informado'], ['UNICA', 'Pagamento único'], ['RECORRENTE', 'Cobrança recorrente']]);
-  assert.equal(campo(s, 'recorrencia').parentNode.hidden, true, 'a recorrência só aparece para a cobrança recorrente');
+  mesmo(s.browser.by.label(g, 'Permitir pagamento único'), campo(s, 'permitePagamentoUnico'));
+  mesmo(s.browser.by.label(g, 'Permitir pagamento recorrente'), campo(s, 'permitePagamentoRecorrente'));
+  assert.deepEqual(['permitePagamentoUnico', 'permitePagamentoRecorrente'].map((n) => [campo(s, n).type, campo(s, n).checked]), [['checkbox', false], ['checkbox', false]], 'um cadastro novo começa SEM modalidade marcada: a pessoa escolhe');
+  assert.match(s.browser.find(g, (el) => el.localName === 'legend' && /Formas de pagamento permitidas/.test(el.textContent)).className, /\brequired\b/, 'obrigatório no cadastro novo');
+  assert.equal(campo(s, 'periodicidades').hidden, true, 'as periodicidades só aparecem com o pagamento recorrente marcado');
   assert.match(g.textContent, /apenas informativo: não altera propostas nem negociações/);
   assert.equal(s.browser.findAll(g, (el) => el.hasAttribute('style')).length, 0, 'nenhum estilo inline');
-  // nada de campos que o contrato não tem
-  assert.equal(s.browser.findAll(g, (el) => ['input', 'select', 'textarea'].includes(el.localName)).length, 6);
+  // nada de campos que o contrato não tem: nome, descrição, categoria, preço, 2 modalidades e 4 periodicidades
+  assert.equal(s.browser.findAll(g, (el) => ['input', 'select', 'textarea'].includes(el.localName)).length, 10);
 
   digitar(s, campo(s, 'nome'), '  Gestão de   tráfego  ');
   digitar(s, campo(s, 'descricao'), 'Campanhas mensais');
   digitar(s, campo(s, 'categoria'), 'Marketing');
   digitar(s, campo(s, 'precoReferencia'), '2.500,00');
-  s.browser.choose(campo(s, 'tipoCobranca'), 'RECORRENTE');
-  assert.equal(campo(s, 'recorrencia').parentNode.hidden, false);
-  s.browser.choose(campo(s, 'recorrencia'), 'MENSAL');
+  marcar(s, 'permitePagamentoRecorrente');
+  assert.equal(campo(s, 'periodicidades').hidden, false, 'marcou o recorrente: as periodicidades aparecem');
+  assert.deepEqual(['mensal', 'trimestral', 'semestral', 'anual'].map((v) => s.browser.by.label(campo(s, 'periodicidades'), v[0].toUpperCase() + v.slice(1)).checked), [false, false, false, false]);
+  marcar(s, 'periodicidades-mensal');
+  marcar(s, 'periodicidades-trimestral');
+  marcar(s, 'permitePagamentoUnico'); // as DUAS formas no mesmo serviço
 
   const pausa = api.pausar('criar');
   s.browser.click(botao(s, 'Salvar', g));
@@ -210,12 +220,12 @@ test('[CATSCR-5] CRIAR: o painel lateral abre sobre a lista (endereço próprio)
 
   pausa.liberar();
   await s.browser.flush(8);
-  assert.deepEqual(api.chamadas.filter(([n]) => n === 'criar'), [['criar', 'servicos', { nome: 'Gestão de tráfego', descricao: 'Campanhas mensais', categoria: 'Marketing', precoReferencia: 2500, tipoCobranca: 'RECORRENTE', recorrencia: 'MENSAL' }]]);
+  assert.deepEqual(api.chamadas.filter(([n]) => n === 'criar'), [['criar', 'servicos', { nome: 'Gestão de tráfego', descricao: 'Campanhas mensais', categoria: 'Marketing', precoReferencia: 2500, permitePagamentoUnico: true, permitePagamentoRecorrente: true, periodicidades: ['MENSAL', 'TRIMESTRAL'] }]]);
   assert.equal(gaveta(s), null, 'o painel fecha depois da confirmação');
   assert.equal(hash(s), '#/crm/configuracoes/servicos', 'e o endereço volta à lista');
   assert.deepEqual(avisos(s), ['Serviço criado.']);
   assert.ok(nomes(s).includes('Gestão de tráfego'));
-  assert.match(linhaDe(s, 'service:novo-3').textContent, /Preço de referência: R\$\s2\.500,00 · Cobrança recorrente \(mensal\)/);
+  assert.match(linhaDe(s, 'service:novo-3').textContent, /Preço de referência: R\$\s2\.500,00 · Pagamento único \+ Pagamento recorrente \(mensal, trimestral\)/, 'a lista mostra todas as modalidades do serviço, numa só linha');
   mesmo(emFoco(s), botao(s, 'Novo Serviço'), 'o foco volta ao botão que abriu o painel');
   semLixo(s);
 });
@@ -251,19 +261,36 @@ test('[CATSCR-6] VALIDAÇÃO dos campos: nome vazio, preço inválido e preço c
   assert.equal(api.escritas().length, 0);
   assert.match(gaveta(s).textContent, /Confira os campos destacados e tente novamente\./);
 
+  // sem nenhuma forma de pagamento marcada: recusado perto do grupo, antes de qualquer requisição
   digitar(s, campo(s, 'precoReferencia'), '99,9');
   await salvar(s);
-  assert.deepEqual(api.chamadas.filter(([n]) => n === 'criar')[0].slice(1), ['servicos', { nome: 'Novo', precoReferencia: 99.9 }]);
+  assert.equal(erroDoCampo(s, 'modalidades').textContent, 'Marque pelo menos uma forma de pagamento: único, recorrente ou os dois.');
+  assert.equal(erroDoCampo(s, 'modalidades').hidden, false);
+  assert.equal(api.escritas().length, 0);
+  // recorrente marcado sem periodicidade: também recusado, junto da lista de periodicidades
+  marcar(s, 'permitePagamentoRecorrente');
+  assert.equal(erroDoCampo(s, 'modalidades').hidden, true, 'marcar uma forma limpa o erro do grupo');
+  await salvar(s);
+  assert.equal(erroDoCampo(s, 'periodicidades').textContent, 'Escolha ao menos uma periodicidade: o pagamento recorrente está permitido.');
+  assert.equal(api.escritas().length, 0);
+  marcar(s, 'periodicidades-anual');
+  marcar(s, 'permitePagamentoRecorrente', false);
+  assert.equal(campo(s, 'periodicidades').hidden, true, 'desmarcar o recorrente esconde as periodicidades');
+  assert.equal(campo(s, 'periodicidades-anual').checked, false, 'e as limpa: nunca sobra periodicidade sem recorrente');
+  marcar(s, 'permitePagamentoUnico');
+  await salvar(s);
+  assert.deepEqual(api.chamadas.filter(([n]) => n === 'criar')[0].slice(1), ['servicos', { nome: 'Novo', precoReferencia: 99.9, permitePagamentoUnico: true, permitePagamentoRecorrente: false, periodicidades: [] }]);
   assert.equal(gaveta(s), null);
 });
 
-test('[CATSCR-7] ERROS DA API ao salvar aparecem junto do campo certo e NADA digitado se perde: nome duplicado (mesmo desativado), recorrência obrigatória, API fora do ar e rede caída', async () => {
+test('[CATSCR-7] ERROS DA API ao salvar aparecem junto do campo certo e NADA digitado se perde: nome duplicado (mesmo desativado), periodicidade obrigatória, API fora do ar e rede caída', async () => {
   const api = apiFalsa({ servicos: TRES() });
   const s = await abrir({ api });
   await clicar(s, botao(s, 'Novo Serviço'));
   digitar(s, campo(s, 'nome'), 'Consultoria');
   digitar(s, campo(s, 'descricao'), 'Texto que não pode sumir');
   digitar(s, campo(s, 'precoReferencia'), '300');
+  marcar(s, 'permitePagamentoUnico');
 
   api.mem.falhas.criar = await erroApi(409, 'CRM_CATALOG_DUPLICATE_NAME', [], 'Já existe um item com este nome (mesmo desativado).');
   await salvar(s);
@@ -275,11 +302,13 @@ test('[CATSCR-7] ERROS DA API ao salvar aparecem junto do campo certo e NADA dig
   assert.equal(botao(s, 'Salvar', gaveta(s)).disabled, false, 'dá para tentar de novo');
   assert.deepEqual(avisos(s), []);
 
-  s.browser.choose(campo(s, 'tipoCobranca'), 'RECORRENTE');
+  marcar(s, 'permitePagamentoRecorrente');
+  marcar(s, 'periodicidades-mensal');
   digitar(s, campo(s, 'nome'), 'Mentoria');
-  api.mem.falhas.criar = await erroApi(400, 'CRM_CATALOG_INVALID_INPUT', [{ path: 'recorrencia', code: 'RECORRENCIA_OBRIGATORIA' }, { path: 'categoria', code: 'MUITO_LONGO' }]);
+  // (a tela já confere isso antes de enviar; aqui o SERVIDOR é quem recusa — a palavra final é dele)
+  api.mem.falhas.criar = await erroApi(400, 'CRM_CATALOG_INVALID_INPUT', [{ path: 'periodicidades', code: 'PERIODICIDADE_OBRIGATORIA' }, { path: 'categoria', code: 'MUITO_LONGO' }]);
   await salvar(s);
-  assert.equal(erroDoCampo(s, 'recorrencia').textContent, 'Escolha a recorrência: a cobrança é recorrente.');
+  assert.equal(erroDoCampo(s, 'periodicidades').textContent, 'Escolha ao menos uma periodicidade: o pagamento recorrente está permitido.');
   assert.equal(erroDoCampo(s, 'categoria').textContent, 'A categoria pode ter no máximo 60 caracteres.');
   assert.equal(erroDoCampo(s, 'nome').hidden, true);
   mesmo(emFoco(s), campo(s, 'categoria'), 'o foco vai ao primeiro campo com erro na ordem da tela');
@@ -338,9 +367,9 @@ test('[CATSCR-8] EDITAR: o painel abre pelo nome (endereço do item), preenche o
   assert.equal(campo(s, 'descricao').value, 'Posts e stories');
   assert.equal(campo(s, 'categoria').value, 'Marketing');
   assert.equal(campo(s, 'precoReferencia').value, '1.500,00');
-  assert.equal(campo(s, 'tipoCobranca').value, 'RECORRENTE');
-  assert.equal(campo(s, 'recorrencia').value, 'MENSAL');
-  assert.equal(campo(s, 'recorrencia').parentNode.hidden, false);
+  assert.deepEqual(['permitePagamentoUnico', 'permitePagamentoRecorrente'].map((n) => campo(s, n).checked), [false, true]);
+  assert.equal(campo(s, 'periodicidades').hidden, false);
+  assert.deepEqual(['mensal', 'trimestral', 'semestral', 'anual'].map((v) => campo(s, `periodicidades-${v}`).checked), [true, false, false, false]);
   assert.match(g.textContent, /Criado em .* por Breno Bento\. Última alteração em .* por Breno Bento\./);
 
   // sem alterar nada
@@ -360,7 +389,7 @@ test('[CATSCR-8] EDITAR: o painel abre pelo nome (endereço do item), preenche o
   mesmo(emFoco(s), acao(s, 'service:1', 'edit'), 'o foco volta ao nome do item editado');
 });
 
-test('[CATSCR-9] EDITAR limpando campos envia null só deles; trocar para pagamento único leva a recorrência junto; o nome em uso pelo CRM fica travado com a explicação (e o servidor continua a autoridade)', async () => {
+test('[CATSCR-9] EDITAR limpando campos envia null só deles; mexer em UMA modalidade leva as três juntas (nunca apaga as outras); não dá para remover a última forma de pagamento; o nome em uso pelo CRM fica travado com a explicação (e o servidor continua a autoridade)', async () => {
   const api = apiFalsa({ servicos: TRES(), emUso: { 'service:1': 4, 'service:2': 0 } });
   const s = await abrir({ api });
   await clicar(s, acao(s, 'service:2', 'edit'));
@@ -368,16 +397,31 @@ test('[CATSCR-9] EDITAR limpando campos envia null só deles; trocar para pagame
   assert.doesNotMatch(gaveta(s).textContent, /é usado em/);
   assert.deepEqual(api.chamadas.filter(([n]) => n === 'obter'), [['obter', 'servicos', 'service:2']]);
   digitar(s, campo(s, 'precoReferencia'), '');
-  s.browser.choose(campo(s, 'tipoCobranca'), '');
   await salvar(s);
-  assert.deepEqual(api.chamadas.filter(([n]) => n === 'atualizar')[0].slice(2), ['service:2', { precoReferencia: null, tipoCobranca: null, recorrencia: null }]);
+  assert.deepEqual(api.chamadas.filter(([n]) => n === 'atualizar')[0].slice(2), ['service:2', { precoReferencia: null }], 'só o preço foi limpo: as modalidades não vão no corpo');
+  assert.deepEqual([api.mem.servicos[1].permitePagamentoUnico, api.mem.servicos[1].permitePagamentoRecorrente, api.mem.servicos[1].periodicidades], [true, false, []], 'e continuam como estavam');
 
   await clicar(s, acao(s, 'service:1', 'edit'));
-  s.browser.choose(campo(s, 'tipoCobranca'), 'UNICA');
-  assert.equal(campo(s, 'recorrencia').parentNode.hidden, true);
-  assert.equal(campo(s, 'recorrencia').value, '', 'a recorrência é limpa junto');
+  marcar(s, 'permitePagamentoUnico');
   await salvar(s);
-  assert.deepEqual(api.chamadas.filter(([n]) => n === 'atualizar')[1].slice(2), ['service:1', { tipoCobranca: 'UNICA', recorrencia: null }]);
+  assert.deepEqual(api.chamadas.filter(([n]) => n === 'atualizar')[1].slice(2), ['service:1', { permitePagamentoUnico: true, permitePagamentoRecorrente: true, periodicidades: ['MENSAL'] }], 'mudou UMA modalidade: as três vão juntas, com o resto como estava');
+
+  // não dá para ficar sem NENHUMA forma de pagamento num serviço que já tinha uma
+  await clicar(s, acao(s, 'service:2', 'edit'));
+  marcar(s, 'permitePagamentoUnico', false);
+  await salvar(s);
+  assert.equal(erroDoCampo(s, 'modalidades').textContent, 'Marque pelo menos uma forma de pagamento: único, recorrente ou os dois.');
+  assert.equal(api.quantas('atualizar'), 2, 'nada foi enviado');
+  await clicar(s, botao(s, 'Cancelar', gaveta(s)));
+  if (confirmacao(s)) await clicar(s, botao(s, 'Descartar alterações', confirmacao(s)));
+
+  // serviço LEGADO sem modalidade: editar só o nome/preço não obriga a escolher (e nada é enviado sobre modalidades)
+  await clicar(s, acao(s, 'service:3', 'edit'));
+  assert.match(gaveta(s).textContent, /ainda não tem as formas de pagamento informadas/);
+  assert.deepEqual(['permitePagamentoUnico', 'permitePagamentoRecorrente'].map((n) => campo(s, n).checked), [false, false], 'nada é inferido');
+  digitar(s, campo(s, 'precoReferencia'), '10');
+  await salvar(s);
+  assert.deepEqual(api.chamadas.filter(([n]) => n === 'atualizar')[2].slice(2), ['service:3', { precoReferencia: 10 }]);
 
   // em uso: o nome trava; o resto continua editável. A contagem demora, e a pessoa já digitou no nome antes de ela chegar.
   const pausaUso = api.pausar('obter');
@@ -393,7 +437,7 @@ test('[CATSCR-9] EDITAR limpando campos envia null só deles; trocar para pagame
   assert.equal(campo(s, 'nome').value, 'Gestão de redes', 'o texto digitado antes da resposta é devolvido ao nome real');
   digitar(s, campo(s, 'descricao'), 'Nova descrição');
   await salvar(s);
-  assert.deepEqual(api.chamadas.filter(([n]) => n === 'atualizar')[2].slice(2), ['service:1', { descricao: 'Nova descrição' }], 'o nome não vai no corpo');
+  assert.deepEqual(api.chamadas.filter(([n]) => n === 'atualizar')[3].slice(2), ['service:1', { descricao: 'Nova descrição' }], 'o nome não vai no corpo');
 
   // e se mesmo assim o servidor recusar a troca (informação defasada), a recusa aparece no campo
   const outra = apiFalsa({ servicos: TRES() });

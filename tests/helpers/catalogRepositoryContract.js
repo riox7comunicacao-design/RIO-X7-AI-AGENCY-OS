@@ -13,7 +13,8 @@ const { CATALOG_KEYS } = require('../../src/crm/catalogConstants');
 
 const PREFIX = Object.freeze({ servicos: 'service', nichos: 'niche', origens: 'origin' });
 const SPECIFIC_DEFAULTS = Object.freeze({
-  servicos: Object.freeze({ categoria: null, precoReferencia: null, tipoCobranca: null, recorrencia: null }),
+  // Fase C1: as modalidades são gravadas; tipoCobranca/recorrencia são LEGADO (lidos como null num item novo)
+  servicos: Object.freeze({ categoria: null, precoReferencia: null, permitePagamentoUnico: false, permitePagamentoRecorrente: false, periodicidades: [], tipoCobranca: null, recorrencia: null }),
   nichos: Object.freeze({ cor: null }),
   origens: Object.freeze({ canal: null }),
 });
@@ -80,7 +81,7 @@ function runCatalogRepositoryContract(rotulo, fabrica) {
   test(nome(2, 'insert devolve o item gravado (todos os campos, inclusive os específicos de cada catálogo) e list/getById o devolvem igual, com datas ISO'), async (t) => {
     const repo = await fabrica(t);
     const casos = {
-      servicos: makeItem('servicos', 1, { nome: 'Site institucional', descricao: 'Site de 5 páginas', categoria: 'Presença digital', precoReferencia: 1500.5, tipoCobranca: 'RECORRENTE', recorrencia: 'MENSAL' }),
+      servicos: makeItem('servicos', 1, { nome: 'Site institucional', descricao: 'Site de 5 páginas', categoria: 'Presença digital', precoReferencia: 1500.5, permitePagamentoUnico: true, permitePagamentoRecorrente: true, periodicidades: ['MENSAL', 'TRIMESTRAL'] }),
       nichos: makeItem('nichos', 1, { nome: 'Estética', cor: 'azul' }),
       origens: makeItem('origens', 1, { nome: 'Indicação', canal: 'INDICACAO' }),
     };
@@ -101,6 +102,7 @@ function runCatalogRepositoryContract(rotulo, fabrica) {
     await repo.insert('servicos', makeItem('servicos', 1, { nome: 'Sem extras' }));
     const [lido] = await repo.list('servicos');
     for (const campo of ['descricao', 'categoria', 'precoReferencia', 'tipoCobranca', 'recorrencia']) assert.equal(lido[campo], null, campo);
+    assert.deepEqual([lido.permitePagamentoUnico, lido.permitePagamentoRecorrente, lido.periodicidades], [false, false, []], 'sem modalidade informada: falso, falso, lista vazia (nada é inferido)');
     await repo.insert('servicos', makeItem('servicos', 2, { nome: 'Com preço', precoReferencia: 99.9 }));
     assert.equal(typeof (await repo.getById('servicos', makeItem('servicos', 2).id)).precoReferencia, 'number');
   });
@@ -222,6 +224,48 @@ function runCatalogRepositoryContract(rotulo, fabrica) {
     const [novamente] = await repo.list('nichos');
     assert.equal(novamente.nome, 'Original');
     assert.equal(novamente.ativo, true);
+  });
+
+  // ---- Fase C1: modalidades de pagamento dos serviços -------------------------------------------------------------------------
+  test(nome(14, 'MODALIDADES: único somente, recorrente somente (uma ou várias periodicidades) e as DUAS juntas são gravados e lidos de volta idênticos; a lista de periodicidades devolvida é uma CÓPIA'), async (t) => {
+    const repo = await fabrica(t);
+    const casos = [
+      { permitePagamentoUnico: true, permitePagamentoRecorrente: false, periodicidades: [] },
+      { permitePagamentoUnico: false, permitePagamentoRecorrente: true, periodicidades: ['MENSAL'] },
+      { permitePagamentoUnico: false, permitePagamentoRecorrente: true, periodicidades: ['MENSAL', 'TRIMESTRAL', 'SEMESTRAL', 'ANUAL'] },
+      { permitePagamentoUnico: true, permitePagamentoRecorrente: true, periodicidades: ['TRIMESTRAL', 'ANUAL'] },
+    ];
+    for (const [indice, modalidades] of casos.entries()) {
+      const item = makeItem('servicos', indice + 1, { nome: `Serviço ${indice + 1}`, ...modalidades });
+      assert.deepEqual(await repo.insert('servicos', item), item);
+      assert.deepEqual(await repo.getById('servicos', item.id), item);
+    }
+    const lista = await repo.list('servicos');
+    assert.deepEqual(lista.map((i) => [i.permitePagamentoUnico, i.permitePagamentoRecorrente, i.periodicidades]), casos.map((c) => [c.permitePagamentoUnico, c.permitePagamentoRecorrente, c.periodicidades]));
+    lista[3].periodicidades.push('MENSAL');
+    assert.deepEqual((await repo.getById('servicos', lista[3].id)).periodicidades, ['TRIMESTRAL', 'ANUAL'], 'alterar a lista devolvida nunca altera o armazenado');
+  });
+
+  test(nome(15, 'MODALIDADES: um update parcial SÓ toca o que foi enviado — enviar o nome ou o preço nunca apaga as modalidades; enviar as modalidades nunca apaga o resto'), async (t) => {
+    const repo = await fabrica(t);
+    const item = await repo.insert('servicos', makeItem('servicos', 1, { nome: 'Assessoria', precoReferencia: 900, permitePagamentoUnico: true, permitePagamentoRecorrente: true, periodicidades: ['MENSAL'] }));
+    const renomeado = await repo.update('servicos', item.id, { nome: 'Assessoria Comercial', nomeNormalizado: 'assessoria comercial' });
+    assert.deepEqual([renomeado.permitePagamentoUnico, renomeado.permitePagamentoRecorrente, renomeado.periodicidades, renomeado.precoReferencia], [true, true, ['MENSAL'], 900]);
+    const trocado = await repo.update('servicos', item.id, { periodicidades: ['MENSAL', 'SEMESTRAL'] });
+    assert.deepEqual([trocado.permitePagamentoUnico, trocado.permitePagamentoRecorrente, trocado.periodicidades, trocado.nome, trocado.precoReferencia], [true, true, ['MENSAL', 'SEMESTRAL'], 'Assessoria Comercial', 900]);
+    const soUnico = await repo.update('servicos', item.id, { permitePagamentoRecorrente: false, periodicidades: [] });
+    assert.deepEqual([soUnico.permitePagamentoUnico, soUnico.permitePagamentoRecorrente, soUnico.periodicidades], [true, false, []]);
+    assert.deepEqual(await repo.getById('servicos', item.id), soUnico);
+  });
+
+  test(nome(16, 'LEGADO: tipoCobranca e recorrencia NUNCA são gravados — um update que os envie é um erro de programação (sem código) e nada muda; um item novo os devolve nulos'), async (t) => {
+    const repo = await fabrica(t);
+    const item = await repo.insert('servicos', makeItem('servicos', 1, { nome: 'Site', permitePagamentoUnico: true }));
+    assert.deepEqual([item.tipoCobranca, item.recorrencia], [null, null]);
+    for (const patch of [{ tipoCobranca: 'RECORRENTE' }, { recorrencia: 'MENSAL' }, { tipoCobranca: null, permitePagamentoUnico: true }]) {
+      await failsWithoutCode(async () => repo.update('servicos', item.id, patch), `legado: ${JSON.stringify(patch)}`);
+    }
+    assert.deepEqual(await repo.getById('servicos', item.id), item, 'nada mudou');
   });
 }
 

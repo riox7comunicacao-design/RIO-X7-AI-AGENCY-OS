@@ -88,8 +88,8 @@ async function semearCatalogos(s) {
   assert.equal((await chamar(s, 'POST', `/api/crm-catalogs/nichos/${encodeURIComponent(academias.id)}/deactivate`, {})).status, 200);
   await criar('origens', { nome: 'Indicação', canal: 'INDICACAO' });
   await criar('origens', { nome: 'Anúncio no Instagram', canal: 'ANUNCIO_PAGO' });
-  await criar('servicos', { nome: 'Gestão de redes sociais', precoReferencia: 1800, tipoCobranca: 'RECORRENTE', recorrencia: 'MENSAL' });
-  await criar('servicos', { nome: 'Criação de site', precoReferencia: 4800, tipoCobranca: 'UNICA' });
+  await criar('servicos', { nome: 'Gestão de redes sociais', precoReferencia: 1800, permitePagamentoUnico: false, permitePagamentoRecorrente: true, periodicidades: ['MENSAL'] });
+  await criar('servicos', { nome: 'Criação de site', precoReferencia: 4800, permitePagamentoUnico: true, permitePagamentoRecorrente: false, periodicidades: [] });
   return { estetica };
 }
 

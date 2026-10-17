@@ -53,7 +53,7 @@ export function catalogItem(catalogo, nome, overrides = {}) {
   catalogSequence += 1;
   const prefix = { servicos: 'service', nichos: 'niche', origens: 'origin' }[catalogo];
   const normalized = String(nome).normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLowerCase().replace(/[^a-z0-9]+/g, ' ').trim();
-  const specific = catalogo === 'servicos' ? { categoria: 'Marketing', precoReferencia: 1999.9, tipoCobranca: 'UNICA', recorrencia: null } : catalogo === 'nichos' ? { cor: 'azul' } : { canal: 'INDICACAO' };
+  const specific = catalogo === 'servicos' ? { categoria: 'Marketing', precoReferencia: 1999.9, permitePagamentoUnico: true, permitePagamentoRecorrente: false, periodicidades: [], tipoCobranca: null, recorrencia: null } : catalogo === 'nichos' ? { cor: 'azul' } : { canal: 'INDICACAO' };
   return {
     id: `${prefix}:00000000-0000-4000-8000-${String(catalogSequence).padStart(12, '0')}`,
     nome,

@@ -24,7 +24,7 @@ import { buildHash, catalogOfRoute } from '../router.mjs';
 import { NAV_LABELS } from '../i18n/pt-BR.mjs';
 import { createUi, createRoutedDrawer, statusBadge, emptyState, skeleton, pageHeader, searchField, selectField } from '../ui/index.mjs';
 import { createCatalogForm } from './catalogForm.mjs';
-import { STATUS_FILTERS, billingLabel, catalogErrorInfo, channelLabel, priceText, recurrenceLabel, visibleCatalogItems, MESSAGES } from '../catalog-model.mjs';
+import { STATUS_FILTERS, catalogErrorInfo, channelLabel, modalitiesSummary, priceText, visibleCatalogItems, MESSAGES } from '../catalog-model.mjs';
 import { colorClassOf, colorNameOf } from '../catalog-colors.mjs';
 
 const NEW_ID = '__novo__'; // o "id" do painel de novo item (um id real nunca é assim: service:<uuid>)
@@ -580,8 +580,8 @@ function createCatalogScreen({ document, catalog, api, ui, bus = null, navigatio
       const parts = [];
       if (textOf(item.categoria) !== '') parts.push(textOf(item.categoria));
       if (typeof item.precoReferencia === 'number') parts.push(`Preço de referência: ${priceText(item.precoReferencia)}`);
-      const billing = billingLabel(item.tipoCobranca);
-      if (billing !== '') parts.push(item.recorrencia ? `${billing} (${recurrenceLabel(item.recorrencia).toLowerCase()})` : billing);
+      // todas as modalidades habilitadas numa só linha (o serviço aparece UMA vez); um serviço antigo, sem nenhuma, mostra o aviso
+      parts.push(modalitiesSummary(item));
       return parts.join(' · ');
     }
     if (catalog === 'origens') return channelLabel(item.canal) || 'Canal não classificado';

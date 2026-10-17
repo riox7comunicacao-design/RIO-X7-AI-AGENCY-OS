@@ -190,6 +190,7 @@ test('[CATSHELL-4] A TELA É GUARDADA: busca e catálogo sobrevivem a trocar de 
   t.browser.type(t.browser.by.id(t.browser.root, 'catalog-search-servicos'), '');
   await clicar(t, botao(t, 'Novo Serviço'));
   t.browser.type(t.browser.by.id(t.browser.root, 'catalog-field-nome'), 'Tráfego pago');
+  t.browser.check(t.browser.by.id(t.browser.root, 'catalog-field-permitePagamentoUnico'));
   await clicar(t, botao(t, 'Salvar', gaveta(t)));
   assert.match(principal(t).textContent, /Tráfego pago/);
   assert.match(principal(t).textContent, /Serviço criado\./);

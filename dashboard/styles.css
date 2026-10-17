@@ -942,6 +942,17 @@ table.list.queue .reason-text { max-width: 320px; overflow-wrap: anywhere; displ
 .catalog-form-actions { display: flex; flex-wrap: wrap; justify-content: flex-end; gap: 10px; }
 .field-label { margin: 0; font-weight: 600; }
 .field-label.required::after { content: " *"; color: var(--bad-text); }
+
+/* Serviços — formas de pagamento permitidas (Fase C1): um grupo de caixas de seleção; as periodicidades só aparecem com o pagamento recorrente marcado. */
+.catalog-form .modality-group { display: grid; gap: 8px; margin: 4px 0 0; padding: 0; border: 0; min-width: 0; }
+.catalog-form .modality-group > legend { padding: 0; font-weight: 600; }
+.catalog-form .modality-group > legend.required::after { content: " *"; color: var(--bad-text); }
+.catalog-form .modality-option { display: flex; align-items: flex-start; gap: 8px; }
+.catalog-form .modality-option label { font-weight: 400; overflow-wrap: anywhere; }
+.catalog-form .modality-option input { flex: none; margin-top: 3px; }
+.catalog-form .modality-periodicities { display: grid; gap: 6px; margin: 0 0 0 26px; padding: 0; border: 0; min-width: 0; }
+.catalog-form .modality-periodicities[hidden] { display: none; }
+.catalog-form .modality-periodicities > legend { padding: 0; font-size: 13px; font-weight: 600; }
 /* O seletor das 20 cores: cada opção tem que caber o NOME INTEIRO, em uma linha (nunca partido no meio da palavra). A conta: o nome mais largo ("Esmeralda") mede ~63 px em 13,5 px/600 (medido no
    navegador) e o resto da opção — bordas, margem esquerda, amostra, espaço e a reserva da marca de selecionada — ocupa 66 px; por isso a coluna mínima é de 140 px (74 px de texto, ~18% de folga).
    Se uma fonte mais larga ainda estourar, o nome continua inteiro (white-space: nowrap) e avança sobre a reserva da marca, em vez de quebrar. tests/server/dashboard-catalog-ui-colors.test.js confere os números. */

@@ -5,7 +5,7 @@ const test = require('node:test');
 const assert = require('node:assert/strict');
 
 const H = require('../helpers/catalogHarness');
-const { servico, nicho, apiFalsa, abrir, gaveta, confirmacao, botao, campo, linhas, nomes, acao, avisos, texto, hash, clicar, digitar, salvar, emFoco, erroApi } = H;
+const { servico, nicho, apiFalsa, abrir, gaveta, confirmacao, botao, campo, linhas, nomes, acao, avisos, texto, hash, clicar, digitar, marcar, salvar, emFoco, erroApi } = H;
 
 const mesmo = (a, b, mensagem) => assert.ok(a === b, mensagem || 'deveria ser o mesmo elemento');
 const TRES = () => [servico(1, { nome: 'Gestão de redes', precoReferencia: 1500 }), servico(2, { nome: 'Criação de site' }), servico(3, { nome: 'Consultoria' })];
@@ -20,6 +20,7 @@ const botoesDa = (s, c) => s.browser.by.tag(c, 'button').map((b) => b.textConten
 const abrirNovo = async (s) => clicar(s, botao(s, 'Novo Serviço'));
 const sujar = async (s, valor = 'Rascunho em andamento') => {
   digitar(s, campo(s, 'nome'), valor);
+  marcar(s, 'permitePagamentoUnico'); // um serviço novo precisa de ao menos uma forma de pagamento para poder ser salvo
   await s.browser.flush(2);
 };
 const historico = (s) => s.browser.window.history.length;
@@ -178,8 +179,9 @@ test('[CATPNL-6] ALTERAÇÃO NÃO SALVA + X, clique no fundo e Cancelar: a mesma
     assert.ok(gaveta(s), `${como}: continua aberto`);
     assert.equal(campo(s, 'nome').value, 'Rascunho', como);
   }
-  // Cancelar sem alteração fecha direto
+  // Cancelar sem alteração fecha direto (marcar uma forma de pagamento também é alteração: desmarcar volta ao estado limpo)
   digitar(s, campo(s, 'nome'), '');
+  marcar(s, 'permitePagamentoUnico', false);
   await s.browser.flush(2);
   await clicar(s, botao(s, 'Cancelar', gaveta(s)));
   assert.equal(gaveta(s), null);
@@ -354,6 +356,7 @@ test('[CATPNL-12] SAIR DO MÓDULO: leaveState/confirmLeave (usados pelo menu) di
   // salvando
   const pausa = api.pausar('criar');
   digitar(s, campo(s, 'nome'), 'Em voo');
+  marcar(s, 'permitePagamentoUnico');
   s.browser.click(botao(s, 'Salvar', gaveta(s)));
   await s.browser.flush(4);
   assert.equal(s.view.leaveState(), 'saving');

@@ -68,6 +68,8 @@ const clicar = async (s, el) => {
 const digitar = (s, el, valor) => s.browser.type(el, valor);
 const escolher = (s, el, valor) => s.browser.choose(el, valor);
 const salvar = (s) => clicar(s, botao(s, 'Salvar', gaveta(s)));
+const marcar = (s, nome, marcado = true) => s.browser.check(campo(s, nome), marcado);
+const gravacoes = (s) => s.fetchImpl.calls.filter((c) => c.method === 'POST' && c.path.startsWith('/api/crm-catalogs'));
 // O arquivo é { version, servicos: { <id>: item }, nichos: {...}, origens: {...} }: aqui cada catálogo vira uma lista na ordem de exibição.
 const arquivo = (s) => {
   const bruto = JSON.parse(fs.readFileSync(s.env.crmCatalogFilePath, 'utf8'));
@@ -78,7 +80,7 @@ const respostas = (s) => s.fetchImpl.responses.filter((r) => r.path.startsWith('
 const ultima = (s) => respostas(s).at(-1);
 const semLixo = (s) => assert.doesNotMatch(texto(s), /\bnull\b|\bundefined\b|\[object Object\]|\bNaN\b/);
 
-test('[CATFULL-1] SERVIÇOS de ponta a ponta no servidor real: vazio, recorrência obrigatória (400 real), criar, nome duplicado mesmo com acento/maiúscula (409 real), editar, em uso pelo CRM, desativar, reativar e reordenar — tudo em arquivo temporário', async (t) => {
+test('[CATFULL-1] SERVIÇOS de ponta a ponta no servidor real: vazio, modalidades de pagamento (a tela confere antes, o 400 real confere de novo), criar, nome duplicado mesmo com acento/maiúscula (409 real), editar, em uso pelo CRM, desativar, reativar e reordenar — tudo em arquivo temporário', async (t) => {
   const s = await subir(t, { hash: '#/crm/configuracoes/servicos', sementes: [CLIENTE_DO_CRM] });
   assert.ok(!path.resolve(s.env.crmCatalogFilePath).startsWith(path.resolve(REPO_DATA)), 'o arquivo de teste NÃO é o data/ do projeto');
   assert.ok(path.resolve(s.env.crmCatalogFilePath).startsWith(path.resolve(os.tmpdir())), 'e vive na pasta temporária');
@@ -86,22 +88,37 @@ test('[CATFULL-1] SERVIÇOS de ponta a ponta no servidor real: vazio, recorrênc
   assert.equal(fs.existsSync(s.env.crmCatalogFilePath), false, 'ler não cria o arquivo');
   assert.equal(ultima(s).status, 200);
 
-  // 1) recorrente sem recorrência: o SERVIDOR recusa e a tela mostra junto do campo
+  // 1) sem forma de pagamento, e recorrente sem periodicidade: a TELA recusa antes de enviar (nenhuma requisição de gravação)
   await clicar(s, botao(s, 'Novo Serviço'));
   digitar(s, campo(s, 'nome'), 'Gestão de redes');
-  escolher(s, campo(s, 'tipoCobranca'), 'RECORRENTE');
   digitar(s, campo(s, 'precoReferencia'), '1.500,00');
   await salvar(s);
-  assert.equal(ultima(s).status, 400);
-  assert.equal(JSON.parse(ultima(s).text).error.code, 'CRM_CATALOG_INVALID_INPUT');
-  assert.deepEqual(JSON.parse(ultima(s).text).error.details, [{ path: 'recorrencia', code: 'RECORRENCIA_OBRIGATORIA' }]);
-  assert.equal(erroDe(s, 'recorrencia').textContent, 'Escolha a recorrência: a cobrança é recorrente.');
+  assert.equal(erroDe(s, 'modalidades').textContent, 'Marque pelo menos uma forma de pagamento: único, recorrente ou os dois.');
+  marcar(s, 'permitePagamentoRecorrente');
+  await salvar(s);
+  assert.equal(erroDe(s, 'periodicidades').textContent, 'Escolha ao menos uma periodicidade: o pagamento recorrente está permitido.');
+  assert.equal(gravacoes(s).length, 0, 'nada foi enviado');
   assert.ok(gaveta(s), 'o painel continua aberto com tudo o que foi digitado');
   assert.equal(campo(s, 'nome').value, 'Gestão de redes');
   assert.equal(fs.existsSync(s.env.crmCatalogFilePath), false, 'nada foi gravado');
+  // e o SERVIDOR REAL recusa o mesmo pedido feito direto (a palavra final é dele): 400 com o código e o caminho certos
+  for (const [corpo, details] of [
+    [{ nome: 'Direto 1', permitePagamentoUnico: false, permitePagamentoRecorrente: false, periodicidades: [] }, [{ path: 'modalidades', code: 'MODALIDADE_OBRIGATORIA' }]],
+    [{ nome: 'Direto 2', permitePagamentoUnico: false, permitePagamentoRecorrente: true, periodicidades: [] }, [{ path: 'periodicidades', code: 'PERIODICIDADE_OBRIGATORIA' }]],
+    [{ nome: 'Direto 3', permitePagamentoUnico: true, permitePagamentoRecorrente: false, periodicidades: ['MENSAL'] }, [{ path: 'periodicidades', code: 'PERIODICIDADE_NAO_PERMITIDA' }]],
+    [{ nome: 'Direto 4', permitePagamentoRecorrente: true, periodicidades: ['MENSAL', 'MENSAL'] }, [{ path: 'periodicidades', code: 'PERIODICIDADE_REPETIDA' }]],
+    [{ nome: 'Direto 5', permitePagamentoUnico: true, tipoCobranca: 'UNICA' }, [{ path: 'tipoCobranca', code: 'CAMPO_NAO_EDITAVEL' }]],
+  ]) {
+    const resposta = await s.fetchImpl('/api/crm-catalogs/servicos', { method: 'POST', headers: { Authorization: `Bearer ${s.token}`, 'Content-Type': 'application/json' }, body: JSON.stringify(corpo) });
+    assert.equal(resposta.status, 400, corpo.nome);
+    const erro = (await resposta.json()).error;
+    assert.equal(erro.code, 'CRM_CATALOG_INVALID_INPUT');
+    assert.deepEqual(erro.details, details, corpo.nome);
+  }
+  assert.equal(fs.existsSync(s.env.crmCatalogFilePath), false, 'nada foi gravado');
 
-  // 2) criar de verdade
-  escolher(s, campo(s, 'recorrencia'), 'MENSAL');
+  // 2) criar de verdade: recorrente, mensal
+  marcar(s, 'periodicidades-mensal');
   await salvar(s);
   assert.equal(ultima(s).status, 201);
   assert.equal(gaveta(s), null);
@@ -109,13 +126,15 @@ test('[CATFULL-1] SERVIÇOS de ponta a ponta no servidor real: vazio, recorrênc
   assert.match(texto(s), /Serviço criado\./);
   const gravado = arquivo(s).servicos[0];
   assert.match(gravado.id, /^service:/);
-  assert.deepEqual([gravado.nome, gravado.precoReferencia, gravado.tipoCobranca, gravado.recorrencia, gravado.ativo, gravado.ordem], ['Gestão de redes', 1500, 'RECORRENTE', 'MENSAL', true, 0]);
+  assert.deepEqual([gravado.nome, gravado.precoReferencia, gravado.permitePagamentoUnico, gravado.permitePagamentoRecorrente, gravado.periodicidades, gravado.ativo, gravado.ordem], ['Gestão de redes', 1500, false, true, ['MENSAL'], true, 0]);
+  assert.deepEqual([gravado.tipoCobranca ?? null, gravado.recorrencia ?? null], [null, null], 'um serviço novo nunca grava os campos legados');
   assert.equal(gravado.criadoPorNome, 'Breno Bento', 'quem criou vem do token, não da tela');
-  assert.match(texto(s), /Preço de referência: R\$\s1\.500,00 · Cobrança recorrente \(mensal\)/);
+  assert.match(texto(s), /Preço de referência: R\$\s1\.500,00 · Pagamento recorrente \(mensal\)/);
 
   // 3) nome duplicado: a normalização é do servidor (acento, caixa, espaços)
   await clicar(s, botao(s, 'Novo Serviço'));
   digitar(s, campo(s, 'nome'), '  GESTAO   de REDES ');
+  marcar(s, 'permitePagamentoUnico');
   await salvar(s);
   assert.equal(ultima(s).status, 409);
   assert.equal(erroDe(s, 'nome').textContent, 'Já existe um item com este nome, mesmo desativado. Use outro nome ou reative o item existente.');
@@ -125,8 +144,14 @@ test('[CATFULL-1] SERVIÇOS de ponta a ponta no servidor real: vazio, recorrênc
   assert.equal(ultima(s).status, 201);
   await clicar(s, botao(s, 'Novo Serviço'));
   digitar(s, campo(s, 'nome'), 'Consultoria');
+  marcar(s, 'permitePagamentoUnico');
+  marcar(s, 'permitePagamentoRecorrente');
+  marcar(s, 'periodicidades-mensal');
+  marcar(s, 'periodicidades-semestral');
   await salvar(s);
   assert.deepEqual(nomes(s), ['Gestão de redes', 'Criação de site', 'Consultoria']);
+  assert.match(texto(s), /Pagamento único \+ Pagamento recorrente \(mensal, semestral\)/, 'um serviço com as duas formas aparece UMA vez, com todas as modalidades');
+  assert.deepEqual(arquivo(s).servicos[2].periodicidades, ['MENSAL', 'SEMESTRAL']);
   assert.deepEqual(arquivo(s).servicos.map((i) => i.ordem), [0, 1, 2]);
 
   // 4) editar só o preço
@@ -137,6 +162,15 @@ test('[CATFULL-1] SERVIÇOS de ponta a ponta no servidor real: vazio, recorrênc
   assert.equal(ultima(s).status, 200);
   assert.deepEqual(s.fetchImpl.calls.filter((c) => c.method === 'PATCH').at(-1).body, { precoReferencia: 1800.5 });
   assert.equal(arquivo(s).servicos[0].precoReferencia, 1800.5);
+  assert.deepEqual([arquivo(s).servicos[0].permitePagamentoUnico, arquivo(s).servicos[0].permitePagamentoRecorrente, arquivo(s).servicos[0].periodicidades], [false, true, ['MENSAL']], 'editar o preço não mexe nas modalidades');
+  // acrescentar o pagamento único e uma periodicidade: as três vão juntas, o resto não muda
+  await clicar(s, acao(s, idDe(s, 'Gestão de redes'), 'edit'));
+  marcar(s, 'permitePagamentoUnico');
+  marcar(s, 'periodicidades-anual');
+  await salvar(s);
+  assert.equal(ultima(s).status, 200);
+  assert.deepEqual(s.fetchImpl.calls.filter((c) => c.method === 'PATCH').at(-1).body, { permitePagamentoUnico: true, permitePagamentoRecorrente: true, periodicidades: ['MENSAL', 'ANUAL'] });
+  assert.deepEqual([arquivo(s).servicos[0].precoReferencia, arquivo(s).servicos[0].nome], [1800.5, 'Gestão de redes']);
 
   // 5) em uso pelo CRM legado: o nome trava na tela E o servidor recusa a troca se for pedida direto
   const idSite = idDe(s, 'Criação de site');

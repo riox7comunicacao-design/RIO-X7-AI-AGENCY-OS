@@ -74,7 +74,7 @@ test('[CATSUPA-2] FORMATO DAS REQUISIÇÕES: tabela certa por catálogo, cabeça
 
 test('[CATSUPA-3] INSERT: o corpo usa as colunas em snake_case (inclusive created_at/updated_at e os responsáveis), só com o que o item tem — sem `seq`, sem campos inventados', async () => {
   const { fake, repo } = montar();
-  await repo.insert('servicos', makeItem('servicos', 1, { nome: 'Site', descricao: 'D', categoria: 'Web', precoReferencia: 1500.5, tipoCobranca: 'RECORRENTE', recorrencia: 'MENSAL' }));
+  await repo.insert('servicos', makeItem('servicos', 1, { nome: 'Site', descricao: 'D', categoria: 'Web', precoReferencia: 1500.5, permitePagamentoUnico: true, permitePagamentoRecorrente: true, periodicidades: ['MENSAL', 'TRIMESTRAL'] }));
   const post = fake.calls.find((call) => call.method === 'POST');
   assert.deepEqual(post.body, {
     id: `service:${uuid(1)}`,
@@ -91,9 +91,10 @@ test('[CATSUPA-3] INSERT: o corpo usa as colunas em snake_case (inclusive create
     updated_by_name: 'Admin A',
     categoria: 'Web',
     preco_referencia: 1500.5,
-    tipo_cobranca: 'RECORRENTE',
-    recorrencia: 'MENSAL',
-  });
+    permite_pagamento_unico: true,
+    permite_pagamento_recorrente: true,
+    periodicidades: ['MENSAL', 'TRIMESTRAL'],
+  }); // as colunas LEGADAS (tipo_cobranca, recorrencia) nunca vão no corpo
   await repo.insert('nichos', makeItem('nichos', 1, { nome: 'Estética', cor: 'azul' }));
   assert.equal(fake.calls.filter((call) => call.method === 'POST').at(-1).body.cor, 'azul');
 });
@@ -220,7 +221,12 @@ test('[CATSUPA-8] NORMALIZAÇÃO DAS RESPOSTAS: timestamptz com microssegundos e
   assert.equal(um.precoReferencia, 1500.5);
   assert.equal(um.ordem, 3);
   assert.equal(um.criadoPorNome, null);
+  assert.deepEqual([um.permitePagamentoUnico, um.permitePagamentoRecorrente, um.periodicidades], [false, false, []], 'esquema antigo (sem as colunas novas): nenhuma modalidade — nada é inferido do legado');
   assert.equal(dois.ativo, false, 'só o booleano true é ativo');
+  const suja = createSupabaseCatalogRepository({ url: fake.url, serviceRoleKey: SEGREDO, fetchImpl: async () => ({ ok: true, status: 200, text: async () => JSON.stringify([{ ...linha, permite_pagamento_unico: 'true', permite_pagamento_recorrente: true, periodicidades: ['MENSAL', 7, null, 'ANUAL'] }, { ...linha, id: `service:${uuid(3)}`, periodicidades: 'MENSAL' }]) }) });
+  const [lixo, naoLista] = await suja.list('servicos');
+  assert.deepEqual([lixo.permitePagamentoUnico, lixo.permitePagamentoRecorrente, lixo.periodicidades], [false, true, ['MENSAL', 'ANUAL']], 'só o booleano true vale e só o texto entra na lista');
+  assert.deepEqual(naoLista.periodicidades, [], 'uma coluna que não é lista vira lista vazia');
   assert.equal(dois.precoReferencia, null);
   assert.equal(dois.criadoEm, null, 'uma data ilegível vira null, nunca "Invalid Date"');
   const vazia = createSupabaseCatalogRepository({ url: fake.url, serviceRoleKey: SEGREDO, fetchImpl: async () => ({ ok: true, status: 200, text: async () => 'null' }) });

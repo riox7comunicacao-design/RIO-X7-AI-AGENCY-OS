@@ -6,7 +6,7 @@ const test = require('node:test');
 const assert = require('node:assert/strict');
 
 const constants = require('../../src/crm/catalogConstants');
-const { CATALOG, CATALOG_KEYS, CATALOG_DEFINITIONS, COMMON_ITEM_FIELDS, LIMITS, BILLING_TYPES, RECURRENCES, LEAD_CHANNELS, NICHE_COLORS, NICHE_COLOR_KEYS, CATALOG_ERROR } = constants;
+const { CATALOG, CATALOG_KEYS, CATALOG_DEFINITIONS, COMMON_ITEM_FIELDS, LIMITS, BILLING_TYPES, RECURRENCES, PAYMENT_MODALITY_FIELDS, LEAD_CHANNELS, NICHE_COLORS, NICHE_COLOR_KEYS, CATALOG_ERROR } = constants;
 const { CRM_WRITABLE_FIELDS, CRM_MANAGED_FIELDS } = require('../../src/crm/constants');
 
 // ---- as contas de cor (WCAG 2.x e CIELAB), independentes do código de produção ----------------------------------------------------
@@ -40,12 +40,19 @@ test('[CATCONST-1] os três catálogos: chaves, prefixos de id, tabelas e o camp
     Object.fromEntries(CATALOG_KEYS.map((key) => [key, [CATALOG_DEFINITIONS[key].idPrefix, CATALOG_DEFINITIONS[key].table, CATALOG_DEFINITIONS[key].legacyField]])),
     { servicos: ['service', 'crm_services', 'servicoPotencial'], nichos: ['niche', 'crm_niches', 'nicho'], origens: ['origin', 'crm_lead_origins', 'origem'] }
   );
-  assert.deepEqual(CATALOG_DEFINITIONS.servicos.specificFields, ['categoria', 'precoReferencia', 'tipoCobranca', 'recorrencia']);
+  // Fase C1: as modalidades de pagamento são os campos gravados; tipoCobranca/recorrencia viraram LEGADO (lidos, nunca gravados)
+  assert.deepEqual(CATALOG_DEFINITIONS.servicos.specificFields, ['categoria', 'precoReferencia', 'permitePagamentoUnico', 'permitePagamentoRecorrente', 'periodicidades']);
+  assert.deepEqual(CATALOG_DEFINITIONS.servicos.legacyFields, ['tipoCobranca', 'recorrencia']);
+  assert.deepEqual([...PAYMENT_MODALITY_FIELDS], ['permitePagamentoUnico', 'permitePagamentoRecorrente', 'periodicidades']);
+  assert.equal(CATALOG_DEFINITIONS.servicos.specificFields.some((campo) => CATALOG_DEFINITIONS.servicos.legacyFields.includes(campo)), false, 'um campo legado nunca é gravável');
+  assert.equal(CATALOG_DEFINITIONS.nichos.legacyFields, undefined);
+  assert.equal(CATALOG_DEFINITIONS.origens.legacyFields, undefined);
   assert.deepEqual(CATALOG_DEFINITIONS.nichos.specificFields, ['cor']);
   assert.deepEqual(CATALOG_DEFINITIONS.origens.specificFields, ['canal']);
-  for (const objeto of [CATALOG, CATALOG_KEYS, CATALOG_DEFINITIONS, COMMON_ITEM_FIELDS, LIMITS, BILLING_TYPES, RECURRENCES, LEAD_CHANNELS, NICHE_COLORS, NICHE_COLOR_KEYS, CATALOG_ERROR]) {
+  for (const objeto of [CATALOG, CATALOG_KEYS, CATALOG_DEFINITIONS, COMMON_ITEM_FIELDS, LIMITS, BILLING_TYPES, RECURRENCES, PAYMENT_MODALITY_FIELDS, LEAD_CHANNELS, NICHE_COLORS, NICHE_COLOR_KEYS, CATALOG_ERROR]) {
     assert.equal(Object.isFrozen(objeto), true);
   }
+  assert.equal(Object.isFrozen(CATALOG_DEFINITIONS.servicos.legacyFields), true);
   for (const key of CATALOG_KEYS) {
     assert.equal(Object.isFrozen(CATALOG_DEFINITIONS[key]), true);
     assert.equal(Object.isFrozen(CATALOG_DEFINITIONS[key].specificFields), true);

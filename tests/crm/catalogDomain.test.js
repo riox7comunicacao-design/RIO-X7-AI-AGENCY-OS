@@ -136,13 +136,13 @@ test('[CATDOM-4] campos desconhecidos, de OUTRO catálogo ou que só o domínio 
   assert.equal(({}).ativo, undefined, 'o Object.prototype continua limpo');
 });
 
-test('[CATDOM-5] SERVIÇO: categoria (até 60); preço de referência (número >= 0, até 2 casas, até o teto); tipo de cobrança e recorrência coerentes', () => {
-  const base = { nome: 'Gestão de redes' };
-  const bom = validateCreateInput('servicos', { ...base, categoria: '  Social  media ', precoReferencia: 1500.5, tipoCobranca: 'RECORRENTE', recorrencia: 'MENSAL' });
+test('[CATDOM-5] SERVIÇO: categoria (até 60); preço de referência (número >= 0, até 2 casas, até o teto); modalidades de pagamento coerentes (Fase C1: o mínimo é o nome e UMA modalidade)', () => {
+  const base = { nome: 'Gestão de redes', permitePagamentoUnico: true };
+  const bom = validateCreateInput('servicos', { ...base, categoria: '  Social  media ', precoReferencia: 1500.5, permitePagamentoRecorrente: true, periodicidades: ['TRIMESTRAL', 'MENSAL'] });
   assert.equal(bom.ok, true);
-  assert.deepEqual(bom.value, { nome: 'Gestão de redes', descricao: null, categoria: 'Social media', precoReferencia: 1500.5, tipoCobranca: 'RECORRENTE', recorrencia: 'MENSAL' });
-  // tudo opcional: o mínimo é só o nome
-  assert.deepEqual(validateCreateInput('servicos', base).value, { nome: 'Gestão de redes', descricao: null, categoria: null, precoReferencia: null, tipoCobranca: null, recorrencia: null });
+  assert.deepEqual(bom.value, { nome: 'Gestão de redes', descricao: null, categoria: 'Social media', precoReferencia: 1500.5, permitePagamentoUnico: true, permitePagamentoRecorrente: true, periodicidades: ['MENSAL', 'TRIMESTRAL'] }, 'as periodicidades saem na ordem canônica');
+  // o mínimo de um cadastro novo: o nome e uma modalidade; o resto é opcional e a ausência de uma permissão é "não permitido"
+  assert.deepEqual(validateCreateInput('servicos', base).value, { nome: 'Gestão de redes', descricao: null, categoria: null, precoReferencia: null, permitePagamentoUnico: true, permitePagamentoRecorrente: false, periodicidades: [] });
 
   assert.equal(validateCreateInput('servicos', { ...base, categoria: 'x'.repeat(61) }).errors[0].code, 'MUITO_LONGO');
   const preco = (valor) => validateCreateInput('servicos', { ...base, precoReferencia: valor });
@@ -153,16 +153,21 @@ test('[CATDOM-5] SERVIÇO: categoria (até 60); preço de referência (número >
   for (const [recusado, codigo] of [[-0.01, 'VALOR_FORA_DO_LIMITE'], [1e9 + 0.01, 'VALOR_FORA_DO_LIMITE'], [1e12, 'VALOR_FORA_DO_LIMITE'], [10.005, 'MAIS_DE_DUAS_CASAS'], [1 / 3, 'MAIS_DE_DUAS_CASAS'], ['100', 'TIPO_INVALIDO'], [NaN, 'TIPO_INVALIDO'], [Infinity, 'TIPO_INVALIDO'], [true, 'TIPO_INVALIDO'], [{}, 'TIPO_INVALIDO']]) {
     assert.deepEqual(preco(recusado).errors, [{ path: 'precoReferencia', code: codigo }], String(recusado));
   }
-  // listas fechadas
-  assert.deepEqual(validateCreateInput('servicos', { ...base, tipoCobranca: 'QUINZENAL' }).errors, [{ path: 'tipoCobranca', code: 'VALOR_INVALIDO' }]);
-  assert.deepEqual(validateCreateInput('servicos', { ...base, tipoCobranca: 'unica' }).errors, [{ path: 'tipoCobranca', code: 'VALOR_INVALIDO' }], 'é sensível à caixa: é um código');
-  assert.deepEqual(validateCreateInput('servicos', { ...base, tipoCobranca: 5 }).errors, [{ path: 'tipoCobranca', code: 'TIPO_INVALIDO' }]);
-  // coerência: RECORRENTE exige recorrência; UNICA (ou sem tipo) não pode ter
-  assert.deepEqual(validateCreateInput('servicos', { ...base, tipoCobranca: 'RECORRENTE' }).errors, [{ path: 'recorrencia', code: 'RECORRENCIA_OBRIGATORIA' }]);
-  assert.deepEqual(validateCreateInput('servicos', { ...base, tipoCobranca: 'UNICA', recorrencia: 'MENSAL' }).errors, [{ path: 'recorrencia', code: 'RECORRENCIA_NAO_PERMITIDA' }]);
-  assert.deepEqual(validateCreateInput('servicos', { ...base, recorrencia: 'ANUAL' }).errors, [{ path: 'recorrencia', code: 'RECORRENCIA_NAO_PERMITIDA' }]);
-  assert.equal(validateCreateInput('servicos', { ...base, tipoCobranca: 'UNICA' }).ok, true);
-  for (const recorrencia of ['MENSAL', 'TRIMESTRAL', 'SEMESTRAL', 'ANUAL']) assert.equal(validateCreateInput('servicos', { ...base, tipoCobranca: 'RECORRENTE', recorrencia }).ok, true, recorrencia);
+  // listas fechadas e tipos
+  assert.deepEqual(validateCreateInput('servicos', { ...base, permitePagamentoRecorrente: true, periodicidades: ['QUINZENAL'] }).errors, [{ path: 'periodicidades', code: 'VALOR_INVALIDO' }]);
+  assert.deepEqual(validateCreateInput('servicos', { ...base, permitePagamentoRecorrente: true, periodicidades: ['mensal'] }).errors, [{ path: 'periodicidades', code: 'VALOR_INVALIDO' }], 'é sensível à caixa: é um código');
+  assert.deepEqual(validateCreateInput('servicos', { ...base, periodicidades: 'MENSAL' }).errors, [{ path: 'periodicidades', code: 'TIPO_INVALIDO' }]);
+  assert.deepEqual(validateCreateInput('servicos', { ...base, permitePagamentoUnico: 'sim' }).errors, [{ path: 'permitePagamentoUnico', code: 'TIPO_INVALIDO' }]);
+  assert.deepEqual(validateCreateInput('servicos', { ...base, permitePagamentoRecorrente: null }).errors, [{ path: 'permitePagamentoRecorrente', code: 'TIPO_INVALIDO' }], 'null não vira false em silêncio');
+  // os campos LEGADOS não são mais graváveis: uma aba antiga que os envie recebe um erro claro, nunca grava uma modalidade divergente
+  assert.deepEqual(validateCreateInput('servicos', { ...base, tipoCobranca: 'UNICA' }).errors, [{ path: 'tipoCobranca', code: 'CAMPO_NAO_EDITAVEL' }]);
+  assert.deepEqual(validateCreateInput('servicos', { ...base, recorrencia: 'MENSAL' }).errors, [{ path: 'recorrencia', code: 'CAMPO_NAO_EDITAVEL' }]);
+  // coerência: recorrente exige periodicidade; sem recorrente não pode haver periodicidade; cadastro novo exige uma modalidade
+  assert.deepEqual(validateCreateInput('servicos', { ...base, permitePagamentoRecorrente: true }).errors, [{ path: 'periodicidades', code: 'PERIODICIDADE_OBRIGATORIA' }]);
+  assert.deepEqual(validateCreateInput('servicos', { ...base, periodicidades: ['MENSAL'] }).errors, [{ path: 'periodicidades', code: 'PERIODICIDADE_NAO_PERMITIDA' }]);
+  assert.deepEqual(validateCreateInput('servicos', { nome: 'X' }).errors, [{ path: 'modalidades', code: 'MODALIDADE_OBRIGATORIA' }]);
+  assert.deepEqual(validateCreateInput('servicos', { nome: 'X', permitePagamentoUnico: false, permitePagamentoRecorrente: false }).errors, [{ path: 'modalidades', code: 'MODALIDADE_OBRIGATORIA' }]);
+  for (const periodicidade of ['MENSAL', 'TRIMESTRAL', 'SEMESTRAL', 'ANUAL']) assert.equal(validateCreateInput('servicos', { nome: 'X', permitePagamentoRecorrente: true, periodicidades: [periodicidade] }).ok, true, periodicidade);
 });
 
 test('[CATDOM-6] NICHO: a cor é uma das 20 chaves da paleta (ou ausente); um valor de cor (hex, nome em maiúsculas, classe de CSS) é recusado — o que se guarda é só a CHAVE', () => {
@@ -219,12 +224,14 @@ test('[CATDOM-9] createItem: id ESTÁVEL por catálogo (prefixo + UUID), ativo, 
   assert.equal(b.criadoPorNome, 'Outro Admin');
   assert.deepEqual(entrada, { nome: '  Estética ', descricao: 'Clínicas', cor: 'azul' }, 'a entrada não foi tocada');
 
-  const s = await domain.createItem(repo, 'servicos', { nome: 'Site' }, OP);
+  const s = await domain.createItem(repo, 'servicos', { nome: 'Site', permitePagamentoUnico: true }, OP);
   const o = await domain.createItem(repo, 'origens', { nome: 'Indicação' }, OP);
   assert.match(s.id, /^service:/);
   assert.match(o.id, /^origin:/);
   assert.equal(s.ordem, 0, 'cada catálogo conta a sua ordem');
-  for (const campo of ['categoria', 'precoReferencia', 'tipoCobranca', 'recorrencia']) assert.equal(s[campo], null, campo);
+  for (const campo of ['categoria', 'precoReferencia']) assert.equal(s[campo], null, campo);
+  assert.deepEqual([s.permitePagamentoUnico, s.permitePagamentoRecorrente, s.periodicidades], [true, false, []]);
+  for (const campo of ['tipoCobranca', 'recorrencia']) assert.equal(campo in s, false, `${campo} (legado) nunca é gravado por um cadastro novo`);
   assert.equal(o.canal, null);
   // o id NÃO depende do nome
   const x = await domain.createItem(repo, 'nichos', { nome: 'Nome Qualquer' }, OP);
@@ -261,7 +268,7 @@ test('[CATDOM-11] UNICIDADE: o mesmo nome normalizado não se repete no catálog
   await domain.setItemActive(repo, 'nichos', base.id, false, OP);
   assert.equal((await erroDe(() => domain.createItem(repo, 'nichos', { nome: 'estetica' }, OP))).code, CATALOG_ERROR.DUPLICATE_NAME);
   // outro catálogo: pode
-  await domain.createItem(repo, 'servicos', { nome: 'Estética' }, OP);
+  await domain.createItem(repo, 'servicos', { nome: 'Estética', permitePagamentoUnico: true }, OP);
   await domain.createItem(repo, 'origens', { nome: 'Estética' }, OP);
 });
 
@@ -314,14 +321,14 @@ test('[CATDOM-13b] a regra de unicidade é do PRÓPRIO domínio (não só do arm
 // ---------------------------------------------------------------------------------------------------------------------------------
 test('[CATDOM-14] updateItem é PARCIAL e seguro: só os campos enviados mudam; o responsável e a data de atualização mudam; id, criação, ativo e ordem nunca', async () => {
   const repo = createInMemoryCatalogRepository();
-  const original = await domain.createItem(repo, 'servicos', { nome: 'Site', descricao: 'Antiga', categoria: 'Web', precoReferencia: 1000, tipoCobranca: 'UNICA' }, OP, clockAt(T0));
+  const original = await domain.createItem(repo, 'servicos', { nome: 'Site', descricao: 'Antiga', categoria: 'Web', precoReferencia: 1000, permitePagamentoUnico: true }, OP, clockAt(T0));
   const editado = await domain.updateItem(repo, 'servicos', original.id, { descricao: '  Nova  ', precoReferencia: 1200.5 }, OP2, clockAt(T1));
   assert.equal(editado.descricao, 'Nova');
   assert.equal(editado.precoReferencia, 1200.5);
   assert.equal(editado.atualizadoEm, T1.toISOString());
   assert.equal(editado.atualizadoPorUserId, 'user-outro');
   assert.equal(editado.atualizadoPorNome, 'Outro Admin');
-  for (const campo of ['id', 'nome', 'nomeNormalizado', 'categoria', 'tipoCobranca', 'recorrencia', 'ativo', 'ordem', 'criadoEm', 'criadoPorUserId', 'criadoPorNome']) {
+  for (const campo of ['id', 'nome', 'nomeNormalizado', 'categoria', 'permitePagamentoUnico', 'permitePagamentoRecorrente', 'periodicidades', 'ativo', 'ordem', 'criadoEm', 'criadoPorUserId', 'criadoPorNome']) {
     assert.deepEqual(editado[campo], original[campo], `${campo} não mudou`);
   }
   // limpar um campo opcional é explícito: null (ou vazio)
@@ -393,24 +400,46 @@ test('[CATDOM-17] TRAVA DE RENOMEAÇÃO (decisão D3): com nameLocked, mudar o n
   assert.equal(aberto.nome, 'Beleza');
 });
 
-test('[CATDOM-18] COBRANÇA na edição de serviços: a coerência vale para o estado RESULTANTE — nada apaga a recorrência em silêncio', async () => {
+test('[CATDOM-18] MODALIDADES na edição de serviços: a coerência vale para o estado RESULTANTE — nada apaga modalidades em silêncio (o que não foi enviado é preservado)', async () => {
   const repo = createInMemoryCatalogRepository();
-  const s = await domain.createItem(repo, 'servicos', { nome: 'Tráfego', tipoCobranca: 'RECORRENTE', recorrencia: 'MENSAL' }, OP);
+  const s = await domain.createItem(repo, 'servicos', { nome: 'Tráfego', permitePagamentoRecorrente: true, periodicidades: ['MENSAL'] }, OP);
   const falha = async (patch) => errorsOf(await erroDe(() => domain.updateItem(repo, 'servicos', s.id, patch, OP)));
-  assert.deepEqual(await falha({ tipoCobranca: 'UNICA' }), [{ path: 'recorrencia', code: 'RECORRENCIA_NAO_PERMITIDA' }], 'virar única sem limpar a recorrência');
-  assert.deepEqual(await falha({ recorrencia: null }), [{ path: 'recorrencia', code: 'RECORRENCIA_OBRIGATORIA' }], 'limpar a recorrência de um recorrente');
-  assert.deepEqual(await falha({ tipoCobranca: null }), [{ path: 'recorrencia', code: 'RECORRENCIA_NAO_PERMITIDA' }]);
-  const unica = await domain.updateItem(repo, 'servicos', s.id, { tipoCobranca: 'UNICA', recorrencia: null }, OP);
-  assert.equal(unica.tipoCobranca, 'UNICA');
-  assert.equal(unica.recorrencia, null);
-  assert.deepEqual(await falha({ tipoCobranca: 'RECORRENTE' }), [{ path: 'recorrencia', code: 'RECORRENCIA_OBRIGATORIA' }]);
-  const anual = await domain.updateItem(repo, 'servicos', s.id, { tipoCobranca: 'RECORRENTE', recorrencia: 'ANUAL' }, OP);
-  assert.equal(anual.recorrencia, 'ANUAL');
-  const trocada = await domain.updateItem(repo, 'servicos', s.id, { recorrencia: 'SEMESTRAL' }, OP);
-  assert.equal(trocada.recorrencia, 'SEMESTRAL', 'trocar só a recorrência de um recorrente é válido');
+  // desligar o recorrente sem limpar as periodicidades NÃO apaga nada em silêncio: é recusado (e, sendo a única modalidade, também a deixaria sem nenhuma)
+  assert.deepEqual(await falha({ permitePagamentoRecorrente: false }), [{ path: 'periodicidades', code: 'PERIODICIDADE_NAO_PERMITIDA' }, { path: 'modalidades', code: 'MODALIDADE_OBRIGATORIA' }]);
+  assert.deepEqual(await falha({ periodicidades: [] }), [{ path: 'periodicidades', code: 'PERIODICIDADE_OBRIGATORIA' }], 'esvaziar as periodicidades de um recorrente');
+  assert.deepEqual(await falha({ permitePagamentoRecorrente: false, periodicidades: [] }), [{ path: 'modalidades', code: 'MODALIDADE_OBRIGATORIA' }], 'nunca se remove a última modalidade');
+  // acrescentar o pagamento único NÃO mexe nas periodicidades (não foram enviadas) — o serviço passa a ter as duas modalidades
+  const ambos = await domain.updateItem(repo, 'servicos', s.id, { permitePagamentoUnico: true }, OP);
+  assert.deepEqual([ambos.permitePagamentoUnico, ambos.permitePagamentoRecorrente, ambos.periodicidades], [true, true, ['MENSAL']]);
+  // trocar o nome ou o preço nunca toca nas modalidades
+  const renomeado = await domain.updateItem(repo, 'servicos', s.id, { nome: 'Tráfego pago', precoReferencia: 900 }, OP);
+  assert.deepEqual([renomeado.permitePagamentoUnico, renomeado.permitePagamentoRecorrente, renomeado.periodicidades], [true, true, ['MENSAL']]);
+  // várias periodicidades (a ordem canônica) e, com as duas modalidades, dá para tirar só uma delas
+  const varias = await domain.updateItem(repo, 'servicos', s.id, { periodicidades: ['ANUAL', 'MENSAL', 'SEMESTRAL'] }, OP);
+  assert.deepEqual(varias.periodicidades, ['MENSAL', 'SEMESTRAL', 'ANUAL']);
+  assert.deepEqual((await repo.getById('servicos', s.id)).periodicidades, ['MENSAL', 'SEMESTRAL', 'ANUAL'], 'o que fica ARMAZENADO já está na ordem canônica, não só o que é devolvido');
+  const criadoEmDesordem = await domain.createItem(repo, 'servicos', { nome: 'Desordem', permitePagamentoRecorrente: true, periodicidades: ['ANUAL', 'MENSAL'] }, OP);
+  assert.deepEqual((await repo.getById('servicos', criadoEmDesordem.id)).periodicidades, ['MENSAL', 'ANUAL'], 'o cadastro novo também grava na ordem canônica');
+  const soUnico = await domain.updateItem(repo, 'servicos', s.id, { permitePagamentoRecorrente: false, periodicidades: [] }, OP);
+  assert.deepEqual([soUnico.permitePagamentoUnico, soUnico.permitePagamentoRecorrente, soUnico.periodicidades], [true, false, []]);
+  assert.deepEqual(await falha({ permitePagamentoUnico: false }), [{ path: 'modalidades', code: 'MODALIDADE_OBRIGATORIA' }], 'o único que sobrou não pode ser removido');
+  // um patch com as MESMAS periodicidades (até em outra ordem) não é mudança: nada é gravado e a data de atualização não se mexe
+  const { repo: espiao, calls } = spyRepository();
+  const e = await domain.createItem(espiao, 'servicos', { nome: 'Espiado', permitePagamentoUnico: true, permitePagamentoRecorrente: true, periodicidades: ['MENSAL', 'ANUAL'] }, OP, clockAt(T0));
+  const gravacoes = calls.update;
+  const igual = await domain.updateItem(espiao, 'servicos', e.id, { periodicidades: ['ANUAL', 'MENSAL'], permitePagamentoUnico: true }, OP2, clockAt(T1));
+  assert.deepEqual(igual, e);
+  assert.equal(calls.update, gravacoes, 'as mesmas periodicidades não gravam');
+  assert.equal(igual.atualizadoEm, T0.toISOString());
+  // editar o NOME de um serviço nunca esbarra nas modalidades que não foram enviadas — mesmo que o armazenado esteja incoerente (uma gravação por fora das regras)
+  const incoerente = await repo.insert('servicos', { id: 'service:00000000-0000-4000-8000-0000000000aa', nome: 'Incoerente', nomeNormalizado: 'incoerente', descricao: null, ativo: true, ordem: 99, categoria: null, precoReferencia: null, permitePagamentoUnico: false, permitePagamentoRecorrente: true, periodicidades: [], criadoEm: T0.toISOString(), atualizadoEm: T0.toISOString(), criadoPorUserId: null, criadoPorNome: null, atualizadoPorUserId: null, atualizadoPorNome: null });
+  const renomeadoIncoerente = await domain.updateItem(repo, 'servicos', incoerente.id, { nome: 'Incoerente renomeado' }, OP);
+  assert.equal(renomeadoIncoerente.nome, 'Incoerente renomeado', 'só a coerência de um patch que TOCA as modalidades é conferida');
+  assert.deepEqual(errorsOf(await erroDe(() => domain.updateItem(repo, 'servicos', incoerente.id, { permitePagamentoUnico: true }, OP))), [{ path: 'periodicidades', code: 'PERIODICIDADE_OBRIGATORIA' }], 'mas ao tocar nelas, o estado resultante tem de ser coerente');
   // validatePatch é puro: não altera o item atual que recebe
-  const atual = Object.freeze({ tipoCobranca: 'RECORRENTE', recorrencia: 'MENSAL' });
-  assert.equal(validatePatch('servicos', { recorrencia: 'ANUAL' }, atual).ok, true);
+  const atual = Object.freeze({ permitePagamentoUnico: true, permitePagamentoRecorrente: true, periodicidades: Object.freeze(['MENSAL']) });
+  assert.equal(validatePatch('servicos', { periodicidades: ['ANUAL'] }, atual).ok, true);
+  assert.deepEqual([...atual.periodicidades], ['MENSAL']);
 });
 
 // ---------------------------------------------------------------------------------------------------------------------------------
@@ -491,7 +520,7 @@ test('[CATDOM-22] reordenar na mesma ordem não grava; o desempate de listagem �
 
 test('[CATDOM-23] leitura: getItem devolve o item ou null; um id mal formado é erro de entrada; listItems filtra os ativos; um catálogo desconhecido é erro de entrada', async () => {
   const repo = createInMemoryCatalogRepository();
-  const item = await domain.createItem(repo, 'servicos', { nome: 'Site' }, OP);
+  const item = await domain.createItem(repo, 'servicos', { nome: 'Site', permitePagamentoUnico: true }, OP);
   assert.deepEqual(await domain.getItem(repo, 'servicos', item.id), item);
   assert.equal(await domain.getItem(repo, 'servicos', 'service:00000000-0000-4000-8000-000000000999'), null);
   assert.equal(await domain.getItem(repo, 'nichos', item.id), null, 'o id de um catálogo não existe em outro');

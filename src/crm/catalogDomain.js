@@ -15,7 +15,10 @@
 //     `origem` e `servicoPotencial` do registro guardam o NOME como texto, e renomear soltaria esses registros do item. É uma restrição
 //     TEMPORÁRIA desta fase (decisão D3): quando Clientes e Negociações referenciarem o catálogo por identificador, o nome poderá
 //     mudar livremente;
-//   - O PREÇO DE REFERÊNCIA (serviços) é só informativo: nenhuma função daqui nem de outro módulo o copia para o valor de uma proposta.
+//   - O PREÇO DE REFERÊNCIA (serviços) é só informativo: nenhuma função daqui nem de outro módulo o copia para o valor de uma proposta;
+//   - MODALIDADES DE PAGAMENTO (serviços, Fase C1): permitePagamentoUnico, permitePagamentoRecorrente e periodicidades — as duas modalidades podem
+//     valer JUNTAS. Cadastro NOVO exige ao menos uma; serviço LEGADO pode ficar sem nenhuma (nunca inferida) até o ADMIN completar; uma edição
+//     parcial nunca apaga o que não enviou, e nenhuma edição pode deixar um serviço que tinha modalidades sem nenhuma.
 //
 // CONCORRÊNCIA: as ESCRITAS de um mesmo repositório rodam UMA POR VEZ dentro do processo (como em crmDomain.js — decisão 0023). A
 // proteção entre processos é do armazenamento: no Postgres, um índice ÚNICO em `nome_normalizado` por tabela.
@@ -23,7 +26,7 @@
 const crypto = require('node:crypto');
 
 const { assertValidCatalogRepository, CATALOG_REPOSITORY_ERROR } = require('./catalogRepositoryPort');
-const { CATALOG, CATALOG_DEFINITIONS, LIMITS, BILLING_TYPES, RECURRENCES, LEAD_CHANNELS, NICHE_COLOR_KEYS, CATALOG_ERROR } = require('./catalogConstants');
+const { CATALOG, CATALOG_DEFINITIONS, LIMITS, RECURRENCES, PAYMENT_MODALITY_FIELDS, LEAD_CHANNELS, NICHE_COLOR_KEYS, CATALOG_ERROR } = require('./catalogConstants');
 
 class CatalogError extends Error {
   constructor(code, message, details) {
@@ -66,7 +69,9 @@ const FORBIDDEN_CHARACTERS = /[\p{Cc}\p{Cf}\p{Cs}\p{Co}\p{Cn}]/u;
 const lengthOf = (text) => Array.from(text).length;
 
 // Campos que o chamador NUNCA envia (o domínio os define) — recusados com um código próprio, para a mensagem ser clara.
-const NON_EDITABLE_FIELDS = Object.freeze(['id', 'nomeNormalizado', 'ativo', 'ordem', 'criadoEm', 'atualizadoEm', 'criadoPorUserId', 'criadoPorNome', 'atualizadoPorUserId', 'atualizadoPorNome']);
+// Inclui os campos LEGADOS dos serviços (tipoCobranca, recorrencia): só leitura desde a Fase C1 — uma aba antiga do Dashboard que os envie recebe
+// CAMPO_NAO_EDITAVEL (falha fechada) em vez de gravar uma modalidade que diverge das novas.
+const NON_EDITABLE_FIELDS = Object.freeze(['id', 'nomeNormalizado', 'ativo', 'ordem', 'criadoEm', 'atualizadoEm', 'criadoPorUserId', 'criadoPorNome', 'atualizadoPorUserId', 'atualizadoPorNome', 'tipoCobranca', 'recorrencia']);
 const SAFE_PATH = /^[A-Za-z0-9_]{1,40}$/;
 
 function checkText(value, { max, multiline = false }) {
@@ -108,13 +113,29 @@ function checkPrice(value) {
   return { ok: true, value: cents / 100 + 0 };
 }
 
+// Uma permissão: só true ou false. null e a ausência NÃO viram false em silêncio (a ausência é tratada por quem chama; null é um tipo inválido).
+function checkBoolean(value) {
+  return typeof value === 'boolean' ? { ok: true, value } : { ok: false, code: 'TIPO_INVALIDO' };
+}
+
+// As periodicidades: uma lista de valores de RECURRENCES, SEM repetição; devolve na ORDEM CANÔNICA (mensal, trimestral, semestral, anual), então
+// duas listas com os mesmos itens são iguais. Uma lista vazia é válida aqui (quem exige não vazia é a coerência com a permissão recorrente).
+function checkPeriodicities(value) {
+  if (!Array.isArray(value)) return { ok: false, code: 'TIPO_INVALIDO' };
+  if (value.length > RECURRENCES.length * 4) return { ok: false, code: 'VALOR_INVALIDO' };
+  if (value.some((entry) => typeof entry !== 'string' || !RECURRENCES.includes(entry))) return { ok: false, code: 'VALOR_INVALIDO' };
+  if (new Set(value).size !== value.length) return { ok: false, code: 'PERIODICIDADE_REPETIDA' };
+  return { ok: true, value: RECURRENCES.filter((entry) => value.includes(entry)) };
+}
+
 const FIELD_CHECKS = Object.freeze({
   nome: checkName,
   descricao: (value) => checkText(value, { max: LIMITS.DESCRICAO, multiline: true }),
   categoria: (value) => checkText(value, { max: LIMITS.CATEGORIA }),
   precoReferencia: checkPrice,
-  tipoCobranca: (value) => checkEnum(value, BILLING_TYPES),
-  recorrencia: (value) => checkEnum(value, RECURRENCES),
+  permitePagamentoUnico: checkBoolean,
+  permitePagamentoRecorrente: checkBoolean,
+  periodicidades: checkPeriodicities,
   cor: (value) => checkEnum(value, NICHE_COLOR_KEYS),
   canal: (value) => checkEnum(value, LEAD_CHANNELS),
 });
@@ -148,13 +169,33 @@ function readFields(definition, input, { requireName }) {
   return { value, errors };
 }
 
-// Coerência de cobrança dos SERVIÇOS: RECORRENTE exige uma recorrência; UNICA (ou sem tipo) não pode ter uma.
-function billingErrors(state) {
-  const recurrent = state.tipoCobranca === 'RECORRENTE';
-  const hasRecurrence = state.recorrencia !== null && state.recorrencia !== undefined;
-  if (recurrent && !hasRecurrence) return [{ path: 'recorrencia', code: 'RECORRENCIA_OBRIGATORIA' }];
-  if (!recurrent && hasRecurrence) return [{ path: 'recorrencia', code: 'RECORRENCIA_NAO_PERMITIDA' }];
-  return [];
+// O estado das MODALIDADES de um serviço, com os padrões de um item que ainda não as tem (um serviço LEGADO): nenhuma modalidade, lista vazia.
+function modalitiesOf(source) {
+  const item = isPlainObject(source) ? source : {};
+  const periodicities = Array.isArray(item.periodicidades) ? RECURRENCES.filter((entry) => item.periodicidades.includes(entry)) : [];
+  return { permitePagamentoUnico: item.permitePagamentoUnico === true, permitePagamentoRecorrente: item.permitePagamentoRecorrente === true, periodicidades: periodicities };
+}
+
+// Coerência das modalidades de um SERVIÇO, sobre o estado RESULTANTE:
+//   - recorrente permitido exige ao menos uma periodicidade; recorrente não permitido não pode ter nenhuma;
+//   - `mustHaveOne`: ao menos uma modalidade (cadastro novo; ou uma edição de um serviço que JÁ tinha — nunca se remove a última).
+function modalityErrors(state, { mustHaveOne }) {
+  const errors = [];
+  if (state.permitePagamentoRecorrente && state.periodicidades.length === 0) errors.push({ path: 'periodicidades', code: 'PERIODICIDADE_OBRIGATORIA' });
+  if (!state.permitePagamentoRecorrente && state.periodicidades.length > 0) errors.push({ path: 'periodicidades', code: 'PERIODICIDADE_NAO_PERMITIDA' });
+  if (mustHaveOne && !state.permitePagamentoUnico && !state.permitePagamentoRecorrente) errors.push({ path: 'modalidades', code: 'MODALIDADE_OBRIGATORIA' });
+  return errors;
+}
+
+const samePeriodicities = (a, b) => Array.isArray(a) && Array.isArray(b) && a.length === b.length && a.every((entry, index) => entry === b[index]);
+// Um valor igual ao atual não grava nada (as periodicidades se comparam por CONTEÚDO, na ordem canônica).
+const sameFieldValue = (before, after) => (Array.isArray(after) ? samePeriodicities(before, after) : Object.is(before, after));
+
+// Um item que o armazenamento devolveu: um serviço sem as modalidades (LEGADO) ganha os padrões — falso, falso, lista vazia —, sem inferir nada
+// das colunas legadas. As colunas legadas (tipoCobranca, recorrencia) passam intactas, só para leitura.
+function withModalityDefaults(catalog, item) {
+  if (catalog !== CATALOG.SERVICOS) return item;
+  return { ...item, ...modalitiesOf(item) };
 }
 
 // A entrada de CRIAÇÃO: `nome` obrigatório; todo campo opcional ausente vira null. Devolve { ok, value, errors }.
@@ -163,7 +204,12 @@ function validateCreateInput(catalog, input) {
   const { value, errors } = readFields(definition, input, { requireName: true });
   const complete = { nome: value.nome, descricao: value.descricao ?? null };
   for (const field of definition.specificFields) complete[field] = value[field] ?? null;
-  if (errors.length === 0 && definition.key === CATALOG.SERVICOS) errors.push(...billingErrors(complete));
+  if (definition.key === CATALOG.SERVICOS) {
+    // Cadastro NOVO: a ausência de uma permissão é "não permitido" e a de periodicidades é lista vazia (um valor explícito inválido já foi recusado
+    // acima); mas ao menos UMA modalidade é obrigatória.
+    Object.assign(complete, modalitiesOf(value));
+    if (errors.length === 0) errors.push(...modalityErrors(complete, { mustHaveOne: true }));
+  }
   return { ok: errors.length === 0, value: complete, errors };
 }
 
@@ -173,9 +219,12 @@ function validatePatch(catalog, patch, current) {
   const definition = definitionOf(catalog);
   const { value, errors } = readFields(definition, patch, { requireName: false });
   if (errors.length === 0 && Object.keys(value).length === 0) errors.push({ path: '', code: 'NADA_A_ALTERAR' });
-  if (errors.length === 0 && definition.key === CATALOG.SERVICOS) {
-    const base = isPlainObject(current) ? { tipoCobranca: current.tipoCobranca ?? null, recorrencia: current.recorrencia ?? null } : { tipoCobranca: null, recorrencia: null };
-    errors.push(...billingErrors({ ...base, ...value }));
+  if (errors.length === 0 && definition.key === CATALOG.SERVICOS && PAYMENT_MODALITY_FIELDS.some((field) => hasOwn(value, field))) {
+    // A coerência vale para o estado RESULTANTE (o item atual + o que foi enviado): o que não foi enviado é PRESERVADO, nunca zerado. Um serviço
+    // LEGADO sem modalidades pode seguir sem nenhuma; um que JÁ tinha modalidades nunca fica sem nenhuma.
+    const base = modalitiesOf(current);
+    const hadOne = base.permitePagamentoUnico || base.permitePagamentoRecorrente;
+    errors.push(...modalityErrors({ ...base, ...value }, { mustHaveOne: hadOne }));
   }
   return { ok: errors.length === 0, value, errors };
 }
@@ -225,13 +274,13 @@ function assertItemShape(item, context) {
 async function readAll(repository, catalog) {
   const items = await viaRepository(() => repository.list(catalog));
   if (!Array.isArray(items)) throw persistenceFailure('lista inválida devolvida pelo armazenamento.');
-  return items.map((item) => assertItemShape(item, 'list'));
+  return items.map((item) => withModalityDefaults(catalog, assertItemShape(item, 'list')));
 }
 
 async function readOne(repository, catalog, id) {
   const item = await viaRepository(() => repository.getById(catalog, id));
   if (item === null || item === undefined) return null;
-  return assertItemShape(item, 'getById');
+  return withModalityDefaults(catalog, assertItemShape(item, 'getById'));
 }
 
 // Ordem de exibição: `ordem`, depois o nome normalizado, depois o id (desempate estável, igual para todos os adapters).
@@ -342,7 +391,7 @@ async function updateItemUnlocked(repository, catalog, id, patch, operator, opti
 
   const changes = {};
   for (const [field, value] of Object.entries(checked.value)) {
-    if (!Object.is(current[field] ?? null, value)) changes[field] = value;
+    if (!sameFieldValue(current[field] ?? null, value)) changes[field] = value;
   }
   if (Object.keys(changes).length === 0) return clone(current);
 
@@ -361,7 +410,7 @@ async function updateItemUnlocked(repository, catalog, id, patch, operator, opti
   Object.assign(changes, { atualizadoEm: nowIso(options), atualizadoPorUserId: author.userId, atualizadoPorNome: author.name });
   const updated = await viaRepository(() => repository.update(catalog, current.id, changes));
   if (!isPlainObject(updated)) throw notFound();
-  return clone(updated);
+  return clone(withModalityDefaults(catalog, updated)); // um serviço legado ganha os padrões também aqui, como na leitura
 }
 
 // Ativa ou desativa. Idempotente: pedir o estado que o item já tem devolve o item sem gravar. Desativar NUNCA mexe nos registros
@@ -377,7 +426,7 @@ async function setItemActiveUnlocked(repository, catalog, id, ativo, operator, o
     repository.update(catalog, current.id, { ativo, atualizadoEm: nowIso(options), atualizadoPorUserId: author.userId, atualizadoPorNome: author.name })
   );
   if (!isPlainObject(updated)) throw notFound();
-  return clone(updated);
+  return clone(withModalityDefaults(catalog, updated)); // um serviço legado ganha os padrões também aqui, como na leitura
 }
 
 // Reordena: `orderedIds` precisa ter EXATAMENTE os itens existentes (ativos e desativados), cada um uma vez. A nova ordem é a posição

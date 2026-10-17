@@ -16,7 +16,7 @@ const clone = (valor) => JSON.parse(JSON.stringify(valor));
 const AUDITORIA = { criadoEm: '2026-10-01T12:00:00.000Z', atualizadoEm: '2026-10-02T15:30:00.000Z', criadoPorUserId: 'user-breno', criadoPorNome: 'Breno Bento', atualizadoPorUserId: 'user-breno', atualizadoPorNome: 'Breno Bento' };
 const normalizar = (texto) => texto.normalize('NFD').replace(/[̀-ͯ]/g, '').toLowerCase().replace(/[^a-z0-9]+/g, ' ').trim();
 
-const servico = (n, extras = {}) => ({ id: `service:${n}`, nome: `Serviço ${n}`, nomeNormalizado: `servico ${n}`, descricao: null, ativo: true, ordem: n - 1, categoria: null, precoReferencia: null, tipoCobranca: null, recorrencia: null, ...AUDITORIA, ...extras });
+const servico = (n, extras = {}) => ({ id: `service:${n}`, nome: `Serviço ${n}`, nomeNormalizado: `servico ${n}`, descricao: null, ativo: true, ordem: n - 1, categoria: null, precoReferencia: null, permitePagamentoUnico: true, permitePagamentoRecorrente: false, periodicidades: [], tipoCobranca: null, recorrencia: null, ...AUDITORIA, ...extras });
 const nicho = (n, extras = {}) => ({ id: `niche:${n}`, nome: `Nicho ${n}`, nomeNormalizado: `nicho ${n}`, descricao: null, ativo: true, ordem: n - 1, cor: 'azul', ...AUDITORIA, ...extras });
 const origem = (n, extras = {}) => ({ id: `origin:${n}`, nome: `Origem ${n}`, nomeNormalizado: `origem ${n}`, descricao: null, ativo: true, ordem: n - 1, canal: 'INDICACAO', ...AUDITORIA, ...extras });
 const PREFIXO = { servicos: 'service', nichos: 'niche', origens: 'origin' };
@@ -77,7 +77,7 @@ function apiFalsa({ servicos = [], nichos = [], origens = [], emUso = {} } = {})
       await passar('criar');
       const proxima = mem[catalogo].reduce((maior, item) => Math.max(maior, item.ordem), -1) + 1;
       const base = { id: `${PREFIXO[catalogo]}:novo-${proxima}`, nome: corpo.nome, nomeNormalizado: normalizar(corpo.nome), descricao: null, ativo: true, ordem: proxima, ...AUDITORIA };
-      const especificos = catalogo === 'servicos' ? { categoria: null, precoReferencia: null, tipoCobranca: null, recorrencia: null } : catalogo === 'nichos' ? { cor: null } : { canal: null };
+      const especificos = catalogo === 'servicos' ? { categoria: null, precoReferencia: null, permitePagamentoUnico: false, permitePagamentoRecorrente: false, periodicidades: [], tipoCobranca: null, recorrencia: null } : catalogo === 'nichos' ? { cor: null } : { canal: null };
       const item = { ...base, ...especificos, ...clone(corpo) };
       mem[catalogo].push(item);
       return { item: clone(item) };
@@ -156,7 +156,9 @@ const clicar = async (s, el) => {
   await s.browser.flush(8);
 };
 const digitar = (s, el, valor) => s.browser.type(el, valor);
+// Marca (ou desmarca) uma caixa de seleção do formulário pelo nome do campo, como a pessoa faz (clique de verdade, que dispara os efeitos da tela).
+const marcar = (s, campoNome, marcado = true) => s.browser.check(campo(s, campoNome), marcado);
 const salvar = async (s) => clicar(s, botao(s, 'Salvar', gaveta(s)));
 const emFoco = (s) => s.browser.document.activeElement;
 
-module.exports = { ROTAS, ADMIN, VENDEDOR, clone, servico, nicho, origem, erroApi, apiFalsa, abrir, gaveta, confirmacao, botao, campo, erroDoCampo, linhas, linhaDe, nomes, acao, avisos, texto, hash, clicar, digitar, salvar, emFoco, loadRouter, loadApi };
+module.exports = { ROTAS, ADMIN, VENDEDOR, clone, servico, nicho, origem, erroApi, apiFalsa, abrir, gaveta, confirmacao, botao, campo, erroDoCampo, linhas, linhaDe, nomes, acao, avisos, texto, hash, clicar, digitar, marcar, salvar, emFoco, loadRouter, loadApi };

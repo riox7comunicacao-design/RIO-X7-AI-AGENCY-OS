@@ -108,7 +108,7 @@ test('[CATCOMPAT-6] as 5 migrations ANTERIORES continuam byte a byte (fim de lin
   const existentes = fs.readdirSync(path.join(ROOT, 'supabase', 'migrations')).filter((n) => n.endsWith('.sql')).sort();
   // Fase 2B-3.2B-H2: uma migration CORRETIVA NOVA das Exclusões Permanentes (created_by_user_id UUID -> TEXT) foi acrescentada DEPOIS — a
   // histórica continua byte a byte igual (os hashes abaixo) e é essa a única mudança permitida na lista.
-  assert.deepEqual(existentes, [...Object.keys(esperado), '20261012090000_crm_catalogs.sql', '20261017090000_prospecting_permanent_exclusions_created_by_text.sql'], 'só a dos catálogos e a corretiva das Exclusões (H2) foram acrescentadas');
+  assert.deepEqual(existentes, [...Object.keys(esperado), '20261012090000_crm_catalogs.sql', '20261017090000_prospecting_permanent_exclusions_created_by_text.sql', '20261018090000_crm_services_payment_modalities.sql'], 'só a dos catálogos, a corretiva das Exclusões (H2) e a das modalidades de pagamento (C1) foram acrescentadas');
   for (const [arquivo, hash] of Object.entries(esperado)) {
     const conteudo = read(`supabase/migrations/${arquivo}`).replace(/\r\n/g, '\n');
     assert.equal(crypto.createHash('sha256').update(conteudo).digest('hex'), hash, `${arquivo} foi alterada`);

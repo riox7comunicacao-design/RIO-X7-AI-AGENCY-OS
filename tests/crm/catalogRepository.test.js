@@ -38,7 +38,7 @@ test('[CATFILE-2] o formato do arquivo é { version, servicos, nichos, origens }
   const caminho = path.join(dir, 'crm-catalogs.json');
   const a = createJsonFileCatalogRepository(caminho);
   const nicho = makeItem('nichos', 1, { nome: 'Estética', cor: 'azul' });
-  const servico = makeItem('servicos', 1, { nome: 'Site', precoReferencia: 1500, tipoCobranca: 'UNICA' });
+  const servico = makeItem('servicos', 1, { nome: 'Site', precoReferencia: 1500, permitePagamentoUnico: true, permitePagamentoRecorrente: false, periodicidades: [] });
   a.insert('nichos', nicho);
   a.insert('servicos', servico);
   const conteudo = JSON.parse(fs.readFileSync(caminho, 'utf8'));

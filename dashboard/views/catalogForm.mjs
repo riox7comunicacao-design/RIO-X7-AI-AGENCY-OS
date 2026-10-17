@@ -1,10 +1,10 @@
 // O FORMULÁRIO de um item de catálogo (CRM 5.0, Fase 2B-2): criar ou editar um Serviço, um Nicho ou uma Origem dos Leads, dentro do painel lateral da tela do catálogo.
 //
-// O QUE ELE FAZ: monta os campos REAIS do contrato do servidor (nome e descrição em todos; categoria, preço de referência, tipo de cobrança e recorrência nos serviços; cor nos nichos; canal nas
+// O QUE ELE FAZ: monta os campos REAIS do contrato do servidor (nome e descrição em todos; categoria, preço de referência e as modalidades de pagamento nos serviços (pagamento único e/ou recorrente, com as periodicidades); cor nos nichos; canal nas
 // origens), guarda o que foi digitado, diz se há alteração não salva (isDirty — o gerenciador de camadas usa isso no ESC/X/fundo) e, ao salvar, entrega ao dono da tela o corpo da requisição.
 // Só o que muda vai na edição. Os erros do servidor aparecem junto do campo certo e o que foi digitado NUNCA é apagado por uma falha.
 //
-// O QUE ELE NÃO FAZ: regra de negócio. Nome único (mesmo desativado), nome em uso pelo CRM, coerência de cobrança e limites são do servidor (que sempre tem a palavra final); aqui só há as
+// O QUE ELE NÃO FAZ: regra de negócio. Nome único (mesmo desativado), nome em uso pelo CRM, coerência das modalidades de pagamento e limites são do servidor (que sempre tem a palavra final); aqui só há as
 // conferências que poupam uma ida ao servidor à toa (nome preenchido, preço em reais, nicho novo com cor). Sucesso só existe depois que a API confirma: quem mostra "salvo" é o dono da tela.
 //
 // Todo texto entra por dom.mjs (textContent); nenhum estilo inline. A cor de um nicho vem da paleta aprovada (catalog-colors.mjs) e é aplicada por CLASSE de CSS.
@@ -14,7 +14,7 @@ import { formatDateTime, textOf } from '../format.mjs';
 import { formField } from '../ui/components.mjs';
 import { colorPicker } from '../ui/colorPicker.mjs';
 import { NICHE_COLOR_OPTIONS, colorClassOf, colorNameOf } from '../catalog-colors.mjs';
-import { BILLING_OPTIONS, CHANNEL_OPTIONS, LIMITS, MESSAGES, RECURRENCE_OPTIONS, buildCreateBody, buildPatchBody, catalogErrorInfo, changedFields, emptyFormValues, formValuesFromItem } from '../catalog-model.mjs';
+import { CHANNEL_OPTIONS, LIMITS, MESSAGES, RECURRENCE_OPTIONS, buildCreateBody, buildPatchBody, catalogErrorInfo, changedFields, emptyFormValues, formValuesFromItem } from '../catalog-model.mjs';
 
 // Os textos de cada catálogo (o que a pessoa lê nos campos).
 const FORM_TEXT = Object.freeze({
@@ -62,6 +62,19 @@ export function createCatalogForm({ document, catalog, mode, item = null, onSubm
 
   const controls = {}; // campo -> { setError, setHidden, element, control, read(), put(v), focus() }
 
+  // Uma linha com uma caixa de seleção e o seu rótulo. `checked`: o estado inicial.
+  function checkboxRow(field, value, label, checked) {
+    const id = value === undefined ? idOf(field) : `${idOf(field)}-${value.toLowerCase()}`;
+    const input = h(document, 'input', { id, type: 'checkbox', name: value === undefined ? field : `${field}-${value}` });
+    input.checked = Boolean(checked);
+    return { input, element: h(document, 'div', { className: 'modality-option' }, input, h(document, 'label', { for: id, text: label })) };
+  }
+  // O erro de um grupo: um parágrafo que só aparece quando há mensagem (o grupo, e não uma caixa, é o que está errado).
+  function groupError(id) {
+    const element = h(document, 'p', { className: 'field-error', id, role: 'alert', hidden: true });
+    return { element, set(message) { element.textContent = message || ''; element.hidden = !message; } };
+  }
+
   function textInput(field, { maxlength, placeholder = '', inputmode = null }) {
     const input = h(document, 'input', { id: idOf(field), type: 'text', maxlength: String(maxlength), autocomplete: 'off', ...(placeholder ? { placeholder } : {}), ...(inputmode ? { inputmode } : {}), value: initial[field] || '' });
     input.value = initial[field] || '';
@@ -97,8 +110,52 @@ export function createCatalogForm({ document, catalog, mode, item = null, onSubm
       control: textInput('precoReferencia', { maxlength: 18, placeholder: '0,00', inputmode: 'decimal' }),
       help: 'Opcional e apenas informativo: não altera propostas nem negociações. Use o formato brasileiro, como 1.500,00.',
     });
-    register('tipoCobranca', { label: 'Tipo de cobrança', control: selectInput('tipoCobranca', 'Não informado', BILLING_OPTIONS), help: 'Opcional. Pagamento único ou cobrança recorrente.' });
-    register('recorrencia', { label: 'Recorrência', control: selectInput('recorrencia', 'Escolha a recorrência', RECURRENCE_OPTIONS), help: 'De quanto em quanto tempo a cobrança se repete.', required: true });
+    // MODALIDADES DE PAGAMENTO (Fase C1): um mesmo serviço pode permitir o pagamento único, o recorrente ou os dois. As periodicidades só aparecem com o recorrente marcado.
+    const startedWithNone = mode === 'edit' && !initial.permitePagamentoUnico && !initial.permitePagamentoRecorrente;
+    const uniqueRow = checkboxRow('permitePagamentoUnico', undefined, 'Permitir pagamento único', initial.permitePagamentoUnico === 'SIM');
+    const recurringRow = checkboxRow('permitePagamentoRecorrente', undefined, 'Permitir pagamento recorrente', initial.permitePagamentoRecorrente === 'SIM');
+    const markedPeriodicities = String(initial.periodicidades || '').split(',');
+    const periodicityRows = RECURRENCE_OPTIONS.map((entry) => ({ value: entry.value, ...checkboxRow('periodicidades', entry.value, entry.label, markedPeriodicities.includes(entry.value)) }));
+    const modalityError = groupError(`${idOf('modalidades')}-error`);
+    const periodicityError = groupError(`${idOf('periodicidades')}-error`);
+    const periodicityGroup = h(
+      document,
+      'fieldset',
+      { className: 'modality-periodicities', id: idOf('periodicidades'), 'aria-describedby': periodicityError.element.id },
+      h(document, 'legend', { text: 'Periodicidades permitidas' }),
+      ...periodicityRows.map((row) => row.element),
+      periodicityError.element
+    );
+    const modalityGroup = h(
+      document,
+      'fieldset',
+      { className: 'modality-group', id: idOf('modalidades'), 'aria-describedby': `${idOf('modalidades')}-help ${modalityError.element.id}` },
+      h(document, 'legend', { className: mode === 'create' ? 'required' : '', text: 'Formas de pagamento permitidas' }),
+      h(document, 'p', {
+        className: 'field-help muted',
+        id: `${idOf('modalidades')}-help`,
+        text: startedWithNone
+          ? 'Este serviço ainda não tem as formas de pagamento informadas. Marque as que valem para ele: uma ou as duas. Nada é preenchido automaticamente.'
+          : 'Marque uma ou as duas. Quem escolhe entre elas, o prazo e o valor é cada negociação com o cliente; isto só define o que o serviço permite.',
+      }),
+      uniqueRow.element,
+      recurringRow.element,
+      periodicityGroup,
+      modalityError.element
+    );
+    controls.modalidades = { element: modalityGroup, control: null, setError: (message) => modalityError.set(message), setHidden: (value) => { modalityGroup.hidden = Boolean(value); }, read: () => '', put: () => {}, focus: () => uniqueRow.input.focus() };
+    controls.permitePagamentoUnico = { element: uniqueRow.element, control: uniqueRow.input, setError: () => {}, setHidden: () => {}, read: () => (uniqueRow.input.checked ? 'SIM' : ''), put: (value) => { uniqueRow.input.checked = value === 'SIM'; }, focus: () => uniqueRow.input.focus() };
+    controls.permitePagamentoRecorrente = { element: recurringRow.element, control: recurringRow.input, setError: () => {}, setHidden: () => {}, read: () => (recurringRow.input.checked ? 'SIM' : ''), put: (value) => { recurringRow.input.checked = value === 'SIM'; }, focus: () => recurringRow.input.focus() };
+    controls.periodicidades = {
+      element: periodicityGroup,
+      // desabilitar o grupo (durante o envio) desabilita as quatro caixas
+      control: { set disabled(value) { for (const row of periodicityRows) row.input.disabled = Boolean(value); }, addEventListener(type, handler) { for (const row of periodicityRows) row.input.addEventListener(type, handler); } },
+      setError: (message) => periodicityError.set(message),
+      setHidden: (value) => { periodicityGroup.hidden = Boolean(value); },
+      read: () => periodicityRows.filter((row) => row.input.checked).map((row) => row.value).join(','),
+      put: (value) => { const wanted = String(value || '').split(','); for (const row of periodicityRows) row.input.checked = wanted.includes(row.value); },
+      focus: () => (periodicityRows.find((row) => row.input.checked) || periodicityRows[0]).input.focus(),
+    };
   } else if (catalog === 'nichos') {
     picker = colorPicker(document, {
       id: 'catalog-field-cor',
@@ -127,14 +184,14 @@ export function createCatalogForm({ document, catalog, mode, item = null, onSubm
     register('canal', { label: 'Canal', control: selectInput('canal', 'Não classificado', CHANNEL_OPTIONS), help: 'Opcional. Como esta origem chega até a agência.' });
   }
 
-  // --- a recorrência só existe para a cobrança recorrente ---
+  // --- as periodicidades só existem para o pagamento recorrente ---
   function syncRecurrence() {
     if (catalog !== 'servicos') return;
-    const recurrent = controls.tipoCobranca.read() === 'RECORRENTE';
-    controls.recorrencia.setHidden(!recurrent);
+    const recurrent = controls.permitePagamentoRecorrente.read() === 'SIM';
+    controls.periodicidades.setHidden(!recurrent);
     if (!recurrent) {
-      controls.recorrencia.put('');
-      controls.recorrencia.setError(null);
+      controls.periodicidades.put('');
+      controls.periodicidades.setError(null);
     }
   }
 
@@ -307,7 +364,7 @@ export function createCatalogForm({ document, catalog, mode, item = null, onSubm
     controls.nome.element,
     usageRegion,
     controls.descricao.element,
-    ...(catalog === 'servicos' ? [controls.categoria.element, controls.precoReferencia.element, controls.tipoCobranca.element, controls.recorrencia.element] : []),
+    ...(catalog === 'servicos' ? [controls.categoria.element, controls.precoReferencia.element, controls.modalidades.element] : []),
     ...(catalog === 'nichos' ? [controls.cor.element, h(document, 'div', { className: 'niche-preview' }, h(document, 'p', { className: 'field-label', text: 'Prévia' }), previewCard, previewNote)] : []),
     ...(catalog === 'origens' ? [controls.canal.element] : []),
     auditLine
@@ -322,7 +379,9 @@ export function createCatalogForm({ document, catalog, mode, item = null, onSubm
       submit();
     }
   });
-  controls.tipoCobranca && controls.tipoCobranca.control.addEventListener('change', () => syncRecurrence());
+  controls.permitePagamentoRecorrente && controls.permitePagamentoRecorrente.control.addEventListener('change', () => { syncRecurrence(); controls.modalidades.setError(null); });
+  controls.permitePagamentoUnico && controls.permitePagamentoUnico.control.addEventListener('change', () => controls.modalidades.setError(null));
+  controls.periodicidades && controls.periodicidades.control.addEventListener('change', () => controls.periodicidades.setError(null));
   if (previewCard) controls.nome.control.addEventListener('input', () => paintPreview());
   syncRecurrence();
   paintPreview();

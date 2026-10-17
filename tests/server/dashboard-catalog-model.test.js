@@ -24,10 +24,14 @@ test('[CATMODEL-1] O CONTRATO: catálogos, campos graváveis, enumerações e li
   assert.equal(m.LIMITS.DESCRICAO, server.LIMITS.DESCRICAO);
   assert.equal(m.LIMITS.CATEGORIA, server.LIMITS.CATEGORIA);
   assert.equal(m.LIMITS.PRECO_MAXIMO, server.LIMITS.PRECO_REFERENCIA_MAXIMO);
-  assert.deepEqual(m.BILLING_OPTIONS.map((o) => o.value), [...server.BILLING_TYPES]);
-  assert.deepEqual(m.RECURRENCE_OPTIONS.map((o) => o.value), [...server.RECURRENCES]);
+  assert.equal(m.BILLING_OPTIONS, undefined, 'o tipo de cobrança único saiu do Dashboard (Fase C1): só resta como legado no servidor');
+  assert.deepEqual(m.RECURRENCE_OPTIONS.map((o) => o.value), [...server.RECURRENCES], 'as periodicidades da tela são as do servidor, na mesma ordem');
+  assert.deepEqual(server.PAYMENT_MODALITY_FIELDS, ['permitePagamentoUnico', 'permitePagamentoRecorrente', 'periodicidades']);
+  assert.deepEqual(m.CATALOG_WRITABLE_FIELDS.servicos.filter((campo) => server.PAYMENT_MODALITY_FIELDS.includes(campo)), [...server.PAYMENT_MODALITY_FIELDS]);
+  assert.deepEqual([...server.CATALOG_DEFINITIONS.servicos.legacyFields], ['tipoCobranca', 'recorrencia']);
+  for (const legado of server.CATALOG_DEFINITIONS.servicos.legacyFields) assert.equal(m.CATALOG_WRITABLE_FIELDS.servicos.includes(legado), false, `${legado} é legado: o Dashboard nunca o grava`);
   assert.deepEqual(m.CHANNEL_OPTIONS.map((o) => o.value), [...server.LEAD_CHANNELS], 'a taxonomia de canais é a REAL do backend, na mesma ordem');
-  for (const lista of [m.BILLING_OPTIONS, m.RECURRENCE_OPTIONS, m.CHANNEL_OPTIONS]) for (const o of lista) assert.ok(o.label.length > 0 && o.label !== o.value, `${o.value} tem rótulo em português`);
+  for (const lista of [m.RECURRENCE_OPTIONS, m.CHANNEL_OPTIONS]) for (const o of lista) assert.ok(o.label.length > 0 && o.label !== o.value, `${o.value} tem rótulo em português`);
   // os códigos de erro que o Dashboard reconhece são os do servidor
   assert.equal(server.CATALOG_ERROR.DUPLICATE_NAME, 'CRM_CATALOG_DUPLICATE_NAME');
   assert.equal(server.CATALOG_ERROR.NAME_IN_USE, 'CRM_CATALOG_NAME_IN_USE');
@@ -74,20 +78,36 @@ test('[CATMODEL-3] a exibição do preço: o campo mostra 1.500,00 e a lista mos
 test('[CATMODEL-4] CRIAR: vai o nome e só os campos opcionais preenchidos; o nome é obrigatório; o preço vira número; o texto é limpo', async () => {
   const m = await loadModel();
   const vazio = m.emptyFormValues('servicos');
-  assert.deepEqual(vazio, { nome: '', descricao: '', categoria: '', precoReferencia: '', tipoCobranca: '', recorrencia: '' });
+  assert.deepEqual(vazio, { nome: '', descricao: '', categoria: '', precoReferencia: '', permitePagamentoUnico: '', permitePagamentoRecorrente: '', periodicidades: '' });
 
+  // um serviço NOVO exige ao menos uma forma de pagamento (nada é presumido)
   const so = m.buildCreateBody('servicos', { ...vazio, nome: '  Gestão   de redes  ' });
-  assert.deepEqual(so, { ok: true, body: { nome: 'Gestão de redes' }, errors: {} });
+  assert.equal(so.ok, false);
+  assert.deepEqual(so.errors, { modalidades: 'Marque pelo menos uma forma de pagamento: único, recorrente ou os dois.' });
+  const unico = m.buildCreateBody('servicos', { ...vazio, nome: '  Gestão   de redes  ', permitePagamentoUnico: 'SIM' });
+  assert.deepEqual(unico, { ok: true, body: { nome: 'Gestão de redes', permitePagamentoUnico: true, permitePagamentoRecorrente: false, periodicidades: [] }, errors: {} }, 'só único: falso e lista vazia vão explícitos');
 
-  const completo = m.buildCreateBody('servicos', { nome: 'Site', descricao: '  Um site\r\ncompleto  ', categoria: ' Web ', precoReferencia: '2.500,00', tipoCobranca: 'RECORRENTE', recorrencia: 'MENSAL' });
+  const completo = m.buildCreateBody('servicos', { nome: 'Site', descricao: '  Um site\r\ncompleto  ', categoria: ' Web ', precoReferencia: '2.500,00', permitePagamentoUnico: 'SIM', permitePagamentoRecorrente: 'SIM', periodicidades: 'MENSAL,ANUAL' });
   assert.equal(completo.ok, true);
-  assert.deepEqual(completo.body, { nome: 'Site', descricao: 'Um site\ncompleto', categoria: 'Web', precoReferencia: 2500, tipoCobranca: 'RECORRENTE', recorrencia: 'MENSAL' });
+  assert.deepEqual(completo.body, { nome: 'Site', descricao: 'Um site\ncompleto', categoria: 'Web', precoReferencia: 2500, permitePagamentoUnico: true, permitePagamentoRecorrente: true, periodicidades: ['MENSAL', 'ANUAL'] });
+  const emDesordem = m.buildCreateBody('servicos', { ...vazio, nome: 'Ordem', permitePagamentoRecorrente: 'SIM', periodicidades: 'ANUAL, MENSAL,ANUAL' });
+  assert.deepEqual(emDesordem.body.periodicidades, ['MENSAL', 'ANUAL'], 'ordem canônica, sem repetição, sem espaços');
+  const soRecorrente = m.buildCreateBody('servicos', { ...vazio, nome: 'Mentoria', permitePagamentoRecorrente: 'SIM', periodicidades: 'TRIMESTRAL' });
+  assert.deepEqual(soRecorrente.body, { nome: 'Mentoria', permitePagamentoUnico: false, permitePagamentoRecorrente: true, periodicidades: ['TRIMESTRAL'] });
 
-  const semNome = m.buildCreateBody('servicos', { ...vazio, nome: '   ' });
+  // recorrente exige periodicidade; periodicidade sem recorrente é recusada; nada disso depende do preço
+  const semPeriodicidade = m.buildCreateBody('servicos', { ...vazio, nome: 'X', permitePagamentoRecorrente: 'SIM' });
+  assert.deepEqual([semPeriodicidade.ok, semPeriodicidade.errors], [false, { periodicidades: 'Escolha ao menos uma periodicidade: o pagamento recorrente está permitido.' }]);
+  const periodicidadeSolta = m.buildCreateBody('servicos', { ...vazio, nome: 'X', permitePagamentoUnico: 'SIM', periodicidades: 'MENSAL' });
+  assert.deepEqual([periodicidadeSolta.ok, periodicidadeSolta.errors], [false, { periodicidades: 'As periodicidades só valem quando o pagamento recorrente está permitido.' }]);
+  const comPreco = m.buildCreateBody('servicos', { ...vazio, nome: 'X', permitePagamentoUnico: 'SIM', precoReferencia: '10' }).body;
+  assert.equal(comPreco.precoReferencia, 10, 'o preço de referência segue só informativo, ao lado das modalidades');
+
+  const semNome = m.buildCreateBody('servicos', { ...vazio, nome: '   ', permitePagamentoUnico: 'SIM' });
   assert.equal(semNome.ok, false);
   assert.equal(semNome.errors.nome, 'Informe o nome.');
 
-  const precoRuim = m.buildCreateBody('servicos', { ...vazio, nome: 'X', precoReferencia: 'dez' });
+  const precoRuim = m.buildCreateBody('servicos', { ...vazio, nome: 'X', permitePagamentoUnico: 'SIM', precoReferencia: 'dez' });
   assert.equal(precoRuim.ok, false);
   assert.match(precoRuim.errors.precoReferencia, /reais/);
   assert.equal(Object.prototype.hasOwnProperty.call(precoRuim.body, 'precoReferencia'), false);
@@ -96,16 +116,16 @@ test('[CATMODEL-4] CRIAR: vai o nome e só os campos opcionais preenchidos; o no
   assert.deepEqual(m.buildCreateBody('origens', { nome: 'Indicação', descricao: 'Boca a boca', canal: 'INDICACAO' }).body, { nome: 'Indicação', descricao: 'Boca a boca', canal: 'INDICACAO' });
   // nunca um campo fora do contrato
   for (const catalogo of m.CATALOG_KEYS) {
-    const corpo = m.buildCreateBody(catalogo, { ...m.emptyFormValues(catalogo), nome: 'Algo' }).body;
+    const corpo = m.buildCreateBody(catalogo, { ...m.emptyFormValues(catalogo), nome: 'Algo', ...(catalogo === 'servicos' ? { permitePagamentoUnico: 'SIM' } : {}) }).body;
     for (const campo of Object.keys(corpo)) assert.ok(m.CATALOG_WRITABLE_FIELDS[catalogo].includes(campo), `${catalogo}.${campo}`);
   }
 });
 
-test('[CATMODEL-5] EDITAR: vai SÓ o que mudou; sem mudança nada é enviado; espaços a mais não contam; limpar vira null; mudar a cobrança leva a recorrência junto', async () => {
+test('[CATMODEL-5] EDITAR: vai SÓ o que mudou; sem mudança nada é enviado; espaços a mais não contam; limpar vira null; mexer em UMA modalidade leva as três juntas; nunca apaga as modalidades por engano', async () => {
   const m = await loadModel();
-  const item = { nome: 'Gestão de redes', descricao: 'Posts', categoria: 'Marketing', precoReferencia: 1500, tipoCobranca: 'RECORRENTE', recorrencia: 'MENSAL' };
+  const item = { nome: 'Gestão de redes', descricao: 'Posts', categoria: 'Marketing', precoReferencia: 1500, permitePagamentoUnico: false, permitePagamentoRecorrente: true, periodicidades: ['MENSAL'] };
   const inicial = m.formValuesFromItem('servicos', item);
-  assert.deepEqual(inicial, { nome: 'Gestão de redes', descricao: 'Posts', categoria: 'Marketing', precoReferencia: '1.500,00', tipoCobranca: 'RECORRENTE', recorrencia: 'MENSAL' });
+  assert.deepEqual(inicial, { nome: 'Gestão de redes', descricao: 'Posts', categoria: 'Marketing', precoReferencia: '1.500,00', permitePagamentoUnico: '', permitePagamentoRecorrente: 'SIM', periodicidades: 'MENSAL' });
 
   const igual = m.buildPatchBody('servicos', inicial, { ...inicial });
   assert.equal(igual.empty, true);
@@ -119,11 +139,32 @@ test('[CATMODEL-5] EDITAR: vai SÓ o que mudou; sem mudança nada é enviado; es
   const limpar = m.buildPatchBody('servicos', inicial, { ...inicial, descricao: '', categoria: '', precoReferencia: '' });
   assert.deepEqual(limpar.body, { descricao: null, categoria: null, precoReferencia: null });
 
-  // pagamento único: a recorrência sai junto (o servidor confere a coerência do estado final)
-  const unica = m.buildPatchBody('servicos', inicial, { ...inicial, tipoCobranca: 'UNICA', recorrencia: '' });
-  assert.deepEqual(unica.body, { tipoCobranca: 'UNICA', recorrencia: null });
-  const trimestral = m.buildPatchBody('servicos', inicial, { ...inicial, recorrencia: 'TRIMESTRAL' });
-  assert.deepEqual(trimestral.body, { tipoCobranca: 'RECORRENTE', recorrencia: 'TRIMESTRAL' });
+  // editar o preço, o nome ou a descrição NUNCA leva as modalidades (então nunca as apaga)
+  for (const corpo of [preco.body, limpar.body, m.buildPatchBody('servicos', inicial, { ...inicial, nome: 'Outro nome' }).body]) {
+    for (const campo of ['permitePagamentoUnico', 'permitePagamentoRecorrente', 'periodicidades']) assert.equal(Object.prototype.hasOwnProperty.call(corpo, campo), false, campo);
+  }
+  // mexer em UMA modalidade leva as três juntas (o servidor confere a coerência do estado final)
+  const tambemUnico = m.buildPatchBody('servicos', inicial, { ...inicial, permitePagamentoUnico: 'SIM' });
+  assert.deepEqual(tambemUnico.body, { permitePagamentoUnico: true, permitePagamentoRecorrente: true, periodicidades: ['MENSAL'] });
+  const trimestral = m.buildPatchBody('servicos', inicial, { ...inicial, periodicidades: 'MENSAL,TRIMESTRAL' });
+  assert.deepEqual(trimestral.body, { permitePagamentoUnico: false, permitePagamentoRecorrente: true, periodicidades: ['MENSAL', 'TRIMESTRAL'] });
+  const soUnico = m.buildPatchBody('servicos', inicial, { ...inicial, permitePagamentoUnico: 'SIM', permitePagamentoRecorrente: '', periodicidades: '' });
+  assert.deepEqual(soUnico.body, { permitePagamentoUnico: true, permitePagamentoRecorrente: false, periodicidades: [] });
+  // não dá para ficar sem NENHUMA forma de pagamento quando o serviço já tinha uma; recorrente sem periodicidade também não
+  const nenhuma = m.buildPatchBody('servicos', inicial, { ...inicial, permitePagamentoRecorrente: '', periodicidades: '' });
+  assert.deepEqual([nenhuma.ok, Object.keys(nenhuma.errors)], [false, ['modalidades']]);
+  const semPeriodicidade = m.buildPatchBody('servicos', inicial, { ...inicial, periodicidades: '' });
+  assert.deepEqual([semPeriodicidade.ok, Object.keys(semPeriodicidade.errors)], [false, ['periodicidades']]);
+
+  // serviço LEGADO sem nenhuma modalidade: abre desmarcado (nada é inferido), pode ser salvo sem escolher, e o corpo não leva modalidades
+  const legado = m.formValuesFromItem('servicos', { nome: 'Antigo', precoReferencia: 50, tipoCobranca: 'UNICA', recorrencia: null });
+  assert.deepEqual([legado.permitePagamentoUnico, legado.permitePagamentoRecorrente, legado.periodicidades], ['', '', ''], 'o campo legado tipoCobranca NÃO é convertido em modalidade');
+  const legadoPreco = m.buildPatchBody('servicos', legado, { ...legado, precoReferencia: '60' });
+  assert.deepEqual(legadoPreco.body, { precoReferencia: 60 });
+  const legadoSoPeriodicidade = m.buildPatchBody('servicos', legado, { ...legado, periodicidades: 'MENSAL' });
+  assert.deepEqual([legadoSoPeriodicidade.ok, Object.keys(legadoSoPeriodicidade.errors)], [false, ['periodicidades']], 'um legado sem modalidade não recebe a exigência de "ao menos uma forma" por mexer em outra coisa');
+  const legadoEscolhe = m.buildPatchBody('servicos', legado, { ...legado, permitePagamentoUnico: 'SIM' });
+  assert.deepEqual(legadoEscolhe.body, { permitePagamentoUnico: true, permitePagamentoRecorrente: false, periodicidades: [] });
 
   const nomeVazio = m.buildPatchBody('servicos', inicial, { ...inicial, nome: ' ' });
   assert.equal(nomeVazio.ok, false);
@@ -147,12 +188,15 @@ test('[CATMODEL-6] ERROS da API viram mensagens em português, por campo quando 
   const m = await loadModel();
   const { ApiError } = await loadApi();
 
-  const validacao = m.catalogErrorInfo(new ApiError(400, 'CRM_CATALOG_INVALID_INPUT', 'Os dados do cadastro são inválidos.', [{ path: 'nome', code: 'MUITO_LONGO' }, { path: 'precoReferencia', code: 'MAIS_DE_DUAS_CASAS' }, { path: 'recorrencia', code: 'RECORRENCIA_OBRIGATORIA' }, { path: '', code: 'TIPO_INVALIDO' }]));
+  const validacao = m.catalogErrorInfo(new ApiError(400, 'CRM_CATALOG_INVALID_INPUT', 'Os dados do cadastro são inválidos.', [{ path: 'nome', code: 'MUITO_LONGO' }, { path: 'precoReferencia', code: 'MAIS_DE_DUAS_CASAS' }, { path: 'periodicidades', code: 'PERIODICIDADE_OBRIGATORIA' }, { path: 'modalidades', code: 'MODALIDADE_OBRIGATORIA' }, { path: 'recorrencia', code: 'CAMPO_NAO_EDITAVEL' }, { path: '', code: 'TIPO_INVALIDO' }]));
   assert.equal(validacao.kind, 'validation');
   assert.equal(validacao.fields.nome, 'O nome pode ter no máximo 80 caracteres.');
   assert.equal(validacao.fields.precoReferencia, 'Use no máximo duas casas decimais (os centavos).');
-  assert.equal(validacao.fields.recorrencia, 'Escolha a recorrência: a cobrança é recorrente.');
-  assert.deepEqual(Object.keys(validacao.fields).sort(), ['nome', 'precoReferencia', 'recorrencia']);
+  assert.equal(validacao.fields.periodicidades, 'Escolha ao menos uma periodicidade: o pagamento recorrente está permitido.');
+  assert.equal(validacao.fields.modalidades, 'Marque pelo menos uma forma de pagamento: único, recorrente ou os dois.');
+  assert.deepEqual(Object.keys(validacao.fields).sort(), ['modalidades', 'nome', 'periodicidades', 'precoReferencia'], 'os campos legados nunca viram campo da tela');
+  assert.equal(m.fieldMessage('periodicidades', 'PERIODICIDADE_NAO_PERMITIDA'), 'As periodicidades só valem quando o pagamento recorrente está permitido.');
+  assert.equal(m.fieldMessage('periodicidades', 'PERIODICIDADE_REPETIDA'), 'Há uma periodicidade repetida: cada uma pode aparecer uma vez.');
 
   assert.equal(m.catalogErrorInfo(new ApiError(400, 'CRM_CATALOG_INVALID_INPUT', '', [{ path: '', code: 'NADA_A_ALTERAR' }])).message, 'Nenhuma alteração foi feita.');
   assert.match(m.catalogErrorInfo(new ApiError(400, 'CRM_CATALOG_INVALID_INPUT', '', [{ path: 'orderedIds', code: 'LISTA_INVALIDA' }])).message, /Atualize a página/);
@@ -203,9 +247,10 @@ test('[CATMODEL-7] BUSCA e FILTRO: a busca é pelo nome (sem acento, sem diferen
 test('[CATMODEL-8] VOCABULÁRIO: nenhum texto do modelo contém um termo em inglês proibido', async () => {
   const m = await loadModel();
   const { findForbiddenTerm } = await loadI18n();
-  const textos = [...Object.values(m.MESSAGES), ...[...m.BILLING_OPTIONS, ...m.RECURRENCE_OPTIONS, ...m.CHANNEL_OPTIONS, ...m.STATUS_FILTERS].map((o) => o.label)];
-  for (const campo of ['nome', 'descricao', 'categoria', 'precoReferencia', 'tipoCobranca', 'recorrencia', 'cor', 'canal']) {
-    for (const codigo of ['OBRIGATORIO', 'MUITO_LONGO', 'CARACTERE_INVALIDO', 'NOME_SEM_LETRAS', 'TIPO_INVALIDO', 'VALOR_INVALIDO', 'VALOR_FORA_DO_LIMITE', 'MAIS_DE_DUAS_CASAS', 'RECORRENCIA_OBRIGATORIA', 'RECORRENCIA_NAO_PERMITIDA', 'DESCONHECIDO']) textos.push(m.fieldMessage(campo, codigo));
+  const textos = [...Object.values(m.MESSAGES), ...[...m.RECURRENCE_OPTIONS, ...m.CHANNEL_OPTIONS, ...m.STATUS_FILTERS].map((o) => o.label)];
+  textos.push(m.modalitiesSummary({}), m.modalitiesSummary({ permitePagamentoUnico: true, permitePagamentoRecorrente: true, periodicidades: ['MENSAL', 'TRIMESTRAL', 'SEMESTRAL', 'ANUAL'] }));
+  for (const campo of ['nome', 'descricao', 'categoria', 'precoReferencia', 'permitePagamentoUnico', 'permitePagamentoRecorrente', 'modalidades', 'periodicidades', 'cor', 'canal']) {
+    for (const codigo of ['OBRIGATORIO', 'MUITO_LONGO', 'CARACTERE_INVALIDO', 'NOME_SEM_LETRAS', 'TIPO_INVALIDO', 'VALOR_INVALIDO', 'VALOR_FORA_DO_LIMITE', 'MAIS_DE_DUAS_CASAS', 'MODALIDADE_OBRIGATORIA', 'PERIODICIDADE_OBRIGATORIA', 'PERIODICIDADE_NAO_PERMITIDA', 'PERIODICIDADE_REPETIDA', 'DESCONHECIDO']) textos.push(m.fieldMessage(campo, codigo));
   }
   for (const texto of textos) {
     assert.equal(findForbiddenTerm(texto), null, texto);

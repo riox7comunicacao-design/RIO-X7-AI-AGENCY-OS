@@ -148,7 +148,7 @@ test('[CATFAC-8] no modo "supabase" o Service funciona de ponta a ponta contra o
   semRedeReal(t, fake.fetchImpl);
   const env = { ...ENV_SUPABASE, SUPABASE_SERVICE_ROLE_KEY: chave };
   const service = createConfiguredCatalogService({ env, authorizeOperation: authorizeCatalogOperation, countUsage: async () => 0 });
-  const item = await service.create(admin(), 'servicos', { nome: 'Site', precoReferencia: 900, tipoCobranca: 'UNICA' });
+  const item = await service.create(admin(), 'servicos', { nome: 'Site', precoReferencia: 900, permitePagamentoUnico: true });
   assert.equal(item.nome, 'Site');
   assert.equal((await service.list(admin(), 'servicos')).length, 1);
   const lido = await service.get(admin(), 'servicos', item.id);

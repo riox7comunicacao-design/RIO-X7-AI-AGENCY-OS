@@ -39,14 +39,16 @@ const COMMON_ITEM_FIELDS = Object.freeze([
 
 // O que muda de um catálogo para outro. `table` é o nome REAL da tabela (migration 20261012090000_crm_catalogs.sql); `legacyField`
 // é o campo de TEXTO livre do registro do CRM que este catálogo vai, no futuro, substituir (hoje só serve para contar o uso).
-// `specificFields` são os campos GRAVÁVEIS próprios do catálogo (além de `nome` e `descricao`).
+// `specificFields` são os campos GRAVÁVEIS próprios do catálogo (além de `nome` e `descricao`). `legacyFields` (só serviços) são colunas LEGADAS que
+// continuam sendo LIDAS e devolvidas, mas NUNCA mais gravadas (Fase C1): ver o comentário de PAYMENT_MODALITY_FIELDS.
 const CATALOG_DEFINITIONS = Object.freeze({
   [CATALOG.SERVICOS]: Object.freeze({
     key: CATALOG.SERVICOS,
     idPrefix: 'service',
     table: 'crm_services',
     legacyField: 'servicoPotencial',
-    specificFields: Object.freeze(['categoria', 'precoReferencia', 'tipoCobranca', 'recorrencia']),
+    specificFields: Object.freeze(['categoria', 'precoReferencia', 'permitePagamentoUnico', 'permitePagamentoRecorrente', 'periodicidades']),
+    legacyFields: Object.freeze(['tipoCobranca', 'recorrencia']),
   }),
   [CATALOG.NICHOS]: Object.freeze({
     key: CATALOG.NICHOS,
@@ -74,10 +76,20 @@ const LIMITS = Object.freeze({
   PRECO_REFERENCIA_MAXIMO: 1_000_000_000,
 });
 
-// SERVIÇOS — tipo de cobrança e recorrência. Os dois são OPCIONAIS ("quando pertinente"); a regra de coerência (RECORRENTE exige
-// uma recorrência, e só ele) está em catalogDomain.js e, de novo, num CHECK da tabela.
+// SERVIÇOS — MODALIDADES DE PAGAMENTO (Fase C1, decisão 0027). UM MESMO serviço pode oferecer, ao mesmo tempo, o pagamento ÚNICO (pelo valor
+// total do contrato) e o pagamento RECORRENTE (em uma ou mais periodicidades). Três campos gravam isso:
+//   permitePagamentoUnico       booleano;
+//   permitePagamentoRecorrente  booleano;
+//   periodicidades              lista (sem repetição) de RECURRENCES; não vazia SE E SÓ SE o pagamento recorrente é permitido.
+// Um cadastro NOVO exige ao menos uma modalidade; um serviço LEGADO (criado antes da Fase C1) pode continuar sem nenhuma — o sistema nunca a
+// infere — e o ADMIN a completa na edição. Uma edição nunca apaga modalidades que não foram enviadas. As regras estão em catalogDomain.js e,
+// de novo, em CHECKs da tabela (migration 20261018090000).
+// O PRAZO CONTRATADO, o TCV, o MRR e o valor recebido NÃO pertencem ao serviço: são da negociação (fase futura; decisão 0027).
+// O que era a cobrança de UMA modalidade só (BILLING_TYPES e a recorrência única) é LEGADO: continua nas colunas `tipo_cobranca` e
+// `recorrencia`, que a API ainda DEVOLVE (somente leitura) e nunca mais grava; BILLING_TYPES fica só para conferir o CHECK antigo do banco.
 const BILLING_TYPES = Object.freeze(['UNICA', 'RECORRENTE']);
 const RECURRENCES = Object.freeze(['MENSAL', 'TRIMESTRAL', 'SEMESTRAL', 'ANUAL']);
+const PAYMENT_MODALITY_FIELDS = Object.freeze(['permitePagamentoUnico', 'permitePagamentoRecorrente', 'periodicidades']);
 
 // ORIGENS — o CANAL de aquisição. Uma classificação MÍNIMA e extensível por decisão do proprietário (acrescentar um valor aqui exige
 // também ajustar o CHECK da tabela, numa migration nova). Nenhuma integração externa existe nesta fase.
@@ -135,6 +147,7 @@ module.exports = {
   LIMITS,
   BILLING_TYPES,
   RECURRENCES,
+  PAYMENT_MODALITY_FIELDS,
   LEAD_CHANNELS,
   NICHE_COLORS,
   NICHE_COLOR_KEYS,

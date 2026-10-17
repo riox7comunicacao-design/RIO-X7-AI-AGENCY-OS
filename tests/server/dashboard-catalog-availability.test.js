@@ -9,7 +9,7 @@ const authConstants = require('../../src/auth/constants');
 const { createBrowser } = require('../helpers/fakeDom');
 const H = require('../helpers/catalogHarness');
 
-const { servico, nicho, origem, apiFalsa, abrir, gaveta, confirmacao, botao, campo, linhas, nomes, acao, avisos, texto, hash, clicar, digitar, salvar, erroApi } = H;
+const { servico, nicho, origem, apiFalsa, abrir, gaveta, confirmacao, botao, campo, linhas, nomes, acao, avisos, texto, hash, clicar, digitar, marcar, salvar, erroApi } = H;
 
 const mesmo = (a, b, mensagem) => assert.ok(a === b, mensagem || 'deveria ser o mesmo elemento');
 const loadFixtures = () => import('../helpers/dashboardFixtures.mjs');
@@ -110,6 +110,7 @@ test('[CATAV-3] FALHA DE REDE ao carregar NÃO é indisponibilidade da estrutura
   // dá para tentar criar: a gravação é enviada e, só com a resposta do servidor, o sucesso aparece
   await clicar(s, botao(s, 'Novo Serviço'));
   digitar(s, campo(s, 'nome'), 'Serviço novo');
+  marcar(s, 'permitePagamentoUnico');
   const pausa = api.pausar('criar');
   s.browser.click(botao(s, 'Salvar', gaveta(s)));
   await s.browser.flush(4);
@@ -162,7 +163,9 @@ test('[CATAV-5] RASCUNHO com a indisponibilidade confirmada ao salvar: o painel 
   digitar(s, campo(s, 'nome'), 'Serviço de longa descrição');
   digitar(s, campo(s, 'descricao'), 'Um texto que levou tempo para escrever');
   digitar(s, campo(s, 'precoReferencia'), '1.250,00');
-  s.browser.choose(campo(s, 'tipoCobranca'), 'UNICA');
+  marcar(s, 'permitePagamentoUnico');
+  marcar(s, 'permitePagamentoRecorrente');
+  marcar(s, 'periodicidades-anual');
 
   api.mem.sempre.criar = await erroApi(503, 'CRM_CATALOG_PERSISTENCE');
   await salvar(s);
@@ -176,7 +179,7 @@ test('[CATAV-5] RASCUNHO com a indisponibilidade confirmada ao salvar: o painel 
   assert.equal(campo(s, 'nome').value, 'Serviço de longa descrição');
   assert.equal(campo(s, 'descricao').value, 'Um texto que levou tempo para escrever');
   assert.equal(campo(s, 'precoReferencia').value, '1.250,00');
-  assert.equal(campo(s, 'tipoCobranca').value, 'UNICA');
+  assert.deepEqual(['permitePagamentoUnico', 'permitePagamentoRecorrente', 'periodicidades-anual', 'periodicidades-mensal'].map((n) => campo(s, n).checked), [true, true, true, false], 'as modalidades marcadas também são mantidas');
   assert.deepEqual(avisos(s), [], 'nada de sucesso');
   assert.equal(botao(s, 'Novo Serviço').disabled, true, 'a tela por trás também pausa');
 
@@ -226,7 +229,7 @@ test('[CATAV-5] RASCUNHO com a indisponibilidade confirmada ao salvar: o painel 
   await s.browser.flush(8);
   assert.deepEqual(avisos(s), ['Serviço criado.']);
   assert.equal(gaveta(s), null);
-  assert.deepEqual(api.chamadas.filter(([n]) => n === 'criar')[1].slice(1), ['servicos', { nome: 'Serviço de longa descrição', descricao: 'Um texto que levou tempo para escrever', precoReferencia: 1250, tipoCobranca: 'UNICA' }]);
+  assert.deepEqual(api.chamadas.filter(([n]) => n === 'criar')[1].slice(1), ['servicos', { nome: 'Serviço de longa descrição', descricao: 'Um texto que levou tempo para escrever', precoReferencia: 1250, permitePagamentoUnico: true, permitePagamentoRecorrente: true, periodicidades: ['ANUAL'] }]);
 });
 
 test('[CATAV-6] EDITAR com a indisponibilidade confirmada: o painel abre já avisando, com o Salvar pausado e as alterações digitadas preservadas; nada é enviado', async () => {
@@ -303,6 +306,7 @@ test('[CATAV-8] NÃO ENVIA GRAVAÇÃO CONHECIDAMENTE CONDENADA: com a indisponib
   api.mem.falhas.criar = await erroApi(503, 'CRM_CATALOG_PERSISTENCE');
   await clicar(s, botao(s, 'Novo Serviço'));
   digitar(s, campo(s, 'nome'), 'Condenado');
+  marcar(s, 'permitePagamentoUnico');
   await salvar(s);
   assert.equal(api.escritas().length, 1, 'só a tentativa que revelou a indisponibilidade');
   await clicar(s, botao(s, 'Cancelar', gaveta(s)));

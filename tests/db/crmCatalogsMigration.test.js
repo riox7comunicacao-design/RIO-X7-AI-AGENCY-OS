@@ -17,6 +17,7 @@ const MIGRATION_FILE = path.join(MIGRATIONS_DIR, '20261012090000_crm_catalogs.sq
 const SQL = fs.readFileSync(MIGRATION_FILE, 'utf8').replace(/\r\n/g, '\n');
 const EXECUTAVEL = SQL.replace(/--[^\n]*/g, ''); // sem os comentários
 
+const MODALITY_COLUMNS = ['permite_pagamento_unico', 'permite_pagamento_recorrente', 'periodicidades'];
 const TABELAS = Object.fromEntries(CATALOG_KEYS.map((key) => [key, CATALOG_DEFINITIONS[key].table]));
 
 // O corpo de cada CREATE TABLE: { nome: texto entre parênteses }.
@@ -36,7 +37,8 @@ test('[MIG-CAT-1] o arquivo existe, segue a convenção de nome do CLI do Supaba
   // Era "a mais nova" até a Fase 2B-3.2B-H2, que acrescentou uma migration CORRETIVA posterior (created_by_user_id das Exclusões): o que
   // importa continua valendo — as cinco migrations anteriores, e só elas, vêm antes desta.
   assert.equal(todas.indexOf(path.basename(MIGRATION_FILE)), 5, 'exatamente as cinco migrations anteriores vêm antes');
-  assert.deepEqual(todas.slice(6), ['20261017090000_prospecting_permanent_exclusions_created_by_text.sql'], 'a única posterior é a corretiva das Exclusões Permanentes (H2)');
+  // Depois dela, só duas, nesta ordem: a corretiva das Exclusões Permanentes (H2) e a das modalidades de pagamento dos Serviços (C1, que ACRESCENTA colunas a crm_services sem editar esta).
+  assert.deepEqual(todas.slice(6), ['20261017090000_prospecting_permanent_exclusions_created_by_text.sql', '20261018090000_crm_services_payment_modalities.sql'], 'as únicas posteriores: H2 (Exclusões) e C1 (modalidades dos Serviços)');
   assert.match(SQL.split('\n').slice(0, 14).join('\n'), /NÃO APLICADA\./, 'o cabeçalho diz que NÃO foi aplicada');
   assert.match(SQL, /decisão 0026/);
   assert.match(SQL, /Aplicar é uma ação humana e consciente do proprietário/i);
@@ -53,7 +55,8 @@ test('[MIG-CAT-3] as COLUNAS de cada tabela são exatamente as que o adapter lê
   const comuns = Object.values(COMMON_COLUMNS);
   assert.equal(comuns.length, 12);
   for (const key of CATALOG_KEYS) {
-    const esperadas = [...comuns, ...Object.values(CATALOG_TABLES[key].specific)].sort();
+    // As colunas das modalidades de pagamento (Fase C1) nascem na migration 20261018090000, não nesta: esta, já aplicada, não é editada — ver crmServicesPaymentModalitiesMigration.test.js. As colunas LEGADAS (tipo_cobranca, recorrencia) continuam aqui e o adapter só as LÊ.
+    const esperadas = [...comuns, ...Object.values(CATALOG_TABLES[key].specific).filter((coluna) => !MODALITY_COLUMNS.includes(coluna)), ...Object.values(CATALOG_TABLES[key].legacy || {})].sort();
     assert.deepEqual(colunasDe(CORPOS[TABELAS[key]]).sort(), esperadas, `${TABELAS[key]}`);
   }
   // tipos e padrões das colunas comuns

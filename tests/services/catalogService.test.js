@@ -64,8 +64,9 @@ test('[CATSVC-3] a tabela de permissões: leitura de ativos = READ:CRM; todo o r
 test('[CATSVC-4] ADMIN faz tudo: cria, lista, consulta, edita, desativa, reativa e reordena nos TRÊS catálogos', async () => {
   const { service } = criar();
   for (const catalogo of CATALOG_KEYS) {
-    const a = await service.create(admin(), catalogo, { nome: `Primeiro ${catalogo}` });
-    const b = await service.create(admin(), catalogo, { nome: `Segundo ${catalogo}` });
+    const modalidade = catalogo === 'servicos' ? { permitePagamentoUnico: true } : {}; // Fase C1: um serviço novo exige uma modalidade
+    const a = await service.create(admin(), catalogo, { nome: `Primeiro ${catalogo}`, ...modalidade });
+    const b = await service.create(admin(), catalogo, { nome: `Segundo ${catalogo}`, ...modalidade });
     assert.equal(a.ordem, 0);
     assert.equal(b.ordem, 1);
     assert.equal((await service.list(admin(), catalogo)).length, 2);
@@ -180,16 +181,18 @@ test('[CATSVC-8] cada operação pede a permissão certa ao autorizador (READ pa
 test('[CATSVC-9] PROJEÇÃO por papel: o ADMIN recebe todos os campos (inclusive quem criou/alterou); quem só lê não recebe auditoria nem `emUso` — e só os campos conhecidos de cada catálogo, nunca um objeto vivo', async () => {
   const { service } = criar();
   const casos = {
-    servicos: { nome: 'Site', categoria: 'Web', precoReferencia: 1500, tipoCobranca: 'UNICA' },
+    servicos: { nome: 'Site', categoria: 'Web', precoReferencia: 1500, permitePagamentoUnico: true },
     nichos: { nome: 'Estética', cor: 'azul' },
     origens: { nome: 'Indicação', canal: 'INDICACAO' },
   };
   for (const catalogo of CATALOG_KEYS) {
     const criado = await service.create(admin(), catalogo, casos[catalogo]);
-    const esperadosAdmin = [...COMMON_ITEM_FIELDS, ...CATALOG_DEFINITIONS[catalogo].specificFields].sort();
+    // os campos LEGADOS dos serviços (tipoCobranca, recorrencia) continuam sendo devolvidos, só para leitura
+    const esperadosAdmin = [...COMMON_ITEM_FIELDS, ...CATALOG_DEFINITIONS[catalogo].specificFields, ...(CATALOG_DEFINITIONS[catalogo].legacyFields || [])].sort();
     assert.deepEqual(Object.keys(criado).sort(), esperadosAdmin, `${catalogo}: ADMIN`);
     assert.equal(criado.criadoPorUserId, 'user-admin-promo');
     assert.equal(criado.criadoPorNome, 'Administrador da Promoção');
+    if (catalogo === 'servicos') assert.deepEqual([criado.tipoCobranca, criado.recorrencia], [null, null], 'o legado de um serviço novo é nulo');
 
     const lidoPeloCloser = await service.get(closer(), catalogo, criado.id);
     assert.deepEqual(Object.keys(lidoPeloCloser).sort(), esperadosAdmin.filter((campo) => !AUDIT_FIELDS.includes(campo)), `${catalogo}: quem só lê`);
@@ -290,7 +293,7 @@ test('[CATSVC-14] FALHA FECHADA do contador: se contar o uso falha (exceção, r
   };
   for (const [nome, countUsage] of Object.entries(modos)) {
     const { service } = criar({ countUsage });
-    const item = await service.create(admin(), 'servicos', { nome: 'Site' });
+    const item = await service.create(admin(), 'servicos', { nome: 'Site', permitePagamentoUnico: true });
     const erro = await erroDe(() => service.update(admin(), 'servicos', item.id, { nome: 'Site novo' }));
     assert.equal(erro.code, CATALOG_ERROR.PERSISTENCE, nome);
     assert.equal(erro.message, 'Cadastro: não foi possível verificar o uso do item.', nome);
@@ -306,7 +309,7 @@ test('[CATSVC-15] `emUso` na consulta do administrador é o número que o contad
   const usos = { 'Estética': 3, 'Site': 0 };
   const { service } = criar({ countUsage: async (catalogo, item) => (item.nome in usos ? usos[item.nome] : 9) });
   const nicho = await service.create(admin(), 'nichos', { nome: 'Estética' });
-  const servico = await service.create(admin(), 'servicos', { nome: 'Site' });
+  const servico = await service.create(admin(), 'servicos', { nome: 'Site', permitePagamentoUnico: true });
   assert.equal((await service.get(admin(), 'nichos', nicho.id)).emUso, 3);
   assert.equal((await service.get(admin(), 'servicos', servico.id)).emUso, 0);
   assert.equal('emUso' in (await service.get(closer(), 'nichos', nicho.id)), false);
