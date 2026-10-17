@@ -25,7 +25,7 @@
 //
 // SEGREDO: a service_role key fica só em memória, só neste processo, só para montar o cabeçalho Authorization
 // de cada requisição. Nunca é logada (este arquivo não chama console.*) e nunca aparece em nenhuma mensagem de
-// erro lançada por ele — os erros citam status HTTP e a mensagem que o PostgREST devolveu, nunca o cabeçalho.
+// erro lançada por ele — os erros citam status HTTP e a mensagem que o PostgREST devolveu (a leitura da lista, desde a Fase H3.2, só cita o status), nunca o cabeçalho.
 
 const { readSupabaseCrmConfig } = require('./crmSupabaseConfig');
 const { recordToRow, rowToRecord } = require('./crmSupabaseMapping');
@@ -84,7 +84,7 @@ function classifyPostgrestFailure(status, json) {
 // Uma chamada ao PostgREST. `fetchImpl` é SEMPRE injetado por quem cria o repositório (nunca o fetch global
 // direto) — ver createSupabaseCrmRepository. Nunca inclui o segredo em nada que possa vazar: só no cabeçalho da
 // requisição, nunca no erro lançado.
-async function postgrest(config, { method, path, query, body, prefer }, fetchImpl) {
+async function send(config, { method, path, query, body, prefer, safeError }, fetchImpl) {
   const url = new URL(config.url + path);
   if (query) {
     for (const [key, value] of Object.entries(query)) url.searchParams.set(key, value);
@@ -121,13 +121,68 @@ async function postgrest(config, { method, path, query, body, prefer }, fetchImp
     }
   }
   if (!response.ok) {
+    // `safeError` (a leitura da lista): só o status HTTP — nunca a mensagem do PostgREST (poderia citar dados do registro).
+    if (safeError) throw new Error(`CRM (Supabase): PostgREST recusou a leitura da lista (HTTP ${response.status}).`);
     const detalhe = json && typeof json.message === 'string' ? json.message : `HTTP ${response.status}`;
     const erro = new Error(`CRM (Supabase): PostgREST recusou a operação (${detalhe}).`);
     const classificado = classifyPostgrestFailure(response.status, json);
     if (classificado) erro.code = classificado;
     throw erro;
   }
-  return json;
+  return { json, response };
+}
+
+async function postgrest(config, spec, fetchImpl) {
+  return (await send(config, spec, fetchImpl)).json;
+}
+
+// ---------------------------------------------------------------------------------------------------------------------------------
+// LEITURA COMPLETA DA LISTA (Fase H3.2). `list()` alimenta a duplicidade, o DNC, a reconciliação da promoção, a contagem de uso dos catálogos,
+// `GET /api/crm` e o export: se ela vier CORTADA ou "vazia por engano", essas barreiras ficam cegas SEM nenhum aviso (comprovado na auditoria
+// H3.1 e previsto na pendência nº 2 da decisão 0023). Um PostgREST limita as linhas por resposta (padrão 1000, configurável) e, ordenando por
+// `seq` crescente, o corte descarta os registros MAIS NOVOS. Por isso a leitura:
+//   - é paginada (limit/offset) e pede o total exato (Prefer: count=exact), que volta em Content-Range ("0-499/1234", ou "*/0" com a tabela vazia);
+//   - só termina quando o número de linhas lidas é IGUAL a esse total, e o total tem de ser o mesmo em todas as páginas; uma página curta NUNCA é
+//     tomada como a última (o servidor pode ter um teto menor que o pedido);
+//   - confere, a cada página, que a faixa devolvida é exatamente a que foi pedida e a que chegou;
+//   - não aceita nada que não seja uma lista de objetos com `id` e `status` em texto (os campos estruturais de TODO registro: `id` é a chave
+//     primária e `status` é NOT NULL), nem um `id` repetido, nem um Content-Range ausente ou ilegível;
+//   - nunca devolve uma lista PARCIAL: qualquer dúvida, ou qualquer falha em qualquer página, é um ERRO, e quem chama (o domínio) a trata como falha
+//     da operação — nunca como "CRM vazio";
+//   - as mensagens de erro citam só o status HTTP ou um motivo fixo: nunca o corpo da resposta nem a mensagem do PostgREST.
+// ORDEM: `seq` (BIGINT GENERATED ALWAYS AS IDENTITY) é preenchida só pelo banco e nunca repetida; MAS a migration não declara UNIQUE sobre ela.
+// Por isso o desempate por `id` (chave primária): a ordem pública é a mesma de sempre e a paginação é determinística mesmo num empate teórico.
+// LIMITES OPERACIONAIS TEMPORÁRIOS (não são a capacidade definitiva do produto): 10 mil registros e 100 páginas. Acima disso a leitura FALHA
+// (nunca devolve "metade da lista"): cada operação que precisa da lista inteira (criar, promover, `GET /api/crm`, export) para até uma decisão.
+// SEM SNAPSHOT: as páginas são requisições independentes, sem transação entre elas. Uma inserção ou exclusão no meio da leitura costuma mudar o
+// total (ou repetir/pular uma linha) e a leitura falha — mas NÃO se afirma que toda alteração concorrente seja detectável (ex.: uma troca que
+// mantenha o total). Não há cache: cada leitura é nova.
+// Nada disto foi exercitado contra o Supabase REAL (só com `fetch` falso): ver o relatório da Fase H3.2.
+// ---------------------------------------------------------------------------------------------------------------------------------
+const LIST_PAGE_SIZE = 500;
+const LIST_MAX_ROWS = 10000;
+const LIST_MAX_PAGES = 100;
+
+function listError(reason) {
+  return new Error(`CRM (Supabase): a lista de registros não pôde ser lida por completo (${reason}).`);
+}
+
+// "0-499/1234" -> { start: 0, end: 499, total: 1234 }; "*/0" -> { start: null, end: null, total: 0 }; qualquer outra forma (inclusive "0-24/*") -> null.
+function parseContentRange(value) {
+  if (typeof value !== 'string') return null;
+  const found = /^(?:(\d+)-(\d+)|\*)\/(\d+)$/.exec(value.trim());
+  if (!found) return null;
+  const total = Number(found[3]);
+  if (found[1] === undefined) return { start: null, end: null, total };
+  const start = Number(found[1]);
+  const end = Number(found[2]);
+  return end >= start ? { start, end, total } : null;
+}
+
+// A forma estrutural mínima de uma linha: o que o domínio precisa para decidir (id e status). Nada mais é exigido, para nunca descartar um registro
+// legítimo antigo.
+function isCrmRow(row) {
+  return isPlainObject(row) && typeof row.id === 'string' && row.id.length > 0 && typeof row.status === 'string';
 }
 
 // options:
@@ -148,9 +203,44 @@ function createSupabaseCrmRepository(options = {}) {
     ? Object.freeze({ url: options.url.replace(/\/+$/, ''), serviceRoleKey: options.serviceRoleKey })
     : readSupabaseCrmConfig(options.env || process.env);
 
+  // TODOS os registros (na ordem de inserção), ou um erro — nunca uma parte deles e nunca "vazio" por uma resposta que não é uma lista.
   async function list() {
-    const rows = await postgrest(config, { method: 'GET', path: `/rest/v1/${table}`, query: { select: '*', order: 'seq.asc' } }, fetchImpl);
-    return Array.isArray(rows) ? rows.map(rowToRecord) : [];
+    const rows = [];
+    const seen = new Set();
+    let total = null;
+    for (let page = 0; page < LIST_MAX_PAGES; page += 1) {
+      const offset = rows.length;
+      const { json, response } = await send(
+        config,
+        { method: 'GET', path: `/rest/v1/${table}`, query: { select: '*', order: 'seq.asc,id.asc', limit: String(LIST_PAGE_SIZE), offset: String(offset) }, prefer: 'count=exact', safeError: true },
+        fetchImpl
+      );
+      if (!Array.isArray(json)) throw listError('a resposta não é uma lista');
+      const header = response && response.headers && typeof response.headers.get === 'function' ? response.headers.get('content-range') : null;
+      const range = parseContentRange(header);
+      if (range === null) throw listError('o total de registros não pôde ser confirmado');
+      if (total === null) total = range.total;
+      else if (range.total !== total) throw listError('o total mudou durante a leitura');
+      if (total > LIST_MAX_ROWS) throw listError('há registros demais para uma leitura segura');
+
+      if (json.length === 0) {
+        if (rows.length !== total) throw listError('a leitura terminou antes do total');
+        break;
+      }
+      if (json.length > LIST_PAGE_SIZE) throw listError('a página veio maior que a pedida');
+      // a faixa que o servidor diz ter devolvido tem de ser exatamente a que foi pedida e a que chegou
+      if (range.start !== offset || range.end !== offset + json.length - 1) throw listError('a faixa devolvida não confere com a pedida');
+      for (const row of json) {
+        if (!isCrmRow(row)) throw listError('um registro tem formato inesperado');
+        if (seen.has(row.id)) throw listError('um registro apareceu duas vezes');
+        seen.add(row.id);
+        rows.push(row);
+      }
+      if (rows.length > total) throw listError('vieram mais registros do que o total');
+      if (rows.length === total) break;
+    }
+    if (total === null || rows.length !== total) throw listError('a leitura não chegou ao total');
+    return rows.map(rowToRecord);
   }
 
   async function getById(id) {

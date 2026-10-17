@@ -40,7 +40,8 @@ function fetchFalso(...respostas) {
   fn.chamadas = chamadas;
   return fn;
 }
-const jsonResposta = (corpo, status = 200) => ({ ok: status >= 200 && status < 300, status, text: async () => JSON.stringify(corpo) });
+// `contentRange` (opcional): o cabeçalho que o PostgREST manda com Prefer: count=exact ("0-1/2", ou "*/0" com a tabela vazia). A leitura da lista (H3.2) o EXIGE.
+const jsonResposta = (corpo, status = 200, contentRange = null) => ({ ok: status >= 200 && status < 300, status, headers: { get: (nome) => (String(nome).toLowerCase() === 'content-range' ? contentRange : null) }, text: async () => JSON.stringify(corpo) });
 
 const registro = (overrides = {}) => ({
   id: 'crm:22222222-2222-4222-8222-222222222222',
@@ -84,10 +85,10 @@ test('[SBR-3] fetchImpl inválido é recusado antes de qualquer outra coisa', ()
 // ===========================================================================
 // list()
 // ===========================================================================
-test('[SBR-4] list(): GET com select=* e order=seq.asc, cabeçalhos apikey/Authorization com a chave, e cada linha vira um registro (sem seq/version/updated_at)', async (t) => {
+test('[SBR-4] list(): GET paginado (select=*, order=seq.asc,id.asc, limit=500, offset=0) com Prefer: count=exact, cabeçalhos apikey/Authorization com a chave, e cada linha vira um registro (sem seq/version/updated_at)', async (t) => {
   const linha1 = recordToRow(registro({ id: 'crm:33333333-3333-4333-8333-333333333333', empresa: 'Alfa' }));
   const linha2 = { ...recordToRow(registro({ id: 'crm:44444444-4444-4444-8444-444444444444', empresa: 'Beta' })), seq: 2, version: 3, updated_at: '2026-09-27T00:00:00Z' };
-  const fetchImpl = fetchFalso(jsonResposta([linha1, linha2]));
+  const fetchImpl = fetchFalso(jsonResposta([linha1, linha2], 200, '0-1/2'));
   const repo = createSupabaseCrmRepository({ url: URL_DE_TESTE, serviceRoleKey: CHAVE_DE_TESTE, fetchImpl });
 
   const registros = await repo.list();
@@ -96,7 +97,9 @@ test('[SBR-4] list(): GET com select=* e order=seq.asc, cabeçalhos apikey/Autho
   assert.equal(init.method, 'GET');
   assert.equal(url.pathname, `/rest/v1/${DEFAULT_TABLE}`);
   assert.equal(url.searchParams.get('select'), '*');
-  assert.equal(url.searchParams.get('order'), 'seq.asc');
+  assert.equal(url.searchParams.get('order'), 'seq.asc,id.asc', 'a ordem pública de sempre (seq), com o id só para desempatar');
+  assert.deepEqual([url.searchParams.get('limit'), url.searchParams.get('offset')], ['500', '0']);
+  assert.equal(init.headers.Prefer, 'count=exact', 'pede o total exato');
   assert.equal(init.headers.apikey, CHAVE_DE_TESTE);
   assert.equal(init.headers.Authorization, `Bearer ${CHAVE_DE_TESTE}`);
 
@@ -105,9 +108,11 @@ test('[SBR-4] list(): GET com select=* e order=seq.asc, cabeçalhos apikey/Autho
   for (const r of registros) for (const chave of ['seq', 'version', 'updated_at']) assert.equal(Object.prototype.hasOwnProperty.call(r, chave), false);
 });
 
-test('[SBR-5] list(): resposta vazia vira lista vazia', async () => {
-  const repo = createSupabaseCrmRepository({ url: URL_DE_TESTE, serviceRoleKey: CHAVE_DE_TESTE, fetchImpl: fetchFalso(jsonResposta([])) });
+test('[SBR-5] list(): só uma tabela COMPROVADAMENTE vazia (corpo [] com Content-Range "*/0") é uma lista vazia; um [] sem o total confirmado é ERRO, nunca "CRM vazio"', async () => {
+  const repo = createSupabaseCrmRepository({ url: URL_DE_TESTE, serviceRoleKey: CHAVE_DE_TESTE, fetchImpl: fetchFalso(jsonResposta([], 200, '*/0')) });
   assert.deepEqual(await repo.list(), []);
+  const semTotal = createSupabaseCrmRepository({ url: URL_DE_TESTE, serviceRoleKey: CHAVE_DE_TESTE, fetchImpl: fetchFalso(jsonResposta([])) });
+  await assert.rejects(() => semTotal.list(), /não pôde ser lida por completo/);
 });
 
 // ===========================================================================
