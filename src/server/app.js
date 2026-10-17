@@ -46,6 +46,19 @@
 //   GET    /api/funnel-cards/:id/history       histórico de movimentação (append-only)            -> 200 { historico }
 //   DELETE /api/funnel-cards/:id               ARQUIVA (nunca apaga; nunca afeta o CRM Record)     -> 200 { deleted: true, id }
 // Não há filtro nem busca (além do funil) nesta etapa: o Service não os tem, e a API não inventa operação.
+// Negociações e o QUADRO dos funis (CRM 5.0, Fase D1, decisão 0028) — só existem quando o Negotiation Service é injetado; sem ele, /api/negotiations... e /api/funnel-board são 404.
+// Ler exige READ:CRM; criar, editar, mudar de etapa, ganhar e perder exigem PROPOSE:CRM (ADMIN e COMMERCIAL_CLOSER); REABRIR exige WRITE:CRM (só ADMIN) — quem decide é o Service.
+// O responsável e quem alterou vêm SEMPRE do token; o corpo nunca os define. Não há DELETE: uma negociação nunca é apagada.
+//   GET   /api/negotiations[?funnelId=&situacao=&crmRecordId=]  as negociações, da mais recente à mais antiga -> 200 { items }
+//   POST  /api/negotiations                  cria (e cria o card no funil); corpo { crmRecordId, funnelId, serviceId, prazoMeses, formaPagamento, periodicidade?, valorNegociado, previsaoFechamento? } -> 201 { item }
+//   GET   /api/negotiations/summary          os indicadores (abertas, ganhas, perdidas, conversão, por etapa), calculados no servidor -> 200 { resumo }
+//   GET   /api/negotiations/:id              uma negociação (com o histórico)                                  -> 200 { item }
+//   PATCH /api/negotiations/:id              edita (parcial) enquanto ABERTA; corpo = só os campos a mudar        -> 200 { item }
+//   POST  /api/negotiations/:id/move         corpo { stageId, reason? }                                         -> 200 { item }
+//   POST  /api/negotiations/:id/win          corpo {}                                                            -> 200 { item }
+//   POST  /api/negotiations/:id/lose         corpo { motivo } (obrigatório)                                      -> 200 { item }
+//   POST  /api/negotiations/:id/reopen       corpo {}                                                            -> 200 { item }
+//   GET   /api/funnel-board[?funnelId=]      o quadro: funis, etapas, cards (com a negociação) e totais por etapa -> 200 { quadro }
 // Catálogos do CRM — Serviços, Nichos e Origens dos Leads (CRM 5.0, Fase 2B-1, decisão 0026) — só existem quando o Catalog Service é
 // injetado; sem ele, /api/crm-catalogs... é 404. O prefixo é `crm-catalogs` (e não /api/crm/catalogs) DE PROPÓSITO: /api/crm/:id é a
 // rota de um registro, e "catalogs" seria lido como um id. <catalogo> é servicos | nichos | origens; qualquer outro é 404. Ler os
@@ -125,6 +138,9 @@ const FUNNEL_OPERATIONS = Object.freeze([
   'listStages', 'createStage', 'updateStage', 'deleteStage', 'reorderStages',
   'listCardsByFunnel', 'getCard', 'getCardHistory', 'createCard', 'moveCard', 'deleteCard',
 ]);
+
+// As operações do Negotiation Service (src/services/negotiationService.js) que a API usa — Negociações e o quadro (Fase D1).
+const NEGOTIATION_OPERATIONS = Object.freeze(['list', 'get', 'create', 'update', 'move', 'win', 'lose', 'reopen', 'summary', 'board']);
 
 // A operação da promoção Approval Queue → CRM (src/services/crmIntegrationService.js) que a API usa. Verificada na criação.
 const PROMOTION_OPERATION = 'promoteProspect';
@@ -234,6 +250,13 @@ const CATALOG = Object.freeze({
   CRM_CATALOG_DUPLICATE_NAME: [409, 'Já existe um item com este nome (mesmo desativado).'],
   CRM_CATALOG_NAME_IN_USE: [409, 'Este item já é usado em registros do CRM e o nome não pode ser alterado nesta fase.'],
   CRM_CATALOG_PERSISTENCE: [503, 'Não foi possível ler ou gravar os cadastros agora. Tente novamente em instantes.'],
+  // Negociações (Fase D1), por `code` estável do domínio — nunca por mensagem. Mensagens FIXAS: nunca o valor recusado nem o texto do armazenamento.
+  NEGOTIATION_INVALID_INPUT: [400, 'Os dados da negociação são inválidos.'],
+  NEGOTIATION_NOT_FOUND: [404, 'Negociação não encontrada.'],
+  NEGOTIATION_CLOSED: [409, 'Só uma negociação aberta pode ser editada ou mudar de etapa.'],
+  NEGOTIATION_INVALID_STATE: [409, 'Esta ação não é possível na situação atual da negociação.'],
+  NEGOTIATION_CONFLICT: [409, 'A negociação foi alterada por outra pessoa. Atualize o quadro e tente de novo.'],
+  NEGOTIATION_PERSISTENCE: [503, 'Não foi possível ler ou gravar as negociações agora. Tente novamente em instantes.'],
   // Funis configuráveis (Etapa "Funis 1"), por `code` estável do domínio (funnelDomain.js) — nunca por mensagem:
   // quais funis/etapas foram vinculados a um card não é dito (o card ainda nem existe nesta etapa).
   FUNNEL_HAS_CARDS: [409, 'Este funil possui cards vinculados e não pode ser excluído.'],
@@ -242,6 +265,9 @@ const CATALOG = Object.freeze({
   FUNNEL_CARD_DUPLICATE: [409, 'Este registro já tem um card ativo neste funil.'],
   FUNNEL_STAGE_MISMATCH: [400, 'A etapa informada não pertence a este funil.'],
   FUNNEL_HAS_NO_STAGES: [409, 'Este funil ainda não tem nenhuma etapa.'],
+  FUNNEL_CARD_HAS_NEGOTIATION: [409, 'Este card pertence a uma negociação: use as ações da negociação.'],
+  FUNNEL_STAGE_INACTIVE: [409, 'A etapa de destino está desativada.'],
+  FUNNEL_REPOSITORY_CONFLICT: [409, 'O card foi movido por outra pessoa. Atualize o quadro e tente de novo.'],
   PAYLOAD_TOO_LARGE: [413, 'Requisição grande demais.'],
   UNSUPPORTED_MEDIA_TYPE: [415, 'Envie o corpo como application/json.'],
   INVALID_REQUEST: [400, 'Requisição inválida.'],
@@ -344,6 +370,8 @@ const FUNNEL_CODES = Object.freeze({
   FUNNEL_CARD_DUPLICATE: 'FUNNEL_CARD_DUPLICATE',
   FUNNEL_STAGE_MISMATCH: 'FUNNEL_STAGE_MISMATCH',
   FUNNEL_HAS_NO_STAGES: 'FUNNEL_HAS_NO_STAGES',
+  FUNNEL_CARD_HAS_NEGOTIATION: 'FUNNEL_CARD_HAS_NEGOTIATION',
+  FUNNEL_STAGE_INACTIVE: 'FUNNEL_STAGE_INACTIVE',
 });
 
 // O `code` do CRM Service (crmService.js) que a API reconhece — mesmo mapeamento identidade de FUNNEL_CODES acima,
@@ -358,6 +386,15 @@ const EXCLUSION_CODES = Object.freeze({
   EXCLUSION_INVALID_INPUT: 'EXCLUSION_INVALID_INPUT',
   EXCLUSION_NOT_FOUND: 'EXCLUSION_NOT_FOUND',
   EXCLUSION_PERSISTENCE: 'EXCLUSION_PERSISTENCE',
+});
+
+// O `code` do domínio de Negociações (negotiationDomain.js) que a API reconhece — mesmo mapeamento identidade das listas acima (Fase D1).
+const NEGOTIATION_CODES = Object.freeze({
+  NEGOTIATION_INVALID_INPUT: 'NEGOTIATION_INVALID_INPUT',
+  NEGOTIATION_NOT_FOUND: 'NEGOTIATION_NOT_FOUND',
+  NEGOTIATION_CLOSED: 'NEGOTIATION_CLOSED',
+  NEGOTIATION_INVALID_STATE: 'NEGOTIATION_INVALID_STATE',
+  NEGOTIATION_PERSISTENCE: 'NEGOTIATION_PERSISTENCE',
 });
 
 // O `code` do domínio/Catalog Service dos catálogos do CRM (catalogDomain.js) que a API reconhece — mesmo mapeamento identidade das
@@ -486,6 +523,9 @@ function mapErrorToHttp(error) {
     if (CATALOG[code][0] === 400) details = safeDetails(error.details);
   } else if (error && typeof error === 'object' && typeof error.code === 'string' && Object.prototype.hasOwnProperty.call(CRM_CATALOG_CODES, error.code)) {
     code = CRM_CATALOG_CODES[error.code];
+    if (CATALOG[code][0] === 400) details = safeDetails(error.details);
+  } else if (error && typeof error === 'object' && typeof error.code === 'string' && Object.prototype.hasOwnProperty.call(NEGOTIATION_CODES, error.code)) {
+    code = NEGOTIATION_CODES[error.code];
     if (CATALOG[code][0] === 400) details = safeDetails(error.details);
   } else {
     const message = error && typeof error.message === 'string' ? error.message : '';
@@ -664,7 +704,7 @@ function parseTarget(req) {
 }
 
 // `crm`: as rotas do CRM só existem quando o CRM Service foi injetado; sem ele, /api/crm... é uma rota desconhecida (404).
-function matchRoute(pathname, { crm, promotion, prospecting, prospectingBatchReads, prospectingBrief, prospectingJobs, prospectingExclusions, funnels, crmCatalogs, leadReview, leadEnrichment }) {
+function matchRoute(pathname, { crm, promotion, prospecting, prospectingBatchReads, prospectingBrief, prospectingJobs, prospectingExclusions, funnels, negotiations, crmCatalogs, leadReview, leadEnrichment }) {
   if (pathname === '/api/me') return { name: 'me', label: '/api/me', methods: ['GET'] };
   if (pathname === '/api/approvals') return { name: 'list', label: '/api/approvals', methods: ['GET'] };
   if (prospecting && pathname === '/api/prospecting/submit') return { name: 'prospecting-submit', label: '/api/prospecting/submit', methods: ['POST'] };
@@ -746,6 +786,15 @@ function matchRoute(pathname, { crm, promotion, prospecting, prospectingBatchRea
   }
   // Funis configuráveis (reestruturação Prospecção/CRM/Funis, Etapa "Funis 1"). A ordem importa: os caminhos mais
   // específicos ("reorder") são checados ANTES do padrão genérico de :id, senão "reorder" seria lido como um id.
+  if (negotiations) {
+    if (pathname === '/api/funnel-board') return { family: 'negotiation', name: 'funnel-board', label: '/api/funnel-board', methods: ['GET'] };
+    if (pathname === '/api/negotiations') return { family: 'negotiation', name: 'negotiation-collection', label: '/api/negotiations', methods: ['GET', 'POST'] };
+    if (pathname === '/api/negotiations/summary') return { family: 'negotiation', name: 'negotiation-summary', label: '/api/negotiations/summary', methods: ['GET'] };
+    const action = /^\/api\/negotiations\/([^/]+)\/(move|win|lose|reopen)$/.exec(pathname);
+    if (action) return { family: 'negotiation', name: `negotiation-${action[2]}`, label: `/api/negotiations/:id/${action[2]}`, methods: ['POST'], rawId: action[1] };
+    const item = /^\/api\/negotiations\/([^/]+)$/.exec(pathname);
+    if (item) return { family: 'negotiation', name: 'negotiation-item', label: '/api/negotiations/:id', methods: ['GET', 'PATCH'], rawId: item[1] };
+  }
   if (funnels) {
     if (pathname === '/api/funnels/reorder') return { family: 'funnel', name: 'funnel-reorder', label: '/api/funnels/reorder', methods: ['POST'] };
     if (pathname === '/api/funnels') return { family: 'funnel', name: 'funnel-collection', label: '/api/funnels', methods: ['GET', 'POST'] };
@@ -849,6 +898,7 @@ function createApp(dependencies) {
     leadReconsiderationService,
     leadEnrichmentService,
     funnelService,
+    negotiationService,
     crmCatalogService,
     publicConfig,
     staticRoot,
@@ -910,6 +960,11 @@ function createApp(dependencies) {
   if (funnelService !== undefined) {
     for (const operation of FUNNEL_OPERATIONS) {
       if (!funnelService || typeof funnelService[operation] !== 'function') throw new Error(`createApp exige { funnelService } com ${operation}()`);
+    }
+  }
+  if (negotiationService !== undefined) {
+    for (const operation of NEGOTIATION_OPERATIONS) {
+      if (!negotiationService || typeof negotiationService[operation] !== 'function') throw new Error(`createApp exige { negotiationService } com ${operation}()`);
     }
   }
   if (crmCatalogService !== undefined) {
@@ -1223,6 +1278,46 @@ function createApp(dependencies) {
     throw new HttpError('ROUTE_NOT_FOUND');
   }
 
+  // Negociações e o quadro (Fase D1): cada rota só traduz HTTP <-> uma chamada ao Negotiation Service, com o AuthorizationContext do token. A permissão (READ/PROPOSE/WRITE:CRM), as regras
+  // do domínio e a identidade gravada no histórico são do Service. Nenhum corpo ou query participa da identidade ou da permissão.
+  async function dispatchNegotiation(req, url, route, context) {
+    if (route.name === 'funnel-board') {
+      const query = readQuery(url, ['funnelId']);
+      return respond(200, { quadro: await negotiationService.board(context, query.has('funnelId') ? query.get('funnelId') : undefined) });
+    }
+    if (route.name === 'negotiation-summary') {
+      readQuery(url, []);
+      return respond(200, { resumo: await negotiationService.summary(context) });
+    }
+    if (route.name === 'negotiation-collection') {
+      if (req.method === 'GET') {
+        const query = readQuery(url, ['funnelId', 'situacao', 'crmRecordId']);
+        const filters = {};
+        for (const key of ['funnelId', 'situacao', 'crmRecordId']) if (query.has(key)) filters[key] = query.get(key);
+        return respond(200, { items: await negotiationService.list(context, filters) });
+      }
+      readQuery(url, []);
+      return respond(201, { item: await negotiationService.create(context, await readJsonBody(req)) });
+    }
+    readQuery(url, []);
+    const id = decodeId(route.rawId);
+    if (route.name === 'negotiation-item') {
+      if (req.method === 'GET') {
+        const item = await negotiationService.get(context, id);
+        if (item === null) throw new HttpError('NOT_FOUND');
+        return respond(200, { item });
+      }
+      return respond(200, { item: await negotiationService.update(context, id, await readJsonBody(req)) });
+    }
+    const body = await readJsonBody(req);
+    if (route.name === 'negotiation-move') return respond(200, { item: await negotiationService.move(context, id, readActionBody(body, ['stageId', 'reason'])) });
+    if (route.name === 'negotiation-lose') return respond(200, { item: await negotiationService.lose(context, id, readActionBody(body, ['motivo'])) });
+    if (Object.keys(body).length > 0) throw new HttpError('INVALID_REQUEST', 'Campos não permitidos na requisição.');
+    if (route.name === 'negotiation-win') return respond(200, { item: await negotiationService.win(context, id) });
+    if (route.name === 'negotiation-reopen') return respond(200, { item: await negotiationService.reopen(context, id) });
+    throw new HttpError('ROUTE_NOT_FOUND');
+  }
+
   // Catálogos do CRM — Serviços, Nichos e Origens dos Leads (Fase 2B-1): cada rota só traduz HTTP <-> uma chamada ao Catalog Service,
   // com o AuthorizationContext do token. A permissão (READ:CRM / MANAGE:CRM_CATALOGS), a validação dos campos, a unicidade e a trava de
   // renomeação são do Service. Nenhum corpo ou query participa da identidade ou da permissão. Não existe rota DELETE (desativar).
@@ -1270,6 +1365,7 @@ function createApp(dependencies) {
       prospectingJobs: prospectingJobService !== undefined,
       prospectingExclusions: prospectingExclusionService !== undefined,
       funnels: funnelService !== undefined,
+      negotiations: negotiationService !== undefined,
       crmCatalogs: crmCatalogService !== undefined,
       leadReview: leadReconsiderationService !== undefined,
       leadEnrichment: leadEnrichmentService !== undefined,
@@ -1286,6 +1382,7 @@ function createApp(dependencies) {
 
     if (route.family === 'crm') return dispatchCrm(req, url, route, context);
     if (route.family === 'funnel') return dispatchFunnel(req, url, route, context);
+    if (route.family === 'negotiation') return dispatchNegotiation(req, url, route, context);
     if (route.family === 'crm-catalog') return dispatchCrmCatalog(req, url, route, context);
     if (route.family === 'prospecting-brief') return dispatchProspectingBrief(req, url, route, context);
     if (route.family === 'prospecting-job') return dispatchProspectingJob(req, url, route, context);

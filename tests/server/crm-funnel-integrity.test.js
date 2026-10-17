@@ -11,6 +11,8 @@ const assert = require('node:assert/strict');
 const { Readable } = require('node:stream');
 
 const { montarAmbiente, BRENO, RAFAEL } = require('./testEnv');
+// O MESMO conjunto roda nos dois modos (Fase D1.1): este arquivo (arquivo) e o `.supabase.test.js` (adapters do Supabase sobre o PostgREST falso).
+const MODO = process.env.NEG_TEST_STORAGE === 'supabase' ? 'supabase' : 'arquivo';
 
 function makeRequest({ method = 'GET', url = '/', headers = {}, body } = {}) {
   const req = body === undefined ? Readable.from([]) : Readable.from([Buffer.from(typeof body === 'string' ? body : JSON.stringify(body))]);
@@ -57,7 +59,7 @@ const excluir = (env, usuario, id, reason = 'motivo de teste') => chamar(env, us
 const MENSAGEM_BLOQUEIO = 'Este registro não pode ser excluído enquanto possuir Cards ativos em funis. Arquive os Cards primeiro.';
 
 test('[CRM-FUNNEL-INTEGRITY-1] CASO 1 — CRM sem nenhum Card: DELETE /api/crm/:id funciona normalmente (200), e o registro realmente some', async (t) => {
-  const env = montarAmbiente(t, { usuarios: [BRENO], crm: true, funnels: true });
+  const env = montarAmbiente(t, { usuarios: [BRENO], crm: true, funnels: true, commercialStorage: MODO });
   const registro = await criarRegistro(env, BRENO, 'Sem Cards Ltda');
 
   const resposta = await excluir(env, BRENO, registro.id);
@@ -69,7 +71,7 @@ test('[CRM-FUNNEL-INTEGRITY-1] CASO 1 — CRM sem nenhum Card: DELETE /api/crm/:
 });
 
 test('[CRM-FUNNEL-INTEGRITY-2] CASO 2 — CRM com 1 Card ATIVO: DELETE é bloqueado (409 CRM_HAS_ACTIVE_FUNNEL_CARDS, mensagem fixa); o CRM e o Card continuam existindo depois da tentativa', async (t) => {
-  const env = montarAmbiente(t, { usuarios: [BRENO], crm: true, funnels: true });
+  const env = montarAmbiente(t, { usuarios: [BRENO], crm: true, funnels: true, commercialStorage: MODO });
   const registro = await criarRegistro(env, BRENO, 'Com Um Card Ativo');
   const { funnel } = await criarFunilComEtapa(env, BRENO);
   const card = await criarCard(env, BRENO, funnel.id, registro.id);
@@ -89,7 +91,7 @@ test('[CRM-FUNNEL-INTEGRITY-2] CASO 2 — CRM com 1 Card ATIVO: DELETE é bloque
 });
 
 test('[CRM-FUNNEL-INTEGRITY-3] CASO 3 — CRM com Cards ativos em VÁRIOS funis (o mesmo registro comercial em dois funis diferentes, ao mesmo tempo — seção 3 da Etapa "Funis 2"): DELETE continua bloqueado (409)', async (t) => {
-  const env = montarAmbiente(t, { usuarios: [BRENO], crm: true, funnels: true });
+  const env = montarAmbiente(t, { usuarios: [BRENO], crm: true, funnels: true, commercialStorage: MODO });
   const registro = await criarRegistro(env, BRENO, 'Em Dois Funis');
   const { funnel: outbound } = await criarFunilComEtapa(env, BRENO, 'Outbound');
   const { funnel: renovacao } = await criarFunilComEtapa(env, BRENO, 'Renovação');
@@ -102,19 +104,25 @@ test('[CRM-FUNNEL-INTEGRITY-3] CASO 3 — CRM com Cards ativos em VÁRIOS funis 
 });
 
 test('[CRM-FUNNEL-INTEGRITY-4] CASO 4 — CRM só com Cards ARQUIVADOS: DELETE volta a ser permitido (200)', async (t) => {
-  const env = montarAmbiente(t, { usuarios: [BRENO], crm: true, funnels: true });
+  const env = montarAmbiente(t, { usuarios: [BRENO], crm: true, funnels: true, commercialStorage: MODO });
   const registro = await criarRegistro(env, BRENO, 'Só Arquivados');
   const { funnel } = await criarFunilComEtapa(env, BRENO);
   const card = await criarCard(env, BRENO, funnel.id, registro.id);
   await arquivarCard(env, BRENO, card.id);
 
   const resposta = await excluir(env, BRENO, registro.id);
+  if (MODO === 'supabase') {
+    // DIFERENÇA DELIBERADA (decisão 0029): no banco o card arquivado continua ligado ao registro (chave estrangeira e histórico preservado) — a exclusão fica bloqueada com a recusa clara de sempre (409),
+    // nunca com uma falha de integridade do banco.
+    assert.equal(resposta.status, 409);
+    return;
+  }
   assert.equal(resposta.status, 200);
   assert.deepEqual(resposta.json(), { deleted: true, id: registro.id });
 });
 
 test('[CRM-FUNNEL-INTEGRITY-5] CASO 5 — CRM com Cards ativos E arquivados ao mesmo tempo: DELETE continua bloqueado pelo(s) ativo(s)', async (t) => {
-  const env = montarAmbiente(t, { usuarios: [BRENO], crm: true, funnels: true });
+  const env = montarAmbiente(t, { usuarios: [BRENO], crm: true, funnels: true, commercialStorage: MODO });
   const registro = await criarRegistro(env, BRENO, 'Ativo e Arquivado');
   const { funnel: a } = await criarFunilComEtapa(env, BRENO, 'Funil A');
   const { funnel: b } = await criarFunilComEtapa(env, BRENO, 'Funil B');
@@ -128,7 +136,7 @@ test('[CRM-FUNNEL-INTEGRITY-5] CASO 5 — CRM com Cards ativos E arquivados ao m
 });
 
 test('[CRM-FUNNEL-INTEGRITY-6] CASO 6 — COMMERCIAL_CLOSER (sem DELETE:CRM) tentando excluir: 403, independentemente de o registro ter Cards ativos ou não', async (t) => {
-  const env = montarAmbiente(t, { usuarios: [BRENO, RAFAEL], crm: true, funnels: true });
+  const env = montarAmbiente(t, { usuarios: [BRENO, RAFAEL], crm: true, funnels: true, commercialStorage: MODO });
   const semCards = await criarRegistro(env, BRENO, 'Closer, Sem Cards');
   const recusa1 = await excluir(env, RAFAEL, semCards.id);
   assert.equal(recusa1.status, 403);
@@ -147,7 +155,7 @@ test('[CRM-FUNNEL-INTEGRITY-6] CASO 6 — COMMERCIAL_CLOSER (sem DELETE:CRM) ten
 });
 
 test('[CRM-FUNNEL-INTEGRITY-7] CASO 7 — arquivar um Card: removedAt preenchido, some da listagem ativa do Kanban (GET /api/funnels/:id/cards), mas o histórico de movimentação continua acessível por inteiro', async (t) => {
-  const env = montarAmbiente(t, { usuarios: [BRENO], crm: true, funnels: true });
+  const env = montarAmbiente(t, { usuarios: [BRENO], crm: true, funnels: true, commercialStorage: MODO });
   const registro = await criarRegistro(env, BRENO, 'Card A Arquivar');
   const { funnel } = await criarFunilComEtapa(env, BRENO);
   const card = await criarCard(env, BRENO, funnel.id, registro.id);
@@ -170,7 +178,7 @@ test('[CRM-FUNNEL-INTEGRITY-7] CASO 7 — arquivar um Card: removedAt preenchido
 });
 
 test('[CRM-FUNNEL-INTEGRITY-8] CASO 8 — depois de arquivar o ÚLTIMO Card ativo de um registro, a exclusão do CRM passa a ser permitida', async (t) => {
-  const env = montarAmbiente(t, { usuarios: [BRENO], crm: true, funnels: true });
+  const env = montarAmbiente(t, { usuarios: [BRENO], crm: true, funnels: true, commercialStorage: MODO });
   const registro = await criarRegistro(env, BRENO, 'Último Card');
   const { funnel } = await criarFunilComEtapa(env, BRENO);
   const card = await criarCard(env, BRENO, funnel.id, registro.id);
@@ -181,6 +189,10 @@ test('[CRM-FUNNEL-INTEGRITY-8] CASO 8 — depois de arquivar o ÚLTIMO Card ativ
   await arquivarCard(env, BRENO, card.id);
 
   const permitido = await excluir(env, BRENO, registro.id);
+  if (MODO === 'supabase') {
+    assert.equal(permitido.status, 409, 'no banco o card arquivado continua ligado ao registro (histórico preservado): a exclusão segue bloqueada');
+    return;
+  }
   assert.equal(permitido.status, 200);
   assert.deepEqual(permitido.json(), { deleted: true, id: registro.id });
 });

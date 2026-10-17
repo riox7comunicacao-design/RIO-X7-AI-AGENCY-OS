@@ -67,7 +67,7 @@ const viewportFalso = (mobile) => {
   return { mobile, isMobile() { return this.mobile; }, subscribe(fn) { ouvintes.add(fn); return () => ouvintes.delete(fn); }, mudar(v) { this.mobile = v; for (const fn of [...ouvintes]) fn(); } };
 };
 
-test('[MENU-1] clicar no TEXTO "CRM" abre o Dashboard Comercial — uma página EM DESENVOLVIMENTO, sem tabela, formulário, número nem chamada ao CRM; a seta só expande o submenu', async () => {
+test('[MENU-1] clicar no TEXTO "CRM" abre o Dashboard Comercial — a tela REAL (Fase D1), que só LÊ os indicadores (uma chamada GET) e não simula número nenhum; a seta só expande o submenu', async () => {
   const t = await iniciar();
   const crm = t.browser.by.link(nav(t), 'CRM');
   assert.equal(crm.href, '#/crm/dashboard');
@@ -84,15 +84,10 @@ test('[MENU-1] clicar no TEXTO "CRM" abre o Dashboard Comercial — uma página 
   assert.deepEqual(marcados(t), ['Dashboard Comercial']);
   assert.equal(t.browser.document.title, 'Dashboard Comercial — Rio X7 AI Agency OS');
   assert.equal(t.browser.by.tag(t.browser.root, 'h2')[0].textContent, 'Dashboard Comercial');
-  assert.match(texto(t), /EM DESENVOLVIMENTO/);
-  assert.match(texto(t), /Esta área ainda não foi construída\. Nada aqui é real: não há dados, números nem ações de demonstração\./);
-  assert.equal(t.browser.by.tag(t.browser.root, 'table').length, 0);
+  assert.doesNotMatch(texto(t), /EM DESENVOLVIMENTO/, 'o Dashboard Comercial existe');
   assert.equal(t.browser.by.tag(t.browser.root, 'form').length, 0);
-  assert.equal(t.browser.by.tag(t.browser.root, 'progress').length, 0);
   assert.equal(t.browser.by.cls(t.browser.root, 'kpi').length, 0, 'nenhum indicador simulado');
-  assert.deepEqual(chamadas(t), base, 'a página futura não faz nenhuma chamada nova');
-  assert.equal(t.browser.by.link(t.browser.root, 'Ir para Clientes').href, '#/crm/clientes');
-  assert.equal(t.browser.by.link(t.browser.root, 'Ver os Funis de Vendas').href, '#/funis');
+  assert.deepEqual(chamadas(t), [...base, 'GET /api/negotiations/summary'], 'uma única leitura, só GET');
 });
 
 test('[MENU-2] COMPATIBILIDADE: #/crm (a rota antiga) e #/crm/clientes mostram a MESMA lista de registros e acendem "Clientes"; nada foi remapeado em silêncio para o Dashboard', async () => {
@@ -138,10 +133,9 @@ test('[MENU-3] os LINKS ANTIGOS seguem funcionando: a ficha #/crm/registro/<id> 
   assert.match(texto(direto), /Odonto Beta/);
 });
 
-test('[MENU-4] as PÁGINAS FUTURAS (metas e a gestão de funis; Configurações do CRM, Serviços, Nichos e Origens já são telas reais — ver dashboard-crm-settings.test.js) dizem EM DESENVOLVIMENTO e não têm dado, formulário nem botão de ação; cada uma acende a sua entrada e abre o ramo; nenhuma chama a API', async () => {
+test('[MENU-4] as PÁGINAS FUTURAS (metas; o Dashboard Comercial e a Gestão de Funis e Etapas são telas reais — Fase D1; Configurações do CRM, Serviços, Nichos e Origens já são telas reais — ver dashboard-crm-settings.test.js) dizem EM DESENVOLVIMENTO e não têm dado, formulário nem botão de ação; cada uma acende a sua entrada e abre o ramo; nenhuma chama a API', async () => {
   const paginas = [
     ['#/crm/metas', 'Metas e Indicadores', 'Metas e Indicadores · CRM'],
-    ['#/crm/configuracoes/funis', 'Gestão de Funis e Etapas', 'Gestão de Funis e Etapas · Configurações do CRM'],
   ];
   for (const [hash, nome, titulo] of paginas) {
     const t = await iniciar({ hash });

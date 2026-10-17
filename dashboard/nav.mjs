@@ -24,7 +24,7 @@ export const NAV_TREE = Object.freeze([
     route: { name: 'crm-dashboard' }, // clicar no texto "CRM" abre o Dashboard Comercial
     needs: 'canReadCrm',
     children: [
-      { id: 'crm-dashboard', label: NAV_LABELS.crmDashboard, route: { name: 'crm-dashboard' }, needs: 'canReadCrm', soon: true },
+      { id: 'crm-dashboard', label: NAV_LABELS.crmDashboard, route: { name: 'crm-dashboard' }, needs: 'canReadCrm' },
       { id: 'crm-clients', label: NAV_LABELS.crmClients, route: { name: 'crm-clients' }, needs: 'canReadCrm' },
       { id: 'funnels', label: NAV_LABELS.funnels, route: { name: 'funnels' }, needs: 'canReadCrm' },
       { id: 'crm-goals', label: NAV_LABELS.crmGoals, route: { name: 'crm-goals' }, needs: 'canReadCrm', soon: true },
@@ -34,11 +34,11 @@ export const NAV_TREE = Object.freeze([
         route: { name: 'crm-settings' }, // a página de acessos aos cadastros (views/crmSettings.mjs); o pai só aparece se algum filho aparecer
         needs: 'canReadCrm',
         children: [
-          // Os três catálogos são telas ADMINISTRATIVAS reais (Fase 2B-2): só aparecem para quem pode administrá-los (MANAGE:CRM_CATALOGS). A Gestão de Funis e Etapas continua EM DESENVOLVIMENTO
-          // e, por ser administrativa, só aparece para quem tem MANAGE:FUNNELS. Quem só pode ler o CRM não vê nenhum item de Configurações (o pai some quando fica sem filhos).
+          // Os três catálogos são telas ADMINISTRATIVAS reais (Fase 2B-2): só aparecem para quem pode administrá-los (MANAGE:CRM_CATALOGS). A Gestão de Funis e Etapas (Fase D1) também é real e,
+          // por ser administrativa, só aparece para quem tem MANAGE:FUNNELS. Quem só pode ler o CRM não vê nenhum item de Configurações (o pai some quando fica sem filhos).
           { id: 'crm-settings-services', label: NAV_LABELS.crmServices, route: { name: 'crm-settings-services' }, needs: 'canManageCrmCatalogs' },
           { id: 'crm-settings-niches', label: NAV_LABELS.crmNiches, route: { name: 'crm-settings-niches' }, needs: 'canManageCrmCatalogs' },
-          { id: 'crm-settings-funnels', label: NAV_LABELS.crmFunnelAdmin, route: { name: 'crm-settings-funnels' }, needs: 'canManageFunnels', soon: true },
+          { id: 'crm-settings-funnels', label: NAV_LABELS.crmFunnelAdmin, route: { name: 'crm-settings-funnels' }, needs: 'canManageFunnels' },
           { id: 'crm-settings-origins', label: NAV_LABELS.crmOrigins, route: { name: 'crm-settings-origins' }, needs: 'canManageCrmCatalogs' },
         ],
       },

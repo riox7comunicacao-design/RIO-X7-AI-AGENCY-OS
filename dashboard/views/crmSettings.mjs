@@ -1,6 +1,6 @@
 // A página CONFIGURAÇÕES DO CRM (CRM 5.0, Fase 2B-2, refinamento): a porta de entrada dos cadastros que organizam o CRM — #/crm/configuracoes.
 //
-// O QUE ELA É: um índice. Cada cartão leva à rota REAL de um cadastro (Serviços, Nichos e Cores, Origens dos Leads); a Gestão de Funis e Etapas ainda não existe e aparece como um cartão
+// O QUE ELA É: um índice. Cada cartão leva à rota REAL de um cadastro (Serviços, Nichos e Cores, Origens dos Leads); a Gestão de Funis e Etapas (Fase D1) também é uma tela real. Uma entrada sem rota aparece como um cartão
 // desabilitado, marcado EM DESENVOLVIMENTO (sem link). O QUE ELA NÃO É: nenhuma informação simulada — nada de contagens, gráficos ou exemplos — e nenhuma chamada de API: não há nada a buscar.
 //
 // PERMISSÕES (só para MOSTRAR; o servidor decide de verdade em cada tela): os três cadastros exigem MANAGE:CRM_CATALOGS (`canManageCrmCatalogs`) e a Gestão de Funis e Etapas exige
@@ -17,7 +17,7 @@ export const SETTINGS_ENTRIES = Object.freeze([
   Object.freeze({ id: 'servicos', title: NAV_LABELS.crmServices, text: 'O catálogo de serviços que a agência oferece, com o preço de referência de cada um.', route: Object.freeze({ name: 'crm-settings-services' }), needs: 'canManageCrmCatalogs' }),
   Object.freeze({ id: 'nichos', title: NAV_LABELS.crmNiches, text: 'Os nichos de atuação dos clientes e a cor que identifica cada um.', route: Object.freeze({ name: 'crm-settings-niches' }), needs: 'canManageCrmCatalogs' }),
   Object.freeze({ id: 'origens', title: NAV_LABELS.crmOrigins, text: 'De onde os leads chegam: prospecção ativa, anúncio, indicação e outros canais.', route: Object.freeze({ name: 'crm-settings-origins' }), needs: 'canManageCrmCatalogs' }),
-  Object.freeze({ id: 'funis', title: NAV_LABELS.crmFunnelAdmin, text: 'A administração dos funis de vendas e das etapas de cada um.', route: null, needs: 'canManageFunnels' }),
+  Object.freeze({ id: 'funis', title: NAV_LABELS.crmFunnelAdmin, text: 'A administração dos funis de vendas e das etapas de cada um.', route: Object.freeze({ name: 'crm-settings-funnels' }), needs: 'canManageFunnels' }),
 ]);
 
 // Os acessos que ESTA conta pode ver (só o booleano verdadeiro vale).

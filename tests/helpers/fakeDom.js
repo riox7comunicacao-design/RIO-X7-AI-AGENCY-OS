@@ -458,6 +458,15 @@ function createBrowser({ hash = '' } = {}) {
         element.checked = !element.checked;
         element.dispatchEvent(makeEvent('input'));
         element.dispatchEvent(makeEvent('change'));
+      } else if (element.localName === 'input' && element.type === 'radio') {
+        // como no navegador: marcar um botão de rádio desmarca os outros do MESMO grupo (mesmo `name`, dentro do mesmo formulário ou da mesma raiz) — e só avisa se algo mudou
+        if (!element.checked) {
+          const group = closest(element, 'form') || element.ownerDocument.body || element.ownerDocument;
+          for (const other of findAll(group, (candidate) => candidate !== element && candidate.localName === 'input' && candidate.type === 'radio' && candidate.getAttribute('name') === element.getAttribute('name'))) other.checked = false;
+          element.checked = true;
+          element.dispatchEvent(makeEvent('input'));
+          element.dispatchEvent(makeEvent('change'));
+        }
       } else if (element.localName === 'button' && element.type === 'submit') {
         const form = closest(element, 'form');
         if (form) browser.submit(form);

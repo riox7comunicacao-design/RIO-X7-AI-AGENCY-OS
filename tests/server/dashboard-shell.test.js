@@ -278,7 +278,7 @@ test('[DASH-SHELL-13] navegação: cada item do menu abre a sua tela e fica marc
   await t.browser.flush();
   assert.deepEqual(ativo(t.browser), ['Dashboard Comercial'], 'o texto "CRM" abre o Dashboard Comercial');
   assert.equal(t.browser.document.title, 'Dashboard Comercial — Rio X7 AI Agency OS');
-  assert.match(textoDaTela(t.browser), /EM DESENVOLVIMENTO/);
+  assert.doesNotMatch(textoDaTela(t.browser), /EM DESENVOLVIMENTO/, 'o Dashboard Comercial é uma tela real (Fase D1)');
   assert.equal(t.browser.by.tag(t.browser.root, 'table').length, 0, 'nenhum dado simulado');
   t.browser.click(t.browser.by.link(t.browser.root, 'Clientes'));
   await t.browser.flush();

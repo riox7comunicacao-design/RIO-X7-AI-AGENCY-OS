@@ -36,7 +36,7 @@ function scan(file) {
 const SCANS = new Map(FILES.map((file) => [rel(file), scan(file)]));
 
 test('[DASH-GUARD-1] a lista de módulos do Dashboard é a esperada (um módulo novo exige decidir aqui — de propósito)', () => {
-  assert.deepEqual([...SCANS.keys()].sort(), ['api.mjs', 'app.mjs', 'catalog-colors.mjs', 'catalog-model.mjs', 'crm-catalog-lookup.mjs', 'crm-model.mjs', 'dom.mjs', 'format.mjs', 'i18n/pt-BR.mjs', 'main.mjs', 'nav.mjs', 'preferences.mjs', 'router.mjs', 'ui/catalogField.mjs', 'ui/colorPicker.mjs', 'ui/components.mjs', 'ui/dataBus.mjs', 'ui/index.mjs', 'ui/overlays.mjs', 'ui/routedDrawer.mjs', 'ui/sidebar.mjs', 'ui/toasts.mjs', 'views/agents.mjs', 'views/approvals.mjs', 'views/catalogForm.mjs', 'views/catalogs.mjs', 'views/comingSoon.mjs', 'views/crm.mjs', 'views/crmSettings.mjs', 'views/funnels.mjs', 'views/jobDetails.mjs', 'views/leadEnrichmentPanel.mjs', 'views/leadProfile.mjs', 'views/overview.mjs', 'views/prospecting.mjs', 'views/prospectingExclusions.mjs', 'views/prospectingHistory.mjs', 'views/rejectedLeads.mjs']);
+  assert.deepEqual([...SCANS.keys()].sort(), ['api.mjs', 'app.mjs', 'catalog-colors.mjs', 'catalog-model.mjs', 'crm-catalog-lookup.mjs', 'crm-model.mjs', 'dom.mjs', 'format.mjs', 'i18n/pt-BR.mjs', 'main.mjs', 'nav.mjs', 'negotiation-model.mjs', 'preferences.mjs', 'router.mjs', 'ui/catalogField.mjs', 'ui/colorPicker.mjs', 'ui/components.mjs', 'ui/dataBus.mjs', 'ui/index.mjs', 'ui/overlays.mjs', 'ui/routedDrawer.mjs', 'ui/sidebar.mjs', 'ui/toasts.mjs', 'views/agents.mjs', 'views/approvals.mjs', 'views/catalogForm.mjs', 'views/catalogs.mjs', 'views/comingSoon.mjs', 'views/commercialDashboard.mjs', 'views/crm.mjs', 'views/crmSettings.mjs', 'views/funnelAdmin.mjs', 'views/funnels.mjs', 'views/jobDetails.mjs', 'views/leadEnrichmentPanel.mjs', 'views/leadProfile.mjs', 'views/negotiationForm.mjs', 'views/overview.mjs', 'views/prospecting.mjs', 'views/prospectingExclusions.mjs', 'views/prospectingHistory.mjs', 'views/rejectedLeads.mjs']);
   for (const [nome, { analysis }] of SCANS) assert.deepEqual(analysis.issues, [], `${nome}: carregamento que a análise não enxerga`);
 });
 
@@ -91,7 +91,8 @@ test('[DASH-GUARD-4] nenhum segredo no código do navegador: nada de service_rol
       assert.doesNotMatch(texto, /service[_-]?role/i, `${nome}: texto com service_role`);
       assert.doesNotMatch(texto, /sb_(secret|publishable)_/i, `${nome}: chave do Supabase`);
       assert.doesNotMatch(texto, /eyJ[A-Za-z0-9_-]{10,}/, `${nome}: parece um JWT`);
-      assert.doesNotMatch(texto, /^[A-Za-z0-9_\-+/=]{40,}$/, `${nome}: texto longo demais parece uma chave`);
+      // um código de erro (MAIÚSCULAS_COM_SUBLINHADO, como PERIODICIDADE_NAO_PERMITIDA_PELO_SERVICO) não é uma chave: chaves e tokens misturam maiúsculas, minúsculas e dígitos
+      if (!/^[A-Z][A-Z0-9_]+$/.test(texto)) assert.doesNotMatch(texto, /^[A-Za-z0-9_\-+/=]{40,}$/, `${nome}: texto longo demais parece uma chave`);
     }
   }
   const html = read(path.join(DASHBOARD_ROOT, 'index.html'));

@@ -19,12 +19,12 @@
 // Todo texto entra por dom.mjs (textContent): nada de HTML dinâmico nem estilo inline.
 
 import { h, fill } from '../dom.mjs';
-import { textOf } from '../format.mjs';
+import { formatDateTime, textOf } from '../format.mjs';
 import { buildHash, catalogOfRoute } from '../router.mjs';
 import { NAV_LABELS } from '../i18n/pt-BR.mjs';
-import { createUi, createRoutedDrawer, statusBadge, emptyState, skeleton, pageHeader, searchField, selectField } from '../ui/index.mjs';
+import { createUi, createRoutedDrawer, statusBadge, emptyState, skeleton, pageHeader, searchField, selectField, kvList } from '../ui/index.mjs';
 import { createCatalogForm } from './catalogForm.mjs';
-import { STATUS_FILTERS, catalogErrorInfo, channelLabel, modalitiesSummary, priceText, visibleCatalogItems, MESSAGES } from '../catalog-model.mjs';
+import { STATUS_FILTERS, catalogErrorInfo, channelLabel, modalitiesSummary, periodicitiesOf, recurrenceLabel, priceText, visibleCatalogItems, MESSAGES, NO_MODALITY_LABEL } from '../catalog-model.mjs';
 import { colorClassOf, colorNameOf } from '../catalog-colors.mjs';
 
 const NEW_ID = '__novo__'; // o "id" do painel de novo item (um id real nunca é assim: service:<uuid>)
@@ -34,6 +34,7 @@ const NO_ACCESS = 'Esta conta não possui acesso a esta área.';
 const CONFIG = Object.freeze({
   servicos: Object.freeze({
     key: 'servicos',
+    gender: 'm',
     listRoute: 'crm-settings-services',
     title: 'Serviços',
     subtitle: 'O catálogo de serviços que a agência oferece. O preço de referência é apenas informativo: ele não altera propostas nem negociações.',
@@ -58,6 +59,7 @@ const CONFIG = Object.freeze({
   }),
   nichos: Object.freeze({
     key: 'nichos',
+    gender: 'm',
     listRoute: 'crm-settings-niches',
     title: 'Nichos e Cores',
     subtitle: 'Os nichos de atuação dos clientes e a cor que identifica cada um. O nome do nicho aparece sempre junto da cor.',
@@ -82,6 +84,7 @@ const CONFIG = Object.freeze({
   }),
   origens: Object.freeze({
     key: 'origens',
+    gender: 'f',
     listRoute: 'crm-settings-origins',
     title: 'Origens dos Leads',
     subtitle: 'De onde os leads chegam: prospecção ativa, anúncio, indicação e outros canais. Este cadastro apenas organiza as origens: não ativa nenhuma integração com WhatsApp, Meta Ads, Google Ads ou IA.',
@@ -127,8 +130,10 @@ function createCatalogScreen({ document, catalog, api, ui, bus = null, navigatio
   let loadToken = 0;
   let current = null; // { form, handle, id } enquanto o painel está aberto
   let pendingFocus = null; // { id, action }: o botão que deve receber o foco depois de repintar a lista
+  let detail = null; // { id, handle, usage, signature } enquanto o modal de DETALHES (somente leitura) está aberto
 
   const el = (tag, props, ...children) => h(document, tag, props, ...children);
+  const pick = (masculine, feminine) => (cfg.gender === 'f' ? feminine : masculine);
   const byId = (id) => state.items.find((item) => item.id === id) || null;
 
   // --- estrutura estável (montada UMA vez; as regiões abaixo é que mudam) ---
@@ -371,12 +376,26 @@ function createCatalogScreen({ document, catalog, api, ui, bus = null, navigatio
     }
   }
 
+  // O que a pessoa lê sobre o impacto de desativar: quantos registros do CRM usam o item hoje (a contagem vem do servidor; sem ela, o aviso diz isso e nada é afirmado).
+  function usageSentence(item, count) {
+    const name = textOf(item.nome);
+    if (!Number.isInteger(count)) return `Não foi possível verificar agora se ${pick('este', 'esta')} ${cfg.singular} é ${pick('usado', 'usada')} em registros do CRM. Nada é apagado de qualquer forma.`;
+    if (count === 0) return `Nenhum registro do CRM usa ${pick('este', 'esta')} ${cfg.singular} hoje.`;
+    return `${pick('Este', 'Esta')} ${cfg.singular} é ${pick('usado', 'usada')} em ${count} ${count === 1 ? 'registro' : 'registros'} do CRM. Eles continuam mostrando "${name}" exatamente como está (o histórico é preservado); ${pick('ele', 'ela')} só deixa de ser ${pick('oferecido', 'oferecida')} em novos cadastros.`;
+  }
+
+  const toggleFocusTarget = (id) => (detail && detail.id === id && detailAction('detail-toggle')) || rowAction(id, 'toggle');
+
   function askDeactivate(item) {
     if (state.busyId !== null || state.reordering || state.unavailable) return;
+    const key = `catalog-deactivate:${catalog}:${item.id}`;
+    if (overlays.isOpen(key)) return; // clique duplo: a pergunta já está aberta
+    const note = el('p', { className: 'muted catalog-usage-note', role: 'status', text: `Verificando se ${pick('este', 'esta')} ${cfg.singular} é ${pick('usado', 'usada')} em registros do CRM…` });
     overlays.openConfirm({
-      key: `catalog-deactivate:${catalog}:${item.id}`,
+      key,
       title: cfg.deactivateTitle,
       message: textOf(item.nome),
+      body: note,
       detail: [cfg.deactivateDetail],
       confirmLabel: 'Desativar',
       cancelLabel: 'Cancelar',
@@ -386,8 +405,144 @@ function createCatalogScreen({ document, catalog, api, ui, bus = null, navigatio
         await runToggle(item, false);
         notify('success', cfg.deactivated);
       },
-      getReturnFocus: () => rowAction(item.id, 'toggle'),
+      getReturnFocus: () => toggleFocusTarget(item.id),
     });
+    // a contagem chega depois e só preenche o aviso (se a pergunta ainda está na tela); falhar nunca bloqueia a desativação
+    api.getCatalogItem(catalog, item.id).then(
+      (data) => {
+        if (!destroyed && note.isConnected !== false) note.textContent = usageSentence(item, data && data.item ? data.item.emUso : null);
+      },
+      () => {
+        if (!destroyed && note.isConnected !== false) note.textContent = usageSentence(item, null);
+      }
+    );
+  }
+
+  // ---- o modal de DETALHES (somente leitura): o corpo do cartão abre; Editar e Desativar/Reativar agem a partir dele ------------------------------------
+  const detailAction = (name) => {
+    if (!detail || !detail.handle.isOpen) return null;
+    const stack = [detail.handle.element];
+    while (stack.length > 0) {
+      const node = stack.pop();
+      for (const child of node.childNodes || []) {
+        if (child.nodeType !== 1) continue;
+        if (child.localName === 'button' && child.getAttribute('data-action') === name) return child;
+        stack.push(child);
+      }
+    }
+    return null;
+  };
+
+  const modalitiesLines = (item) => {
+    const lines = [];
+    const periods = periodicitiesOf(item).map((value) => recurrenceLabel(value).toLowerCase());
+    if (item.permitePagamentoUnico === true) lines.push('Pagamento único: permitido.');
+    if (item.permitePagamentoRecorrente === true) lines.push(periods.length > 0 ? `Pagamento recorrente: permitido (${periods.join(', ')}).` : 'Pagamento recorrente: permitido.');
+    return lines.length > 0 ? lines : [NO_MODALITY_LABEL + '.'];
+  };
+
+  function detailRows(item, usage) {
+    const active = item.ativo === true;
+    const text = (value, empty = 'Não informado') => textOf(value) || empty;
+    const rows = [['Situação', statusBadge(document, active ? 'Ativo' : 'Inativo', active ? 'ok' : 'neutral')]];
+    if (catalog === 'servicos') {
+      rows.push(['Categoria', text(item.categoria)]);
+      rows.push(['Preço de referência', typeof item.precoReferencia === 'number' ? `${priceText(item.precoReferencia)} (apenas informativo)` : 'Não informado']);
+      rows.push(['Formas de pagamento permitidas', el('div', { className: 'catalog-detail-lines' }, ...modalitiesLines(item).map((line) => el('p', { text: line })))]);
+    } else if (catalog === 'nichos') {
+      const colorClass = colorClassOf(item.cor);
+      rows.push(['Cor', el('span', { className: `nicho-chip${colorClass ? ` ${colorClass}` : ''}`, 'data-color': textOf(item.cor), text: colorNameOf(item.cor) || 'Sem cor definida' })]);
+    } else {
+      rows.push(['Canal', channelLabel(item.canal) || 'Canal não classificado']);
+    }
+    rows.push(['Descrição', text(item.descricao, 'Sem descrição')]);
+    const position = state.items.findIndex((entry) => entry.id === item.id);
+    if (position >= 0) rows.push(['Posição na lista', `${position + 1} de ${state.items.length}`]);
+    rows.push(['Uso no CRM', usage === 'loading' ? 'Verificando…' : usageSentence(item, usage)]);
+    const created = formatDateTime(item.criadoEm);
+    const updated = formatDateTime(item.atualizadoEm);
+    if (created) rows.push(['Criado', `${created}${textOf(item.criadoPorNome) ? ` por ${textOf(item.criadoPorNome)}` : ''}`]);
+    if (updated) rows.push(['Última alteração', `${updated}${textOf(item.atualizadoPorNome) ? ` por ${textOf(item.atualizadoPorNome)}` : ''}`]);
+    return rows;
+  }
+
+  function detailFooter(item) {
+    const active = item.ativo === true;
+    const locked = state.busyId !== null || state.reordering;
+    const toggling = state.busyId === item.id;
+    return el(
+      'div',
+      { className: 'actions catalog-detail-actions' },
+      el('button', { type: 'button', className: 'btn secondary', 'data-item': item.id, 'data-action': 'detail-close', text: 'Fechar', onclick: () => detail && detail.handle.close('button') }),
+      el('button', { type: 'button', className: 'btn secondary', 'data-item': item.id, 'data-action': 'detail-edit', 'aria-label': `Editar ${cfg.singular} ${textOf(item.nome)}`, text: 'Editar', disabled: locked, onclick: () => detailEdit(item.id) }),
+      el('button', { type: 'button', className: `btn ${active ? 'danger' : 'primary'}`, 'data-item': item.id, 'data-action': 'detail-toggle', 'aria-label': `${active ? 'Desativar' : 'Reativar'} ${cfg.singular} ${textOf(item.nome)}`, text: toggling ? (active ? 'Desativando…' : 'Reativando…') : active ? 'Desativar' : 'Reativar', disabled: locked || state.unavailable, onclick: () => (active ? askDeactivate(item) : reactivate(item)) })
+    );
+  }
+
+  function detailContent(item, usage) {
+    return el('div', { className: 'catalog-detail' }, kvList(document, detailRows(item, usage), { className: 'fields catalog-detail-fields' }));
+  }
+
+  const detailSignature = (item) => JSON.stringify([item, state.items.length, state.items.findIndex((entry) => entry.id === item.id), state.busyId === item.id, state.busyId !== null || state.reordering, state.unavailable, detail ? detail.usage : null]);
+
+  function openDetail(id) {
+    const item = byId(id);
+    if (!item || destroyed) return;
+    const key = `catalog-detail:${catalog}:${id}`;
+    if (overlays.isOpen(key)) return; // clique duplo: o modal já está aberto
+    const handle = overlays.openModal({
+      key,
+      title: textOf(item.nome) || 'Sem nome',
+      subtitle: `Detalhes ${pick('do', 'da')} ${cfg.singular}`,
+      size: 'md',
+      content: detailContent(item, 'loading'),
+      footer: detailFooter(item),
+      getReturnFocus: () => rowAction(id, 'details'),
+      onClose: () => {
+        if (detail && detail.handle === handle) detail = null;
+      },
+    });
+    detail = { id, handle, usage: 'loading', signature: null };
+    detail.signature = detailSignature(item);
+    // quanto o CRM usa o item: chega depois; o modal já mostra tudo o mais
+    api.getCatalogItem(catalog, id).then(
+      (data) => {
+        if (destroyed || !detail || detail.handle !== handle) return;
+        detail.usage = data && data.item && Number.isInteger(data.item.emUso) ? data.item.emUso : null;
+        refreshDetail();
+      },
+      () => {
+        if (destroyed || !detail || detail.handle !== handle) return;
+        detail.usage = null;
+        refreshDetail();
+      }
+    );
+  }
+
+  // Repinta o modal só se o que ele mostra mudou (o item, a posição, o estado de ocupado, a disponibilidade, a contagem de uso): não rouba o foco à toa.
+  function refreshDetail() {
+    if (!detail || !detail.handle.isOpen) return;
+    const item = byId(detail.id);
+    if (!item) {
+      detail.handle.close('gone', { force: true });
+      return;
+    }
+    const signature = detailSignature(item);
+    if (signature === detail.signature) return;
+    detail.signature = signature;
+    const hadFocusOn = document.activeElement && typeof document.activeElement.getAttribute === 'function' ? document.activeElement.getAttribute('data-action') : null;
+    detail.handle.setTitle(textOf(item.nome) || 'Sem nome');
+    detail.handle.setContent(detailContent(item, detail.usage));
+    detail.handle.setFooter(detailFooter(item));
+    const again = hadFocusOn ? detailAction(hadFocusOn) : null;
+    if (again && !again.disabled) again.focus();
+  }
+
+  // Editar a partir do modal de detalhes: o modal fecha e o formulário abre (a mesma rota e o mesmo painel de sempre).
+  function detailEdit(id) {
+    if (state.busyId !== null || state.reordering || !detail || detail.id !== id) return;
+    detail.handle.close('edit', { force: true });
+    drawerCtl.open(id);
   }
 
   // ---- o painel lateral (novo / editar), com URL ---------------------------------------------
@@ -438,6 +593,7 @@ function createCatalogScreen({ document, catalog, api, ui, bus = null, navigatio
       },
     });
     handle = overlays.openDrawer({
+      centered: true,
       key: `catalog:${catalog}:${isNew ? 'new' : id}`,
       title: isNew ? cfg.newDrawerTitle : textOf(item.nome) || cfg.editDrawerTitle,
       subtitle: isNew ? '' : cfg.editDrawerTitle,
@@ -599,16 +755,21 @@ function createCatalogScreen({ document, catalog, api, ui, bus = null, navigatio
     const reorderOn = canReorder() && !locked;
     const disabledMove = (offset) => !reorderOn || index + offset < 0 || index + offset >= state.items.length;
     const classes = ['catalog-row', active ? '' : 'is-inactive', catalog === 'nichos' ? `is-niche${colorClass ? ` ${colorClass}` : ''}` : '', selected ? 'selected' : ''].filter(Boolean).join(' ');
+    // Cada registro é um CARTÃO. O corpo (nome, situação, informações) abre o modal de detalhes; os botões ficam FORA do corpo (nenhum clique de botão sobe até ele) e cada um para a propagação.
+    const guarded = (action) => (event) => {
+      if (event && typeof event.stopPropagation === 'function') event.stopPropagation();
+      action();
+    };
     return el(
       'li',
       { className: classes, 'data-id': item.id },
       el(
         'div',
-        { className: 'catalog-row-main' },
+        { className: 'catalog-row-main', onclick: () => openDetail(item.id) },
         el(
           'div',
           { className: 'catalog-row-title' },
-          el('button', { type: 'button', className: 'catalog-name', 'data-item': item.id, 'data-action': 'edit', 'aria-label': `Editar ${cfg.singular} ${name}`, 'aria-current': selected ? 'true' : null, disabled: locked, onclick: () => drawerCtl.open(item.id), text: name }),
+          el('button', { type: 'button', className: 'catalog-name', 'data-item': item.id, 'data-action': 'details', 'aria-label': `Ver detalhes do ${cfg.singular} ${name}`, onclick: guarded(() => openDetail(item.id)), text: name }),
           statusBadge(document, active ? 'Ativo' : 'Inativo', active ? 'ok' : 'neutral'),
           catalog === 'nichos' ? el('span', { className: `nicho-chip${colorClass ? ` ${colorClass}` : ''}`, 'data-color': textOf(item.cor), text: colorNameOf(item.cor) || 'Sem cor definida' }) : null
         ),
@@ -618,9 +779,14 @@ function createCatalogScreen({ document, catalog, api, ui, bus = null, navigatio
       el(
         'div',
         { className: 'catalog-row-actions' },
-        el('button', { type: 'button', className: 'btn small secondary', 'data-item': item.id, 'data-action': 'up', 'aria-label': `Subir ${cfg.singular} ${name} na ordem`, text: '↑', disabled: disabledMove(-1) || locked || state.unavailable, onclick: () => move(item.id, -1) }),
-        el('button', { type: 'button', className: 'btn small secondary', 'data-item': item.id, 'data-action': 'down', 'aria-label': `Descer ${cfg.singular} ${name} na ordem`, text: '↓', disabled: disabledMove(1) || locked || state.unavailable, onclick: () => move(item.id, 1) }),
-        el('button', { type: 'button', className: 'btn small secondary', 'data-item': item.id, 'data-action': 'toggle', 'aria-label': `${active ? 'Desativar' : 'Reativar'} ${cfg.singular} ${name}`, text: toggling ? (active ? 'Desativando…' : 'Reativando…') : active ? 'Desativar' : 'Reativar', disabled: locked || state.unavailable, onclick: () => (active ? askDeactivate(item) : reactivate(item)) })
+        el(
+          'div',
+          { className: 'catalog-move' },
+          el('button', { type: 'button', className: 'btn small secondary', 'data-item': item.id, 'data-action': 'up', 'aria-label': `Subir ${cfg.singular} ${name} na ordem`, text: '↑', disabled: disabledMove(-1) || locked || state.unavailable, onclick: guarded(() => move(item.id, -1)) }),
+          el('button', { type: 'button', className: 'btn small secondary', 'data-item': item.id, 'data-action': 'down', 'aria-label': `Descer ${cfg.singular} ${name} na ordem`, text: '↓', disabled: disabledMove(1) || locked || state.unavailable, onclick: guarded(() => move(item.id, 1)) })
+        ),
+        el('button', { type: 'button', className: 'btn small secondary', 'data-item': item.id, 'data-action': 'edit', 'aria-label': `Editar ${cfg.singular} ${name}`, 'aria-current': selected ? 'true' : null, text: 'Editar', disabled: locked, onclick: guarded(() => drawerCtl.open(item.id)) }),
+        el('button', { type: 'button', className: 'btn small secondary', 'data-item': item.id, 'data-action': 'toggle', 'aria-label': `${active ? 'Desativar' : 'Reativar'} ${cfg.singular} ${name}`, text: toggling ? (active ? 'Desativando…' : 'Reativando…') : active ? 'Desativar' : 'Reativar', disabled: locked || state.unavailable, onclick: guarded(() => (active ? askDeactivate(item) : reactivate(item))) })
       )
     );
   }
@@ -662,13 +828,14 @@ function createCatalogScreen({ document, catalog, api, ui, bus = null, navigatio
       return;
     }
     const locked = state.busyId !== null || state.reordering;
-    fill(listRegion, el('ul', { className: 'catalog-list', id: `catalog-list-${catalog}`, 'aria-label': cfg.title }, ...shown.map((item) => buildRow(item, state.items.indexOf(item), locked))));
+    fill(listRegion, el('ul', { className: 'catalog-list catalog-grid', id: `catalog-list-${catalog}`, 'aria-label': cfg.title }, ...shown.map((item) => buildRow(item, state.items.indexOf(item), locked))));
     if (pendingFocus && !locked) {
       const target = rowAction(pendingFocus.id, pendingFocus.action);
       const fallback = target && !target.disabled ? target : rowAction(pendingFocus.id, 'edit');
       pendingFocus = null;
       if (fallback) fallback.focus();
     }
+    refreshDetail();
   }
 
   function clearFilters() {
@@ -766,11 +933,14 @@ function createCatalogScreen({ document, catalog, api, ui, bus = null, navigatio
     hasUnsavedChanges: () => hasUnsavedChanges(),
     openNew: () => openNew(), // pela checagem de disponibilidade, como o botão e o link direto
     openItem: (id) => drawerCtl.open(id),
+    openDetail: (id) => openDetail(id),
+    isDetailOpen: () => detail !== null && detail.handle.isOpen,
     closePanel: () => drawerCtl.close({ silent: false, reason: 'api' }),
     isPanelOpen: () => drawerCtl.isOpen(),
     destroy() {
       destroyed = true;
       if (releaseLeaveGuard) releaseLeaveGuard();
+      if (detail) detail.handle.close('destroy', { force: true });
       drawerCtl.close({ silent: true, reason: 'destroy' });
       state.items = [];
       current = null;

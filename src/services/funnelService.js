@@ -74,6 +74,7 @@ function toPublicCard(card, crmRecord) {
     funnelId: card.funnelId,
     stageId: card.stageId,
     crmRecordId: card.crmRecordId,
+    negotiationId: card.negotiationId ?? null,
     removedAt: card.removedAt ?? null,
     criadoEm: card.criadoEm,
     updatedAt: card.updatedAt,

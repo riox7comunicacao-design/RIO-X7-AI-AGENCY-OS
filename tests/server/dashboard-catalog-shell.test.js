@@ -89,7 +89,7 @@ test('[CATSHELL-1] O ADMINISTRADOR vê "Configurações do CRM" com Serviços, N
   const t = await iniciar();
   for (const rotulo of ['Configurações do CRM', 'Serviços', 'Nichos e Cores', 'Origens dos Leads', 'Gestão de Funis e Etapas']) assert.ok(rotulosDoMenu(t).includes(rotulo), rotulo);
   assert.equal(t.browser.by.link(nav(t), 'Serviços').getAttribute('data-soon'), null, 'Serviços não é mais "em desenvolvimento"');
-  assert.equal(t.browser.by.link(nav(t), 'Gestão de Funis e Etapas').getAttribute('data-soon'), 'true', 'a Gestão de Funis e Etapas continua EM DESENVOLVIMENTO');
+  assert.equal(t.browser.by.link(nav(t), 'Gestão de Funis e Etapas').getAttribute('data-soon'), null, 'a Gestão de Funis e Etapas (Fase D1) é uma tela real');
 
   await expandirConfiguracoes(t);
   const casos = [
@@ -131,9 +131,9 @@ test('[CATSHELL-2] O VENDEDOR (COMMERCIAL_CLOSER) não vê NENHUM item administr
   await ir(t, '#/crm/configuracoes');
   assert.match(principal(t).textContent, NO_ACCESS);
   assert.equal(t.browser.by.tag(principal(t), 'a').length, 0);
-  // a Gestão de Funis e Etapas (EM DESENVOLVIMENTO, sem dados) segue acessível por link, como antes
+  // a Gestão de Funis e Etapas (Fase D1) exige MANAGE:FUNNELS: o vendedor, por link direto, recebe "sem acesso" e nada é chamado
   await ir(t, '#/crm/configuracoes/funis');
-  assert.match(principal(t).textContent, /EM DESENVOLVIMENTO/);
+  assert.match(principal(t).textContent, NO_ACCESS);
   assert.deepEqual(apiDeCatalogo(t), []);
 });
 
@@ -207,15 +207,15 @@ test('[CATSHELL-5] SAIR da conta: as telas dos catálogos são destruídas e nad
   assert.equal(t.win.listenerCount('beforeunload'), 0, 'nenhum guarda de saída fica para trás');
 });
 
-test('[CATSHELL-6] COMPATIBILIDADE: as rotas antigas e as páginas EM DESENVOLVIMENTO continuam como eram (CRM, Prospecção, Funis, Gestão de Funis e Etapas); só os 3 catálogos ficaram reais', async () => {
+test('[CATSHELL-6] COMPATIBILIDADE: as rotas antigas e as páginas EM DESENVOLVIMENTO (Metas) continuam como eram (CRM, Prospecção, Funis); os 3 catálogos, o Dashboard Comercial e a Gestão de Funis e Etapas são telas reais', async () => {
   const t = await iniciar();
   const esperado = {
     '#/crm': /Clínica Alfa/,
     '#/crm/clientes': /Clínica Alfa/,
-    '#/crm/dashboard': /EM DESENVOLVIMENTO/,
+    '#/crm/dashboard': /Dashboard Comercial/,
     '#/crm/metas': /EM DESENVOLVIMENTO/,
     '#/crm/configuracoes': /Os cadastros que organizam o CRM/,
-    '#/crm/configuracoes/funis': /EM DESENVOLVIMENTO/,
+    '#/crm/configuracoes/funis': /Gestão de Funis e Etapas/,
     '#/prospeccao': /Nova Prospecção/,
     '#/aprovacoes': /Revise cada lead/,
     '#/crm/configuracoes/clientes': /Página não encontrada/,

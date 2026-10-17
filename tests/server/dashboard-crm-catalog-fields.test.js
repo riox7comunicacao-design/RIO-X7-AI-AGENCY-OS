@@ -699,8 +699,8 @@ test('[CATFLD-33] REGRESSÃO — Fila de Aprovação, Prospecção e promoção:
       if (MARCA_DA_SELECAO.test(read(...dir, arquivo).replace(/\/\/.*$/gm, ''))) importadores.push([...dir, arquivo].join('/'));
     }
   }
-  assert.deepEqual(importadores.sort(), ['dashboard/api.mjs', 'dashboard/crm-catalog-lookup.mjs', 'dashboard/ui/catalogField.mjs', 'dashboard/views/catalogs.mjs', 'dashboard/views/crm.mjs'], 'só o cliente de API, as telas dos catálogos e do CRM e os módulos da seleção falam de catálogos');
-  for (const tela of ['approvals', 'prospecting', 'prospectingHistory', 'prospectingExclusions', 'rejectedLeads', 'leadProfile', 'jobDetails', 'funnels', 'overview']) {
+  assert.deepEqual(importadores.sort(), ['dashboard/api.mjs', 'dashboard/crm-catalog-lookup.mjs', 'dashboard/ui/catalogField.mjs', 'dashboard/views/catalogs.mjs', 'dashboard/views/crm.mjs', 'dashboard/views/funnels.mjs'], 'só o cliente de API, as telas dos catálogos, do CRM e do quadro de negociações (que só LÊ os serviços para escolher no formulário) e os módulos da seleção falam de catálogos');
+  for (const tela of ['approvals', 'prospecting', 'prospectingHistory', 'prospectingExclusions', 'rejectedLeads', 'leadProfile', 'jobDetails', 'overview']) {
     assert.doesNotMatch(read('dashboard', 'views', `${tela}.mjs`), MARCA_DA_SELECAO, `${tela}.mjs não conhece a consulta de catálogos`);
   }
   const ocorrencias = [];

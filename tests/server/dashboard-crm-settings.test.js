@@ -1,5 +1,5 @@
 // A página CONFIGURAÇÕES DO CRM (CRM 5.0, Fase 2B-2, refinamento): #/crm/configuracoes deixou de ser "EM DESENVOLVIMENTO" e virou a porta de entrada dos cadastros — cartões para Serviços, Nichos e
-// Cores e Origens dos Leads (rotas reais) e a Gestão de Funis e Etapas como cartão desabilitado EM DESENVOLVIMENTO. Permissões, ausência de dados simulados, navegação entre a página e as telas.
+// Cores e Origens dos Leads e a Gestão de Funis e Etapas (Fase D1) — todos com rotas reais. Permissões, ausência de dados simulados, navegação entre a página e as telas.
 // DOM de teste, SDK falso e fetch roteado — nenhuma credencial real, nenhuma rede, nenhum dado real.
 
 const test = require('node:test');
@@ -20,7 +20,7 @@ const SEM_FUNIS = { ...ME_ADMIN, permissions: ME_ADMIN.permissions.filter((p) =>
 const SO_FUNIS = { ...ME_ADMIN, permissions: ME_ADMIN.permissions.filter((p) => p !== 'MANAGE:CRM_CATALOGS') };
 const NO_ACCESS = /Esta conta não possui acesso a esta área\./;
 
-const ROTAS_DOS_CARTOES = { servicos: '#/crm/configuracoes/servicos', nichos: '#/crm/configuracoes/nichos', origens: '#/crm/configuracoes/origens' };
+const ROTAS_DOS_CARTOES = { servicos: '#/crm/configuracoes/servicos', nichos: '#/crm/configuracoes/nichos', origens: '#/crm/configuracoes/origens', funis: '#/crm/configuracoes/funis' };
 
 // ---------------------------------------------------------------------------------------------------------------------------------------------
 // a página sozinha
@@ -45,22 +45,22 @@ test('[CRMSET-1] OS ACESSOS por permissão: os três cadastros pedem MANAGE:CRM_
   assert.deepEqual(ids({ canManageCrmCatalogs: false, canManageFunnels: true }), ['funis']);
   for (const nenhuma of [null, undefined, {}, { canReadCrm: true }, { canManageCrmCatalogs: 'true', canManageFunnels: 1 }, { canManageCrmCatalogs: false, canManageFunnels: false }]) assert.deepEqual(ids(nenhuma), [], JSON.stringify(nenhuma));
   assert.deepEqual(SETTINGS_ENTRIES.map((e) => e.needs), ['canManageCrmCatalogs', 'canManageCrmCatalogs', 'canManageCrmCatalogs', 'canManageFunnels']);
-  // cada cartão funcional abre uma rota que existe e leva à tela do catálogo; a que ainda não existe não tem rota
+  // cada cartão abre uma rota que existe: os três catálogos e a Gestão de Funis e Etapas
   const funcionais = SETTINGS_ENTRIES.filter((e) => e.route);
-  assert.deepEqual(funcionais.map((e) => e.route.name), [CATALOG_LIST_ROUTES.servicos, CATALOG_LIST_ROUTES.nichos, CATALOG_LIST_ROUTES.origens]);
+  assert.deepEqual(funcionais.map((e) => e.route.name), [CATALOG_LIST_ROUTES.servicos, CATALOG_LIST_ROUTES.nichos, CATALOG_LIST_ROUTES.origens, 'crm-settings-funnels']);
   for (const entrada of funcionais) assert.deepEqual(parseRoute(buildHash(entrada.route)), entrada.route);
-  assert.equal(SETTINGS_ENTRIES.find((e) => e.id === 'funis').route, null);
+  assert.deepEqual(SETTINGS_ENTRIES.find((e) => e.id === 'funis').route, { name: 'crm-settings-funnels' });
   assert.ok(Object.isFrozen(SETTINGS_ENTRIES) && SETTINGS_ENTRIES.every((e) => Object.isFrozen(e)));
 });
 
-test('[CRMSET-2] A PÁGINA do administrador: título, texto objetivo, três cartões-link para as rotas reais e a Gestão de Funis e Etapas como cartão desabilitado EM DESENVOLVIMENTO; nada simulado', async () => {
+test('[CRMSET-2] A PÁGINA do administrador: título, texto objetivo, quatro cartões-link para as rotas reais (a Gestão de Funis e Etapas inclusive); nada simulado', async () => {
   const s = await montar({ canManageCrmCatalogs: true, canManageFunnels: true });
   const raiz = s.browser.root;
   assert.equal(s.browser.by.tag(raiz, 'h2')[0].textContent, 'Configurações do CRM');
   assert.match(raiz.textContent, /Os cadastros que organizam o CRM\. Escolha o que você quer administrar\./);
   const todos = cartoes(s);
   assert.deepEqual(todos.map((c) => c.getAttribute('data-entry')), ['servicos', 'nichos', 'origens', 'funis']);
-  assert.deepEqual(todos.map((c) => c.localName), ['a', 'a', 'a', 'div']);
+  assert.deepEqual(todos.map((c) => c.localName), ['a', 'a', 'a', 'a']);
   for (const [id, href] of Object.entries(ROTAS_DOS_CARTOES)) {
     const cartao = todos.find((c) => c.getAttribute('data-entry') === id);
     assert.equal(cartao.getAttribute('href'), href, id);
@@ -74,11 +74,11 @@ test('[CRMSET-2] A PÁGINA do administrador: título, texto objetivo, três cart
 
   const funis = todos[3];
   assert.equal(s.browser.find(funis, (el) => el.className === 'settings-card-title').textContent, 'Gestão de Funis e Etapas');
-  assert.match(funis.textContent, /EM DESENVOLVIMENTO/);
-  assert.equal(funis.getAttribute('aria-disabled'), 'true');
-  assert.equal(funis.getAttribute('href'), null, 'não é link: não existe ainda');
-  assert.equal(s.browser.by.tag(funis, 'a').length, 0);
-  assert.equal(s.browser.by.tag(raiz, 'a').length, 3, 'só os três acessos funcionais são links');
+  assert.doesNotMatch(funis.textContent, /EM DESENVOLVIMENTO/, 'a Gestão de Funis e Etapas existe');
+  assert.equal(funis.getAttribute('aria-disabled'), null);
+  assert.equal(funis.getAttribute('href'), '#/crm/configuracoes/funis');
+  assert.match(funis.textContent, /A administração dos funis de vendas e das etapas de cada um\./);
+  assert.equal(s.browser.by.tag(raiz, 'a').length, 4, 'os quatro acessos são links');
 
   // nenhuma informação simulada: sem contagens, números, tabelas, formulários, botões de ação ou campos
   for (const tag of ['table', 'form', 'input', 'button', 'select', 'textarea', 'ul', 'li']) assert.equal(s.browser.by.tag(raiz, tag).length, 0, tag);
@@ -95,7 +95,7 @@ test('[CRMSET-3] SÓ O QUE A CONTA PODE: sem MANAGE:FUNNELS não há o cartão d
 
   const soFunis = await montar({ canManageCrmCatalogs: false, canManageFunnels: true });
   assert.deepEqual(cartoes(soFunis).map((c) => c.getAttribute('data-entry')), ['funis']);
-  assert.equal(soFunis.browser.by.tag(soFunis.browser.root, 'a').length, 0, 'nenhum link de cadastro');
+  assert.deepEqual(soFunis.browser.by.tag(soFunis.browser.root, 'a').map((a) => a.getAttribute('href')), ['#/crm/configuracoes/funis'], 'nenhum link de cadastro: só o da gestão de funis');
   assert.doesNotMatch(soFunis.browser.root.textContent, /Serviços|Nichos|Origens/);
 
   for (const permissions of [{ canManageCrmCatalogs: false, canManageFunnels: false }, {}, null]) {
@@ -208,20 +208,20 @@ test('[CRMSET-5] O VENDEDOR não vê o item no menu e, por link direto, recebe "
 
   const soFunis = await iniciar({ perfil: SO_FUNIS, hash: '#/crm/configuracoes' });
   assert.deepEqual(soFunis.browser.by.cls(principal(soFunis), 'settings-card').map((c) => c.getAttribute('data-entry')), ['funis']);
-  assert.equal(soFunis.browser.by.tag(principal(soFunis), 'a').length, 0, 'sem MANAGE:CRM_CATALOGS nenhum link de cadastro');
+  assert.deepEqual(soFunis.browser.by.tag(principal(soFunis), 'a').map((a) => a.getAttribute('href')), ['#/crm/configuracoes/funis'], 'sem MANAGE:CRM_CATALOGS nenhum link de cadastro: só o da gestão de funis');
   assert.ok(!links(soFunis).map((a) => a.textContent).some((r) => ['Serviços', 'Nichos e Cores', 'Origens dos Leads'].includes(r)));
   assert.ok(links(soFunis).map((a) => a.textContent).includes('Gestão de Funis e Etapas'), 'o item de menu da gestão de funis aparece para quem tem MANAGE:FUNNELS');
   assert.deepEqual(apiDeCatalogo(soFunis), []);
 });
 
-test('[CRMSET-6] COMPATIBILIDADE: a Gestão de Funis e Etapas continua uma página EM DESENVOLVIMENTO por link; os links antigos e o endereço da página com barra no fim funcionam', async () => {
+test('[CRMSET-6] COMPATIBILIDADE: a Gestão de Funis e Etapas e o Dashboard Comercial abrem as telas REAIS por link; Metas continua EM DESENVOLVIMENTO; os links antigos e o endereço da página com barra no fim funcionam', async () => {
   const t = await iniciar();
   await ir(t, '#/crm/configuracoes/funis');
-  assert.match(principal(t).textContent, /EM DESENVOLVIMENTO/);
+  assert.doesNotMatch(principal(t).textContent, /EM DESENVOLVIMENTO/);
   assert.equal(t.browser.by.tag(principal(t), 'h2')[0].textContent, 'Gestão de Funis e Etapas');
   await ir(t, '#/crm/configuracoes/');
   assert.equal(t.browser.by.tag(principal(t), 'h2')[0].textContent, 'Configurações do CRM');
-  for (const [hash, texto] of [['#/crm/clientes', /Clínica Alfa/], ['#/crm', /Clínica Alfa/], ['#/crm/dashboard', /EM DESENVOLVIMENTO/], ['#/crm/metas', /EM DESENVOLVIMENTO/], ['#/aprovacoes', /Revise cada lead/]]) {
+  for (const [hash, texto] of [['#/crm/clientes', /Clínica Alfa/], ['#/crm', /Clínica Alfa/], ['#/crm/dashboard', /Dashboard Comercial/], ['#/crm/metas', /EM DESENVOLVIMENTO/], ['#/aprovacoes', /Revise cada lead/]]) {
     await ir(t, hash);
     assert.match(principal(t).textContent, texto, hash);
   }

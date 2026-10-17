@@ -25,6 +25,10 @@ const { createInMemoryLeadProfileRepository } = require('../../src/research-pros
 const { createLeadEnrichmentService } = require('../../src/services/leadEnrichmentService');
 const { createFileBackedFunnelService, createFileBackedActiveFunnelCardsChecker } = require('../../src/services/funnelFileService');
 const { createConfiguredCatalogService } = require('../../src/services/catalogRepositoryFactory');
+const { createFileBackedNegotiationService } = require('../../src/services/negotiationFileService');
+const { createFunnelService } = require('../../src/services/funnelService');
+const { createNegotiationService } = require('../../src/services/negotiationService');
+const { criarArmazenamento } = require('../helpers/commercialStorage');
 const { createCrmCatalogUsageCounter } = require('../../src/services/catalogUsage');
 const {
   defineUser,
@@ -115,6 +119,13 @@ function novoArquivoCatalogos(t) {
   return path.join(dir, 'crm-catalogs.json');
 }
 
+// Idem, para as Negociações (Fase D1).
+function novoArquivoNegociacoes(t) {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'server-negotiations-'));
+  t.after(() => fs.rmSync(dir, { recursive: true, force: true }));
+  return path.join(dir, 'negotiations.json');
+}
+
 // Idem, para o Workbench de Prospecção (Etapa "Prospecção 1").
 function novoArquivoBriefs(t) {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'server-briefs-'));
@@ -159,6 +170,13 @@ function montarAmbiente(
     crmCatalogs = false,
     crmCatalogFilePath,
     crmCatalogService: crmCatalogServiceInjetado,
+    negotiations = false,
+    // Fase D1.1 (decisão 0029): onde moram as entidades comerciais nesta composição — 'arquivo' (padrão: os adapters de arquivo) ou 'supabase' (os adapters REAIS do Supabase falando com o PostgREST FALSO,
+    // exposto em `commercialDb`; `commercialFake` repassa opções ao falso). Em 'supabase' os caminhos de arquivo de funis/negociações não são usados.
+    commercialStorage = 'arquivo',
+    commercialFake = {},
+    negotiationFilePath,
+    negotiationService: negotiationServiceInjetado,
   } = {}
 ) {
   const { filePath, ids } = queue || novaFila(t);
@@ -184,7 +202,12 @@ function montarAmbiente(
   // lugar de tudo isto.
   if (funnels && !arquivoCrm) throw new Error('montarAmbiente: funnels exige crm: true (as operações de card precisam do CRM)');
   const arquivoFunnels = funnels ? funnelFilePath || novoArquivoFunnels(t) : undefined;
-  const hasActiveFunnelCards = arquivoFunnels ? createFileBackedActiveFunnelCardsChecker({ filePath: arquivoFunnels }) : undefined;
+  const armazenamentoComercial = commercialStorage === 'supabase' ? criarArmazenamento({ modo: 'supabase', referencias: 'livres', fakeOptions: commercialFake }) : null;
+  const hasActiveFunnelCards = arquivoFunnels
+    ? armazenamentoComercial
+      ? (crmRecordId) => armazenamentoComercial.funnelRepository.countActiveCardsByCrmRecord(crmRecordId)
+      : createFileBackedActiveFunnelCardsChecker({ filePath: arquivoFunnels })
+    : undefined;
   const crmService = crmServiceInjetado || (crm ? createFileBackedCrmService({ authorizeOperation: authorizeCrmOperation, filePath: arquivoCrm, hasActiveFunnelCards }) : undefined);
   // Prospecting Permanent Exclusion Service (Workbench, Etapa 2): `prospectingExclusion: true` liga o Service REAL
   // sobre um repositório de MEMÓRIA (esta funcionalidade não tem adapter de arquivo — só Supabase/produção e
@@ -236,13 +259,15 @@ function montarAmbiente(
   const funnelService =
     funnelServiceInjetado ||
     (funnels
-      ? createFileBackedFunnelService({
-          authorizeOperation: authorizeFunnelOperation,
-          authorizeCrmOperation,
-          filePath: arquivoFunnels,
-          crmRepository: sharedFileCrmRepository(arquivoCrm),
-          crmService,
-        })
+      ? armazenamentoComercial
+        ? createFunnelService({ authorizeOperation: authorizeFunnelOperation, authorizeCrmOperation, repository: armazenamentoComercial.funnelRepository, crmRepository: sharedFileCrmRepository(arquivoCrm), crmService })
+        : createFileBackedFunnelService({
+            authorizeOperation: authorizeFunnelOperation,
+            authorizeCrmOperation,
+            filePath: arquivoFunnels,
+            crmRepository: sharedFileCrmRepository(arquivoCrm),
+            crmService,
+          })
       : undefined);
   // Catalog Service (Fase 2B-1): `crmCatalogs: true` liga a fábrica REAL de produção em modo "file" (env EXPLÍCITO e vazio — nunca o
   // process.env, que no `npm test` carrega o .env do desenvolvedor) sobre um arquivo temporário PRÓPRIO. O contador de uso lê o MESMO
@@ -263,6 +288,17 @@ function montarAmbiente(
   const leadReconsiderationService = leadReconsideration ? createLeadReconsiderationService({ authorizeReviewer: authorizeReviewerForApprovalQueue, queuePath: filePath, crmService, profileRepository: perfisDeLeads }) : undefined;
   // Lead Enrichment Service (3.0.2): `leadEnrichment: { enrichmentEngine, createFetchPage? }` liga o Service REAL com o motor FAKE informado (sobre a MESMA fila e o MESMO repositório de perfis).
   const leadEnrichmentService = leadEnrichment ? createLeadEnrichmentService({ authorizeReviewer: authorizeReviewerForApprovalQueue, queuePath: filePath, profileRepository: perfisDeLeads, ...leadEnrichment }) : undefined;
+  // Negotiation Service (Fase D1): `negotiations: true` liga a fábrica REAL de produção sobre um arquivo temporário PRÓPRIO, o MESMO arquivo de funis e o MESMO CRM e catálogo desta composição
+  // (exige crm, funnels e crmCatalogs); `negotiationService` injeta um double no lugar.
+  if (negotiations && (!arquivoCrm || !arquivoFunnels || !crmCatalogService)) throw new Error('montarAmbiente: negotiations exige crm: true, funnels: true e crmCatalogs: true');
+  const arquivoNegociacoes = negotiations ? negotiationFilePath || novoArquivoNegociacoes(t) : undefined;
+  const negotiationService =
+    negotiationServiceInjetado ||
+    (negotiations
+      ? armazenamentoComercial
+        ? createNegotiationService({ authorizeCrmOperation, repository: armazenamentoComercial.negotiationRepository, funnelRepository: armazenamentoComercial.funnelRepository, crmRepository: sharedFileCrmRepository(arquivoCrm), crmService, catalogService: crmCatalogService })
+        : createFileBackedNegotiationService({ authorizeCrmOperation, filePath: arquivoNegociacoes, funnelsFilePath: arquivoFunnels, crmRepository: sharedFileCrmRepository(arquivoCrm), crmService, catalogService: crmCatalogService })
+      : undefined);
   const logs = [];
   const publicConfig = { supabaseUrl: FAKE_ENV.SUPABASE_URL, supabaseAnonKey: FAKE_ENV.SUPABASE_ANON_KEY };
   const resolvedStaticFiles = staticFiles === undefined ? (fs.existsSync(SUPABASE_BUNDLE) ? { '/lib/supabase.js': SUPABASE_BUNDLE } : {}) : staticFiles;
@@ -279,6 +315,7 @@ function montarAmbiente(
     leadReconsiderationService,
     leadEnrichmentService,
     funnelService,
+    negotiationService,
     crmCatalogService,
     publicConfig,
     staticRoot: DASHBOARD_ROOT,
@@ -308,6 +345,9 @@ function montarAmbiente(
     prospectingBriefFilePath: arquivoBriefs,
     funnelService,
     funnelFilePath: arquivoFunnels,
+    negotiationService,
+    negotiationFilePath: arquivoNegociacoes,
+    commercialDb: armazenamentoComercial ? armazenamentoComercial.db : null,
     crmCatalogService,
     crmCatalogFilePath: arquivoCatalogos,
     fakeAuth,
@@ -320,4 +360,4 @@ function montarAmbiente(
   };
 }
 
-module.exports = { montarAmbiente, novaFila, novoArquivoCrm, novoArquivoFunnels, novoArquivoCatalogos, novoArquivoBriefs, achado, descoberta, BRENO, RAFAEL, EX_COLABORADOR, DASHBOARD_ROOT, SUPABASE_BUNDLE };
+module.exports = { montarAmbiente, novaFila, novoArquivoCrm, novoArquivoFunnels, novoArquivoNegociacoes, novoArquivoCatalogos, novoArquivoBriefs, achado, descoberta, BRENO, RAFAEL, EX_COLABORADOR, DASHBOARD_ROOT, SUPABASE_BUNDLE };

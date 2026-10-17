@@ -28,7 +28,9 @@ const MODULOS_LEGADOS = [
   ...arvore('src/research-prospector'),
   ...arvore('src/research-adapters'),
   ...arvore('src/prospecting-adapters'),
-  ...arvore('src/services').filter((f) => !/\/catalog[A-Za-z]*\.js$/.test(f)),
+  // Fase D1 (decisão 0028): as NEGOCIAÇÕES são um consumidor NOVO e declarado do catálogo (leem o serviço negociado, só para leitura, por injeção) — não um módulo legado. O DOMÍNIO delas (src/crm), ao
+  // contrário, continua obrigado a NÃO conhecer o catálogo: quem o lê é só o Service, e o domínio recebe os fatos do serviço por parâmetro.
+  ...arvore('src/services').filter((f) => !/\/catalog[A-Za-z]*\.js$/.test(f) && !/\/negotiation(?:File)?Service\.js$/.test(f) && !/\/commercialRepositoryFactory\.js$/.test(f)), // (a fábrica comercial, D1.1, só repassa o catálogo, por injeção, ao Negotiation Service)
   'src/auth/crmBridge.js', 'src/auth/funnelBridge.js', 'src/auth/approvalQueueBridge.js', 'src/auth/leadProposalBridge.js', 'src/auth/prospectingExclusionBridge.js',
 ];
 
@@ -108,7 +110,7 @@ test('[CATCOMPAT-6] as 5 migrations ANTERIORES continuam byte a byte (fim de lin
   const existentes = fs.readdirSync(path.join(ROOT, 'supabase', 'migrations')).filter((n) => n.endsWith('.sql')).sort();
   // Fase 2B-3.2B-H2: uma migration CORRETIVA NOVA das Exclusões Permanentes (created_by_user_id UUID -> TEXT) foi acrescentada DEPOIS — a
   // histórica continua byte a byte igual (os hashes abaixo) e é essa a única mudança permitida na lista.
-  assert.deepEqual(existentes, [...Object.keys(esperado), '20261012090000_crm_catalogs.sql', '20261017090000_prospecting_permanent_exclusions_created_by_text.sql', '20261018090000_crm_services_payment_modalities.sql'], 'só a dos catálogos, a corretiva das Exclusões (H2) e a das modalidades de pagamento (C1) foram acrescentadas');
+  assert.deepEqual(existentes, [...Object.keys(esperado), '20261012090000_crm_catalogs.sql', '20261017090000_prospecting_permanent_exclusions_created_by_text.sql', '20261018090000_crm_services_payment_modalities.sql', '20261019090000_crm_negotiations.sql'], 'só a dos catálogos, a corretiva das Exclusões (H2) a das modalidades de pagamento (C1) e a das Negociações (D1.1) foram acrescentadas');
   for (const [arquivo, hash] of Object.entries(esperado)) {
     const conteudo = read(`supabase/migrations/${arquivo}`).replace(/\r\n/g, '\n');
     assert.equal(crypto.createHash('sha256').update(conteudo).digest('hex'), hash, `${arquivo} foi alterada`);

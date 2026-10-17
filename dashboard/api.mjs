@@ -20,6 +20,7 @@
 
 import { WRITABLE_KEYS } from './crm-model.mjs';
 import { CATALOG_KEYS, CATALOG_WRITABLE_FIELDS } from './catalog-model.mjs';
+import { WRITABLE_CREATE_FIELDS as NEGOTIATION_CREATE_FIELDS, WRITABLE_EDIT_FIELDS as NEGOTIATION_EDIT_FIELDS } from './negotiation-model.mjs';
 
 export class ApiError extends Error {
   constructor(status, code, message, details = []) {
@@ -103,6 +104,19 @@ function catalogFields(catalogo, fields) {
   return { ...fields };
 }
 
+// Negociações (Fase D1): o corpo de criar e de editar só leva os campos DO CONTRATO (nunca responsável, situação, id nem datas: o servidor define). Um erro de programação aqui vira uma promessa
+// rejeitada, sem requisição.
+function onlyAllowed(fields, allowed, label) {
+  if (fields === null || typeof fields !== 'object' || Array.isArray(fields)) throw new Error(`${label}: os campos devem ser um objeto`);
+  const unknown = Object.keys(fields).filter((key) => !allowed.includes(key));
+  if (unknown.length > 0) throw new Error(`${label}: campo não permitido no corpo: ${unknown.join(', ')}`);
+  return { ...fields };
+}
+const negotiationPath = (id, suffix = '') => `/api/negotiations/${encodeURIComponent(id)}${suffix}`;
+const funnelPath = (id, suffix = '') => `/api/funnels/${encodeURIComponent(id)}${suffix}`;
+const STRUCTURE_FUNNEL_FIELDS = Object.freeze(['nome', 'descricao', 'finalidade', 'ativo']);
+const STRUCTURE_STAGE_FIELDS = Object.freeze(['nome', 'ativo']);
+
 export function createApiClient({ getAccessToken, refreshAccessToken, onSessionLost, fetchImpl }) {
   const doFetch = fetchImpl || ((...args) => globalThis.fetch(...args));
 
@@ -185,6 +199,30 @@ export function createApiClient({ getAccessToken, refreshAccessToken, onSessionL
     getFunnelCardHistory: (cardId) => request('GET', `/api/funnel-cards/${encodeURIComponent(cardId)}/history`),
     // ARQUIVA o card (nunca exclui o registro do CRM) — sem corpo: nada decide isso além do id e da sessão.
     deleteFunnelCard: (cardId) => request('DELETE', `/api/funnel-cards/${encodeURIComponent(cardId)}`, {}),
+
+    // Negociações e o QUADRO dos funis (Fase D1, decisão 0028): ler exige READ:CRM; criar, editar, mover, ganhar e perder, PROPOSE:CRM; reabrir, WRITE:CRM (só ADMIN) — o servidor decide. O responsável e quem
+    // alterou vêm do token. Não existe exclusão de negociação.
+    funnelBoard: (funnelId) => request('GET', typeof funnelId === 'string' && funnelId !== '' ? `/api/funnel-board?funnelId=${encodeURIComponent(funnelId)}` : '/api/funnel-board'),
+    negotiationSummary: () => request('GET', '/api/negotiations/summary'),
+    listNegotiations: (filters = {}) => {
+      const query = ['funnelId', 'situacao', 'crmRecordId'].filter((key) => typeof filters[key] === 'string' && filters[key] !== '').map((key) => `${key}=${encodeURIComponent(filters[key])}`).join('&');
+      return request('GET', query === '' ? '/api/negotiations' : `/api/negotiations?${query}`);
+    },
+    getNegotiation: (id) => request('GET', negotiationPath(id)),
+    createNegotiation: async (fields) => request('POST', '/api/negotiations', onlyAllowed(fields, NEGOTIATION_CREATE_FIELDS, 'negociação')),
+    updateNegotiation: async (id, patch) => request('PATCH', negotiationPath(id), onlyAllowed(patch, NEGOTIATION_EDIT_FIELDS, 'negociação')),
+    moveNegotiation: (id, stageId, reason) => request('POST', negotiationPath(id, '/move'), typeof reason === 'string' && reason.trim() !== '' ? { stageId, reason } : { stageId }),
+    winNegotiation: (id) => request('POST', negotiationPath(id, '/win'), {}),
+    loseNegotiation: (id, motivo) => request('POST', negotiationPath(id, '/lose'), { motivo }),
+    reopenNegotiation: (id) => request('POST', negotiationPath(id, '/reopen'), {}),
+    // A ESTRUTURA dos funis (MANAGE:FUNNELS, só ADMIN): funil e etapas. Excluir um funil/etapa com cards ativos o servidor recusa (409).
+    createFunnel: async (fields) => request('POST', '/api/funnels', onlyAllowed(fields, STRUCTURE_FUNNEL_FIELDS, 'funil')),
+    updateFunnel: async (id, patch) => request('PATCH', funnelPath(id), onlyAllowed(patch, STRUCTURE_FUNNEL_FIELDS, 'funil')),
+    deleteFunnel: (id) => request('DELETE', funnelPath(id), {}),
+    createFunnelStage: async (funnelId, fields) => request('POST', funnelPath(funnelId, '/stages'), onlyAllowed(fields, STRUCTURE_STAGE_FIELDS, 'etapa')),
+    updateFunnelStage: async (id, patch) => request('PATCH', `/api/funnel-stages/${encodeURIComponent(id)}`, onlyAllowed(patch, STRUCTURE_STAGE_FIELDS, 'etapa')),
+    deleteFunnelStage: (id) => request('DELETE', `/api/funnel-stages/${encodeURIComponent(id)}`, {}),
+    reorderFunnelStages: async (funnelId, orderedIds) => request('POST', funnelPath(funnelId, '/stages/reorder'), { orderedIds: Array.isArray(orderedIds) ? [...orderedIds] : orderedIds }),
 
     // Workbench de Prospecção (Etapa "Prospecção 1"): exige PROPOSE:LEAD_APPROVAL — o servidor decide; esta tela só
     // mostra/esconde os controles. `fields`: o objeto do formulário (nicho, subnicho, nivelGeografico, cidades,

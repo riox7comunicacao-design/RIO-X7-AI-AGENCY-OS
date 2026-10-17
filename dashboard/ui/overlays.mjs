@@ -224,6 +224,7 @@ export function createOverlayManager({ document, host, getInertTargets = () => [
       opener: document.activeElement || null,
     };
     entry.titleId = `${entry.id}-title`;
+    const centered = options.centered === true && kind === 'drawer'; // formulário no CENTRO da tela (modal de verdade), com a mesma estrutura e os mesmos controles da gaveta
     const closeButton = h(document, 'button', { type: 'button', className: 'overlay-close', 'aria-label': 'Fechar', 'data-action': 'close', text: '×', onclick: () => requestClose(entry, 'button') });
     const backdrop = h(document, 'div', { className: 'overlay-backdrop', 'aria-hidden': 'true', onclick: () => entry.closeOnBackdrop && requestClose(entry, 'backdrop') });
     const bodyEl = h(document, 'div', { className: 'overlay-body' });
@@ -232,7 +233,7 @@ export function createOverlayManager({ document, host, getInertTargets = () => [
       document,
       'div',
       {
-        className: `overlay-dialog ${kind === 'drawer' ? 'drawer' : 'modal'}${options.size ? ` size-${options.size}` : ''}`,
+        className: `overlay-dialog ${kind === 'drawer' ? 'drawer' : 'modal'}${centered ? ' is-centered' : ''}${options.size ? ` size-${options.size}` : ''}`,
         role: options.role || 'dialog',
         'aria-modal': 'true',
         'aria-labelledby': entry.titleId,
@@ -243,7 +244,7 @@ export function createOverlayManager({ document, host, getInertTargets = () => [
       bodyEl,
       footerEl
     );
-    const layer = h(document, 'div', { className: `overlay overlay-${kind}`, 'data-overlay': kind }, backdrop, dialog);
+    const layer = h(document, 'div', { className: `overlay overlay-${kind}${centered ? ' is-centered' : ''}`, 'data-overlay': kind }, backdrop, dialog);
     Object.assign(entry, { layer, dialog, bodyEl, footerEl, closeButton });
     return entry;
   }

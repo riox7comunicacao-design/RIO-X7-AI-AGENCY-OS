@@ -192,7 +192,8 @@ test('[CATUI-7] CSS do seletor e da lista: classes responsivas, foco visível e 
   assert.match(regra('.color-swatch:focus-visible'), /outline: 3px solid/);
   assert.match(regra('.preview-card'), /border-left: 6px solid var\(--cor-ponto, #3c4653\)/, 'a borda esquerda do cartão usa a cor escolhida (neutra sem escolha)');
   assert.match(regra('.catalog-row.is-niche'), /border-left: 6px solid var\(--cor-ponto, #3c4653\)/);
-  assert.match(CSS, /@media \(max-width: 760px\)\s*\{[^@]*\.catalog-row-actions \{ width: 100%; \}/, 'a lista vira cartões e as ações ocupam a linha no celular');
+  assert.match(regra('.catalog-grid'), /grid-template-columns: repeat\(auto-fill, minmax\(min\(100%, 300px\), 1fr\)\)/, 'os cartões ocupam as colunas que couberem');
+  assert.match(CSS, /@media \(max-width: 760px\)\s*\{[^@]*\.catalog-grid \{ grid-template-columns: minmax\(0, 1fr\); \}/, 'no celular os cartões ficam numa só coluna');
   // as 20 opções: o NOME INTEIRO, numa linha, em qualquer largura (ver CATUI-9 e CATUI-10)
   assert.match(regra('.color-swatch .swatch-name'), /white-space: nowrap/);
   assert.doesNotMatch(CSS, /\.color-grid \{ grid-template-columns: repeat\(2/, 'sem colunas fixas que estreitem as opções no celular');

@@ -207,13 +207,17 @@ export function buildHash(route) {
 //   'crm'        a lista/ficha/novo registro (as rotas #/crm e #/crm/clientes mostram a mesma tela)
 //   'crm-catalogs' as telas administrativas dos catálogos do CRM (Serviços, Nichos e Origens dos Leads, com o painel de novo item e o de edição)
 //   'crm-settings' a página Configurações do CRM (os acessos aos cadastros)
-//   'crm-future' as páginas EM DESENVOLVIMENTO do CRM (Dashboard Comercial, Metas e Gestão de Funis e Etapas)
+//   'crm-commercial' o Dashboard Comercial (indicadores reais das negociações)
+//   'crm-funnel-admin' a Gestão de Funis e Etapas (administração da estrutura do quadro)
+//   'crm-future' as páginas EM DESENVOLVIMENTO do CRM (Metas e Indicadores)
 export function sectionOf(route) {
   const name = route && route.name;
   if (catalogOfRoute(route) !== null) return 'crm-catalogs';
   if (name === 'crm-settings') return 'crm-settings';
   if (name === 'crm-list' || name === 'crm-clients' || name === 'crm-new' || name === 'crm-record') return 'crm';
-  if (name === 'crm-dashboard' || name === 'crm-goals' || (typeof name === 'string' && name.startsWith('crm-settings-'))) return 'crm-future';
+  if (name === 'crm-dashboard') return 'crm-commercial';
+  if (name === 'crm-settings-funnels') return 'crm-funnel-admin';
+  if (name === 'crm-goals' || (typeof name === 'string' && name.startsWith('crm-settings-'))) return 'crm-future';
   if (name === 'approvals' || name === 'approval-lead') return 'approvals';
   if (name === 'agents') return 'agents';
   if (name === 'funnels') return 'funnels';

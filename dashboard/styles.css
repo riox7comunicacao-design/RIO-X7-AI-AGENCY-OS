@@ -287,7 +287,7 @@ select {
   background: #ffffff;
   color: var(--text);
 }
-input[type="checkbox"] { width: auto; }
+input[type="checkbox"], input[type="radio"] { width: auto; }
 input[aria-invalid="true"], textarea[aria-invalid="true"] { border-color: var(--danger); }
 textarea { resize: vertical; }
 
@@ -530,8 +530,62 @@ select[aria-invalid="true"] { border-color: var(--danger); }
 .funnel-add-results { max-height: 240px; overflow-y: auto; }
 .funnel-add-results li { display: flex; justify-content: space-between; align-items: center; gap: 10px; padding: 6px 0; border-bottom: 1px solid var(--line); }
 
+/* Quadro de Negociações (CRM 5.0, Fase D1): colunas por etapa, cartões de negociação, totais vindos do servidor */
+.funnel-board-wrap { max-width: 100%; }
+.funnel-name { margin: 0; font-size: 13px; }
+.funnel-column-title { gap: 8px; }
+.funnel-column-total { margin: 0; font-size: 12.5px; overflow-wrap: anywhere; }
+.funnel-empty { margin: 0; font-size: 13px; }
+.funnel-card-title { background: none; border: 0; padding: 0; text-align: left; cursor: pointer; font: inherit; font-weight: 600; overflow-wrap: anywhere; }
+.funnel-card-value { font-weight: 600; }
+.funnel-card-actions select { max-width: 100%; min-height: 32px; }
+.negotiation-detail { display: grid; gap: 4px; }
+.negotiation-history { list-style: none; margin: 0; padding: 0; display: grid; gap: 8px; }
+.negotiation-history li { display: grid; gap: 2px; padding: 6px 0; border-bottom: 1px solid var(--line); font-size: 13.5px; }
+.negotiation-form .negotiation-term { margin-top: 4px; }
+.negotiation-form .negotiation-term-other { margin: 4px 0 0; }
+.negotiation-form .negotiation-payment { margin-top: 4px; }
+.negotiation-preview { margin: 8px 0 0; padding: 10px 12px; border: 1px dashed var(--line); border-radius: 10px; background: var(--surface); }
+.negotiation-preview-title { margin: 0 0 6px; font-weight: 600; }
+.negotiation-preview-fields { margin: 0; }
+
 @media (max-width: 760px) {
-  .funnel-column { flex-basis: 240px; }
+  .funnel-board { flex-direction: column; overflow-x: visible; }
+  .funnel-column { flex: 0 0 auto; max-height: none; width: 100%; box-sizing: border-box; }
+  .funnel-head > * { max-width: 100%; }
+}
+
+/* Gestão de Funis e Etapas (CRM 5.0, Fase D1): a lista de funis ao lado do painel do funil escolhido, com as etapas em ordem */
+.funnel-admin { display: grid; grid-template-columns: minmax(200px, 260px) minmax(0, 1fr); gap: 18px; align-items: start; }
+.funnel-admin-list { list-style: none; margin: 0; padding: 0; display: grid; gap: 6px; }
+.funnel-admin-item { margin: 0; }
+.funnel-admin-pick { width: 100%; display: flex; align-items: center; justify-content: space-between; gap: 8px; padding: 10px 12px; text-align: left; font: inherit; color: inherit; background: #ffffff; border: 1px solid var(--line); border-radius: 10px; cursor: pointer; min-height: 40px; }
+.funnel-admin-item.is-selected .funnel-admin-pick { border-color: var(--brand, currentColor); box-shadow: inset 3px 0 0 var(--brand, currentColor); font-weight: 600; }
+.funnel-admin-name { overflow-wrap: anywhere; }
+.funnel-admin-detail { background: var(--surface); border: 1px solid var(--line); border-radius: var(--radius); padding: 14px; display: grid; gap: 8px; min-width: 0; }
+.funnel-admin-detail-head { display: flex; flex-wrap: wrap; align-items: center; gap: 10px; }
+.funnel-admin-detail-head h3 { margin: 0; overflow-wrap: anywhere; }
+.funnel-admin-stages { list-style: none; margin: 0; padding: 0; display: grid; gap: 8px; }
+.funnel-admin-stage { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 8px 12px; padding: 8px 10px; background: #ffffff; border: 1px solid var(--line); border-radius: 10px; }
+.funnel-admin-stage.is-inactive { opacity: 0.75; }
+.funnel-admin-stage-main { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; min-width: 0; }
+.funnel-admin-stage-name { overflow-wrap: anywhere; }
+.funnel-admin-stage-actions { display: flex; flex-wrap: wrap; gap: 6px; }
+
+/* Dashboard Comercial (CRM 5.0, Fase D1): grupos de indicadores (em negociação, contratado, perdido) e a tabela por etapa */
+.dash { display: grid; gap: 20px; }
+.dash-group { display: grid; gap: 8px; }
+.dash-stats { display: grid; grid-template-columns: repeat(auto-fill, minmax(min(100%, 220px), 1fr)); gap: 12px; }
+.dash-stat { background: var(--surface); border: 1px solid var(--line); border-radius: var(--radius); padding: 12px; display: grid; gap: 2px; min-width: 0; }
+.dash-stat p { margin: 0; }
+.dash-stat-label { font-size: 13px; }
+.dash-stat-value { font-size: 22px; font-weight: 700; overflow-wrap: anywhere; }
+.dash-stat-note { font-size: 12.5px; }
+.dash-table caption { text-align: left; padding: 0 0 6px; }
+
+@media (max-width: 760px) {
+  .funnel-admin { grid-template-columns: minmax(0, 1fr); }
+  .funnel-admin-stage-actions .btn { min-height: 40px; }
 }
 
 /* Prospecção automática (Fase 2): o bloco do job — título do resultado e espaçamento */
@@ -582,6 +636,10 @@ body[data-overlay-open] { overflow: hidden; }
 .overlay-modal { align-items: center; justify-content: center; padding: 16px; }
 .overlay-modal .overlay-dialog.modal { width: min(560px, 100%); max-height: calc(100vh - 32px); border-radius: 14px; animation: overlay-pop 0.14s ease-out; }
 .overlay-modal .overlay-dialog.modal.size-sm { width: min(460px, 100%); }
+.overlay-modal .overlay-dialog.modal.size-md { width: min(640px, 100%); }
+/* Formulário (novo / editar) no CENTRO da tela: o mesmo diálogo da gaveta, apresentado como modal (no celular, folha que sobe de baixo com rolagem interna). */
+.overlay-drawer.is-centered { align-items: center; justify-content: center; padding: 16px; }
+.overlay-dialog.drawer.is-centered { width: min(680px, 100%); height: auto; max-height: calc(100vh - 32px); max-height: calc(100dvh - 32px); border: 0; border-radius: 14px; animation: overlay-pop 0.14s ease-out; }
 .overlay-drawer { justify-content: flex-end; }
 .overlay-dialog.drawer { width: min(720px, 100%); height: 100vh; height: 100dvh; max-height: 100dvh; border-left: 1px solid var(--line); animation: overlay-slide 0.18s ease-out; }
 .overlay-dialog.drawer .overlay-head,
@@ -868,6 +926,8 @@ table.list.queue .reason-text { max-width: 320px; overflow-wrap: anywhere; displ
   .overlay-footer .drawer-actions .note { flex-basis: 100%; }
   .overlay-modal { align-items: flex-end; padding: 0; }
   .overlay-modal .overlay-dialog.modal { width: 100%; max-height: 92vh; border-radius: 14px 14px 0 0; }
+  .overlay-drawer.is-centered { align-items: flex-end; padding: 0; }
+  .overlay-dialog.drawer.is-centered { width: 100%; max-height: 92vh; max-height: 92dvh; border-radius: 14px 14px 0 0; }
   .toast-region { right: 8px; left: 8px; bottom: 8px; width: auto; }
   .pagination { flex-wrap: wrap; justify-content: center; }
   /* A fila vira uma lista de cartões, um por lead, com o rótulo de cada campo. */
@@ -911,15 +971,17 @@ table.list.queue .reason-text { max-width: 320px; overflow-wrap: anywhere; displ
 /* --- telas dos catálogos do CRM (CRM 5.0, Fase 2B-2) ------------------------------------------------- */
 /* Serviços, Nichos e Cores e Origens dos Leads: uma lista de linhas que viram cartões no celular, o painel lateral com o formulário e o seletor das 20 cores. Só classes (nenhum estilo inline):
    a cor de um nicho vem da classe .cor-<chave> (acima), que define --cor-fundo, --cor-texto e --cor-ponto. Sem classe de cor, o tom cai no neutro (ardósia). */
-.catalog-card { padding: 4px 16px 14px; }
+/* Fase D1: cada registro é um CARTÃO numa grade (o desktop usa as colunas que couberem; o celular, uma só). O corpo do cartão abre o modal de detalhes; os botões ficam fora dele. */
+.catalog-card { padding: 0; border: 0; background: none; box-shadow: none; }
 .catalog-list { display: grid; margin: 0; padding: 0; list-style: none; }
-.catalog-row { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 8px 16px; padding: 12px 0; border-bottom: 1px solid var(--line); }
-.catalog-row:last-child { border-bottom: 0; }
-.catalog-row.is-niche { padding-left: 12px; border-left: 6px solid var(--cor-ponto, #3c4653); }
-.catalog-row.is-inactive { background: #fafbfc; }
+.catalog-grid { grid-template-columns: repeat(auto-fill, minmax(min(100%, 300px), 1fr)); gap: 14px; }
+.catalog-row { display: flex; flex-direction: column; justify-content: space-between; gap: 12px; min-width: 0; padding: 14px 16px; border: 1px solid var(--line); border-radius: var(--radius); background: var(--surface); box-shadow: var(--shadow); }
+.catalog-row.is-niche { border-left: 6px solid var(--cor-ponto, #3c4653); }
+.catalog-row.is-inactive { background: #fafbfc; box-shadow: none; }
 .catalog-row.is-inactive .catalog-name { color: var(--muted); }
-.catalog-row.selected { background: var(--brand-soft); }
-.catalog-row-main { display: grid; flex: 1 1 320px; gap: 4px; min-width: 0; }
+.catalog-row.selected { border-color: var(--brand-strong); background: var(--brand-soft); }
+.catalog-row-main { display: grid; flex: 1 1 auto; align-content: start; gap: 6px; min-width: 0; cursor: pointer; }
+.catalog-row-main:hover .catalog-name:not(:disabled) { color: var(--primary); text-decoration: underline; }
 .catalog-row-title { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 10px; min-width: 0; }
 .catalog-name { padding: 2px 0; border: 0; background: none; color: var(--text); font: inherit; font-weight: 700; text-align: left; overflow-wrap: anywhere; cursor: pointer; }
 .catalog-name:hover:not(:disabled) { color: var(--primary); text-decoration: underline; }
@@ -927,7 +989,13 @@ table.list.queue .reason-text { max-width: 320px; overflow-wrap: anywhere; displ
 .catalog-name:disabled { cursor: not-allowed; }
 .catalog-meta, .catalog-desc { margin: 0; font-size: 13.5px; overflow-wrap: anywhere; }
 .catalog-desc { display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
-.catalog-row-actions { display: flex; flex: 0 0 auto; flex-wrap: wrap; align-items: center; gap: 6px; }
+.catalog-row-actions { display: flex; flex: none; flex-wrap: wrap; align-items: center; gap: 6px; padding-top: 10px; border-top: 1px solid var(--line); }
+.catalog-move { display: flex; gap: 4px; margin-right: auto; }
+.catalog-usage-note { margin: 0; overflow-wrap: anywhere; }
+.catalog-detail-fields { margin: 0; }
+.catalog-detail-lines { display: grid; gap: 2px; }
+.catalog-detail-lines p { margin: 0; }
+.catalog-detail-actions { display: flex; flex-wrap: wrap; justify-content: flex-end; gap: 8px; }
 .catalog-hint { margin: 0 0 10px; font-size: 13.5px; }
 .catalog-availability:empty, .form-availability:empty { display: none; }
 .catalog-unavailable { display: grid; gap: 8px; justify-items: start; margin: 0 0 12px; }
@@ -987,8 +1055,12 @@ a.settings-card:focus-visible { outline: 3px solid var(--brand-strong); outline-
 .breadcrumb a { color: var(--brand-ink); font-weight: 600; }
 .breadcrumb [aria-current="page"] { color: var(--text); font-weight: 600; }
 @media (max-width: 760px) {
-  .catalog-row-actions { width: 100%; }
-  .catalog-row-actions .btn { flex: 1 1 auto; min-height: 40px; }
-  .catalog-row.is-niche { padding-left: 10px; }
+  .catalog-grid { grid-template-columns: minmax(0, 1fr); }
+  .catalog-row-actions .btn { min-height: 40px; }
+  .catalog-row-actions .btn:not(.small) { flex: 1 1 auto; }
+  .catalog-row-actions .catalog-move { flex: 1 0 100%; margin-right: 0; }
+  .catalog-row-actions .catalog-move .btn { flex: 1 1 0; }
+  .catalog-row-actions > .btn { flex: 1 1 0; }
+  .catalog-detail-actions .btn { flex: 1 1 100%; }
   .catalog-form-actions .btn { flex: 1 1 100%; }
 }

@@ -20,7 +20,8 @@
 //   RIO_X7_USERS_FILE                 o arquivo de usuários (padrão: data/users.json)
 //   RIO_X7_QUEUE_PATH                 o arquivo da fila (padrão: o do domínio, data/approval-queue.json)
 //   RIO_X7_CRM_PATH                   o arquivo do CRM (padrão: data/crm.json; criado no primeiro registro)
-//   RIO_X7_FUNNELS_PATH               o arquivo de Funis/Etapas (padrão: data/funnels.json; Etapa "Funis 1")
+//   RIO_X7_FUNNELS_PATH               o arquivo de Funis/Etapas/Cards — SÓ no modo REPOSITORY_MODE=file (padrão: data/funnels.json); em "supabase" não é usado (decisão 0029)
+//   RIO_X7_NEGOTIATIONS_PATH          o arquivo das Negociações — SÓ no modo REPOSITORY_MODE=file (padrão: data/negotiations.json; só nasce na PRIMEIRA gravação); em "supabase" não é usado (decisão 0029)
 //   RIO_X7_CRM_CATALOGS_PATH          o arquivo dos catálogos do CRM — Serviços, Nichos, Origens dos Leads (padrão:
 //                                     data/crm-catalogs.json; só no modo "file"; criado quando um ADMIN cria o 1º item)
 //   RIO_X7_PROSPECTING_BRIEFS_PATH     o arquivo de Briefs do Workbench (padrão: data/prospecting-briefs.json;
@@ -59,7 +60,8 @@ const {
 const { createApprovalQueueService } = require('../services/approvalQueueService');
 // Funnel Service (reestruturação Prospecção/CRM/Funis, Etapa "Funis 1") — só o adapter de arquivo local existe
 // ainda (ver o cabeçalho de src/crm/funnelRepository.js); um adapter Supabase é uma etapa futura.
-const { createFileBackedFunnelService, createFileBackedActiveFunnelCardsChecker } = require('../services/funnelFileService');
+const { createConfiguredFunnelService, createConfiguredNegotiationService, createConfiguredActiveFunnelCardsChecker } = require('../services/commercialRepositoryFactory');
+// Negotiation Service (CRM 5.0, Fase D1, decisão 0028) — adapter de arquivo local (o de produção no Supabase é uma decisão e uma fase próprias).
 // createConfiguredCrmService (etapas 2.3/3H, decisão 0024): decide REPOSITORY_MODE (file ou supabase — ver o
 // cabeçalho de crmRepositoryFactory.js) antes de montar o CRM Service. Substitui o import direto de
 // createFileBackedCrmService: agora só a fábrica sabe qual adapter usar, e nunca um caminho escondido. Este
@@ -95,6 +97,8 @@ const DEFAULT_USERS_FILE = path.join(ROOT, 'data', 'users.json');
 // Dados do CRM: um arquivo local em data/ (o .gitignore exclui data/*.json — são dados pessoais de prospects).
 const DEFAULT_CRM_FILE = path.join(ROOT, 'data', 'crm.json');
 const DEFAULT_FUNNELS_FILE = path.join(ROOT, 'data', 'funnels.json');
+// Negociações (Fase D1): o arquivo só passa a existir quando alguém cria a primeira negociação — nada é criado na subida.
+const DEFAULT_NEGOTIATIONS_FILE = path.join(ROOT, 'data', 'negotiations.json');
 // Catálogos do CRM (modo "file"): o arquivo só passa a existir quando um ADMIN cria o primeiro item — nada é criado na subida.
 const DEFAULT_CRM_CATALOGS_FILE = path.join(ROOT, 'data', 'crm-catalogs.json');
 
@@ -185,12 +189,15 @@ function createServer(env = process.env, options = {}) {
     queuePath: resolveFile(env.RIO_X7_QUEUE_PATH, undefined),
   });
   const crmFilePath = resolveFile(env.RIO_X7_CRM_PATH, DEFAULT_CRM_FILE);
+  // As entidades COMERCIAIS (funis, etapas, cards e negociações) seguem REPOSITORY_MODE como o CRM e os catálogos (decisão 0029): em "supabase" os caminhos de arquivo abaixo NÃO são usados e não há
+  // fallback para o arquivo; em "file" (desenvolvimento isolado e testes) valem os dois caminhos.
   const funnelsFilePath = resolveFile(env.RIO_X7_FUNNELS_PATH, DEFAULT_FUNNELS_FILE);
+  const negotiationsFilePath = resolveFile(env.RIO_X7_NEGOTIATIONS_PATH, DEFAULT_NEGOTIATIONS_FILE);
   // A checagem de integridade CRM ↔ Card (Etapa "Funis 2 — correção final"): uma FUNÇÃO só (nunca o repositório
   // de Funil inteiro — ver o cabeçalho de funnelFileService.js), injetada no CRM Service abaixo para recusar
   // excluir um registro do CRM enquanto ele tiver Cards ativos. Não é o mesmo objeto que o Funnel Service usa por
   // baixo, mas lê o MESMO arquivo (RIO_X7_FUNNELS_PATH) — o adapter é sem estado, então isso nunca diverge.
-  const hasActiveFunnelCards = createFileBackedActiveFunnelCardsChecker({ filePath: funnelsFilePath });
+  const hasActiveFunnelCards = createConfiguredActiveFunnelCardsChecker({ env, funnelsFilePath });
   const crmService = createConfiguredCrmService({ env, authorizeOperation: authorizeCrmOperation, filePath: crmFilePath, hasActiveFunnelCards });
   // O repositório BRUTO do CRM (Etapa "Funis 2"): a MESMA instância que `crmService` usa por baixo (o cache de
   // createConfiguredCrmRepository/sharedFileCrmRepository é por `filePath`) — o Funnel Service o usa só para
@@ -283,10 +290,11 @@ function createServer(env = process.env, options = {}) {
   // Funnel Service (Etapa "Funis 1": funil/etapa, arquivo próprio, RIO_X7_FUNNELS_PATH; Etapa "Funis 2": card,
   // sobre o MESMO crmRepository/crmService que REPOSITORY_MODE decidiu para o CRM acima — nunca uma segunda
   // instância, mesmo princípio já aplicado à promoção e à prospecção).
-  const funnelService = createFileBackedFunnelService({
+  const funnelService = createConfiguredFunnelService({
+    env,
     authorizeOperation: authorizeFunnelOperation,
     authorizeCrmOperation,
-    filePath: funnelsFilePath,
+    funnelsFilePath,
     crmRepository,
     crmService,
   });
@@ -299,6 +307,18 @@ function createServer(env = process.env, options = {}) {
     authorizeOperation: authorizeCatalogOperation,
     filePath: resolveFile(env.RIO_X7_CRM_CATALOGS_PATH, DEFAULT_CRM_CATALOGS_FILE),
     countUsage: createCrmCatalogUsageCounter({ crmRepository }),
+  });
+
+  // Negotiation Service (Fase D1, decisão 0028): a oportunidade de UM cliente por UM serviço do catálogo, num funil. Usa o MESMO crmRepository/crmService (o que REPOSITORY_MODE decidiu), o MESMO
+  // arquivo de funis (o card da negociação vive nele) e o MESMO Catalog Service (só leitura: o que o serviço permite). Nada é gravado no catálogo nem nos campos legados do CRM.
+  const negotiationService = createConfiguredNegotiationService({
+    env,
+    authorizeCrmOperation,
+    funnelsFilePath,
+    negotiationsFilePath,
+    crmRepository,
+    crmService,
+    catalogService: crmCatalogService,
   });
 
   const app = createApp({
@@ -314,6 +334,7 @@ function createServer(env = process.env, options = {}) {
     leadEnrichmentService,
     prospectingExclusionService,
     funnelService,
+    negotiationService,
     crmCatalogService,
     publicConfig: { supabaseUrl, supabaseAnonKey },
     staticRoot: DASHBOARD_ROOT,

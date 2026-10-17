@@ -14,6 +14,10 @@
 // antes de criar um card; ele NUNCA lê nem grava nenhum outro dado do CRM. Excluir um card é ARQUIVAMENTO (nunca
 // exclusão física — decisão do proprietário, Etapa "Funis 2"): o histórico de movimentação e o CRM Record nunca
 // são afetados.
+//
+// CARD DE NEGOCIAÇÃO (CRM 5.0, Fase D1, decisão 0028): um card pode REPRESENTAR uma negociação (`negotiationId`). Um cliente pode ter VÁRIAS negociações, até no mesmo funil: a regra de
+// "um card ativo por (funil, registro)" vale só para os cards SEM negociação (os de antes). Um card de negociação só se move e só se arquiva pelas operações da NEGOCIAÇÃO (que têm as
+// regras de situação e o histórico próprio): as funções de card avulso o recusam (`FUNNEL_CARD_HAS_NEGOTIATION`).
 
 const crypto = require('node:crypto');
 const { assertValidFunnelRepository } = require('./funnelRepositoryPort');
@@ -104,6 +108,11 @@ async function deleteFunnel(repository, id) {
     const err = new Error('Funil: este funil possui cards vinculados e não pode ser excluído');
     err.code = 'FUNNEL_HAS_CARDS';
     throw err;
+  }
+  // adaptador com exclusão atômica (Supabase: as etapas e o funil saem juntos, numa transação): usa-a; senão, etapa por etapa e depois o funil (arquivo)
+  if (typeof repository.deleteFunnelCascade === 'function') {
+    await repository.deleteFunnelCascade(id);
+    return structuredClone(funnel);
   }
   for (const stage of await repository.listStages(id)) {
     await repository.deleteStage(stage.id);
@@ -227,6 +236,10 @@ async function reorderStages(repository, funnelId, orderedIds) {
   if (orderedIds.length !== existentes.length || orderedIds.some((id) => !porId.has(id))) {
     throw new Error('Funil: a lista de reordenação precisa conter exatamente as etapas deste funil, cada uma uma vez');
   }
+  if (typeof repository.reorderStages === 'function') {
+    await repository.reorderStages(funnelId, orderedIds); // atômico: todas as posições mudam ou nenhuma
+    return listStages(repository, funnelId);
+  }
   for (let ordem = 0; ordem < orderedIds.length; ordem += 1) {
     await repository.saveStage({ ...porId.get(orderedIds[ordem]), ordem });
   }
@@ -269,13 +282,7 @@ async function createCard(repository, crmRepository, { funnelId, crmRecordId }, 
     throw err;
   }
 
-  const etapas = await listStages(repository, funnel.id);
-  if (etapas.length === 0) {
-    const err = new Error('Funil: este funil ainda não tem nenhuma etapa — crie uma etapa antes de vincular um card');
-    err.code = 'FUNNEL_HAS_NO_STAGES';
-    throw err;
-  }
-  const primeiraEtapa = etapas[0]; // listStages já devolve ordenado por `ordem` — a de menor ordem é a primeira.
+  const primeiraEtapa = await firstStageOf(repository, funnel, { onlyActive: false });
 
   const agora = new Date().toISOString();
   const card = {
@@ -287,15 +294,63 @@ async function createCard(repository, crmRepository, { funnelId, crmRecordId }, 
     criadoEm: agora,
     updatedAt: agora,
   };
-  await repository.saveCard(card);
-  await repository.saveCardMove({
-    cardId: card.id,
-    stageFrom: null,
-    stageTo: primeiraEtapa.id,
-    movedBy: meta.reviewedBy ?? null,
-    motivo: requireMotivoOpcional(meta.motivo),
-    movedAt: agora,
+  await persistCardChange(repository, {
+    card,
+    move: { cardId: card.id, stageFrom: null, stageTo: primeiraEtapa.id, movedBy: meta.reviewedBy ?? null, motivo: requireMotivoOpcional(meta.motivo), movedAt: agora },
+    expectedStageId: null,
   });
+  return structuredClone(card);
+}
+
+// Grava um card e o seu movimento de histórico. Adaptador com `commitCardChange` (Supabase): UMA transação — o card nunca muda sem o histórico, nem o histórico sem o card. Sem ele (arquivo):
+// o card e depois o movimento, como sempre foi. `expectedStageId` (só ao mover): a etapa em que o card estava quando foi lido — a concorrência é conferida pelo banco.
+async function persistCardChange(repository, { card, move, expectedStageId = null }) {
+  if (typeof repository.commitCardChange === 'function') {
+    await repository.commitCardChange({ card, move, expectedStageId });
+    return;
+  }
+  await repository.saveCard(card);
+  await repository.saveCardMove(move);
+}
+
+// A primeira etapa de um funil (a de MENOR ordem). `onlyActive`: ignora as etapas desativadas (uma negociação nova nunca nasce numa etapa desativada).
+async function firstStageOf(repository, funnel, { onlyActive }) {
+  const etapas = (await listStages(repository, funnel.id)).filter((stage) => !onlyActive || stage.ativo !== false);
+  if (etapas.length === 0) {
+    const err = new Error('Funil: este funil ainda não tem nenhuma etapa — crie uma etapa antes de vincular um card');
+    err.code = 'FUNNEL_HAS_NO_STAGES';
+    throw err;
+  }
+  return etapas[0]; // listStages já devolve ordenado por `ordem`
+}
+
+// Cria o card de uma NEGOCIAÇÃO: o registro do CRM (o cliente) e o funil devem existir; entra na primeira etapa ATIVA. NÃO aplica a regra de um card por (funil, registro): um cliente
+// pode ter várias negociações no mesmo funil. O histórico de movimentação nasce com a entrada na etapa.
+async function planNegotiationCard(repository, crmRepository, { funnelId, crmRecordId, negotiationId }, meta = {}) {
+  requireRepository(repository);
+  const funnel = await requireFunnel(repository, funnelId);
+  await requireCrmRecord(crmRepository, requireId(crmRecordId, 'registro do CRM'));
+  requireId(negotiationId, 'negociação');
+  const primeiraEtapa = await firstStageOf(repository, funnel, { onlyActive: true });
+  const agora = new Date().toISOString();
+  const card = {
+    id: `card:${crypto.randomUUID()}`,
+    funnelId: funnel.id,
+    stageId: primeiraEtapa.id,
+    crmRecordId,
+    negotiationId,
+    removedAt: null,
+    criadoEm: agora,
+    updatedAt: agora,
+  };
+  const move = { cardId: card.id, stageFrom: null, stageTo: primeiraEtapa.id, movedBy: meta.reviewedBy ?? null, motivo: requireMotivoOpcional(meta.motivo), movedAt: agora };
+  return { card: structuredClone(card), move };
+}
+
+// Cria o card (e o primeiro movimento) de uma negociação NO ADAPTADOR — o caminho do arquivo. No Supabase quem grava é a negociação (planNegotiationCard), numa única transação com ela.
+async function createNegotiationCard(repository, crmRepository, args, meta = {}) {
+  const { card, move } = await planNegotiationCard(repository, crmRepository, args, meta);
+  await persistCardChange(repository, { card, move, expectedStageId: null });
   return structuredClone(card);
 }
 
@@ -313,30 +368,57 @@ async function listCardsByFunnel(repository, funnelId) {
 
 // Move um card para outra etapa — SEMPRE do mesmo funil do card (nunca uma etapa de outro funil). IDEMPOTENTE:
 // mover para a etapa em que o card já está não cria uma nova entrada de histórico nem falha.
-async function moveCard(repository, cardId, toStageId, meta = {}) {
-  requireRepository(repository);
-  const card = await requireCard(repository, cardId);
+async function planCardMove(repository, card, toStageId, meta, { requireActiveStage }) {
   const destino = await requireStage(repository, toStageId);
   if (destino.funnelId !== card.funnelId) {
     const err = new Error('Funil: a etapa de destino pertence a outro funil');
     err.code = 'FUNNEL_STAGE_MISMATCH';
     throw err;
   }
+  if (requireActiveStage && destino.ativo === false) {
+    const err = new Error('Funil: a etapa de destino está desativada');
+    err.code = 'FUNNEL_STAGE_INACTIVE';
+    throw err;
+  }
   if (destino.id === card.stageId) {
-    return structuredClone(card); // idempotente: já está lá, nada a fazer.
+    return { changed: false, card: structuredClone(card), move: null }; // idempotente: já está lá, nada a fazer.
   }
   const agora = new Date().toISOString();
   const movido = { ...card, stageId: destino.id, updatedAt: agora };
-  await repository.saveCard(movido);
-  await repository.saveCardMove({
-    cardId: card.id,
-    stageFrom: card.stageId,
-    stageTo: destino.id,
-    movedBy: meta.reviewedBy ?? null,
-    motivo: requireMotivoOpcional(meta.motivo),
-    movedAt: agora,
-  });
-  return structuredClone(movido);
+  const move = { cardId: card.id, stageFrom: card.stageId, stageTo: destino.id, movedBy: meta.reviewedBy ?? null, motivo: requireMotivoOpcional(meta.motivo), movedAt: agora };
+  return { changed: true, card: structuredClone(movido), move };
+}
+
+async function moveCardCore(repository, card, toStageId, meta, options) {
+  const plan = await planCardMove(repository, card, toStageId, meta, options);
+  if (plan.changed) await persistCardChange(repository, { card: plan.card, move: plan.move, expectedStageId: card.stageId });
+  return plan.card;
+}
+
+const cardHasNegotiation = () => Object.assign(new Error('Funil: este card pertence a uma negociação — use as ações da negociação'), { code: 'FUNNEL_CARD_HAS_NEGOTIATION' });
+
+async function moveCard(repository, cardId, toStageId, meta = {}) {
+  requireRepository(repository);
+  const card = await requireCard(repository, cardId);
+  if (card.negotiationId) throw cardHasNegotiation();
+  return moveCardCore(repository, card, toStageId, meta, { requireActiveStage: false });
+}
+
+// Move o card de uma NEGOCIAÇÃO (só a negociação chama): a etapa de destino precisa estar ativa e ser do mesmo funil. Idempotente.
+async function moveNegotiationCard(repository, cardId, toStageId, meta = {}) {
+  requireRepository(repository);
+  const card = await requireCard(repository, cardId);
+  if (!card.negotiationId) throw new Error('Funil: este card não é de uma negociação');
+  return moveCardCore(repository, card, toStageId, meta, { requireActiveStage: true });
+}
+
+// O PLANO da mudança de etapa de uma negociação (nada é gravado): { before, changed, card, move }. A negociação grava o card, o movimento e o seu próprio evento JUNTOS (atomicamente no Supabase).
+async function planNegotiationCardMove(repository, cardId, toStageId, meta = {}) {
+  requireRepository(repository);
+  const before = await requireCard(repository, cardId);
+  if (!before.negotiationId) throw new Error('Funil: este card não é de uma negociação');
+  const plan = await planCardMove(repository, before, toStageId, meta, { requireActiveStage: true });
+  return { before, ...plan };
 }
 
 // Histórico de movimentação do card — append-only, do mais ANTIGO para o mais recente (a mesma ordem de
@@ -353,6 +435,7 @@ async function getCardHistory(repository, cardId) {
 async function deleteCard(repository, id) {
   requireRepository(repository);
   const card = await requireCard(repository, id);
+  if (card.negotiationId) throw cardHasNegotiation();
   await repository.archiveCard(id);
   return structuredClone(card);
 }
@@ -371,9 +454,13 @@ module.exports = {
   deleteStage,
   reorderStages,
   createCard,
+  createNegotiationCard,
+  planNegotiationCard,
+  planNegotiationCardMove,
   getCard,
   listCardsByFunnel,
   moveCard,
+  moveNegotiationCard,
   getCardHistory,
   deleteCard,
 };

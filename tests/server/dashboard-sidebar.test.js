@@ -607,7 +607,9 @@ test('[SIDE-18] ROTAS: as novas existem (dashboard, clientes, metas, configuraç
   assert.equal(sectionOf({ name: 'crm-list' }), 'crm');
   assert.equal(sectionOf({ name: 'crm-clients' }), 'crm');
   assert.equal(sectionOf({ name: 'crm-record' }), 'crm');
-  for (const nome of ['crm-dashboard', 'crm-goals', 'crm-settings-funnels']) assert.equal(sectionOf({ name: nome }), 'crm-future', nome);
+  assert.equal(sectionOf({ name: 'crm-goals' }), 'crm-future', 'só as Metas seguem EM DESENVOLVIMENTO');
+  assert.equal(sectionOf({ name: 'crm-dashboard' }), 'crm-commercial', 'o Dashboard Comercial é uma tela real (Fase D1)');
+  assert.equal(sectionOf({ name: 'crm-settings-funnels' }), 'crm-funnel-admin', 'a Gestão de Funis e Etapas é uma tela real (Fase D1)');
   // Configurações do CRM é uma página real (os acessos aos cadastros): tem a sua própria seção
   assert.equal(sectionOf({ name: 'crm-settings' }), 'crm-settings');
   // os três catálogos (Fase 2B-2) são telas reais, com o painel de novo item e o de edição na mesma seção

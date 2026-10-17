@@ -9,7 +9,7 @@ const test = require('node:test');
 const assert = require('node:assert/strict');
 
 const { createFunnelService } = require('../../src/services/funnelService');
-const { createInMemoryFunnelRepository } = require('../../src/crm/funnelRepository');
+const { criarArmazenamento } = require('../helpers/commercialStorage');
 const { createInMemoryCrmRepository } = require('../../src/crm/crmRepository');
 const { createCrmService } = require('../../src/services/crmService');
 const { ROLE, USER_STATUS, defineUser, authorizeFunnelOperation, authorizeCrmOperation } = require('../../src/auth');
@@ -23,7 +23,7 @@ const closer = () => createAuthorizationContext(usuario(CLOSER_USER));
 
 // Monta um Funnel Service REAL sobre um CRM Service REAL (repositório em memória) — nunca um double: as operações
 // de card confirmam a existência de verdade do registro do CRM, e a projeção é enriquecida pelo CRM Service real.
-function criarServico({ funnelRepository = createInMemoryFunnelRepository(), crmRepository = createInMemoryCrmRepository(), extras = {} } = {}) {
+function criarServico({ funnelRepository = criarArmazenamento().funnelRepository, crmRepository = createInMemoryCrmRepository(), extras = {} } = {}) {
   const crmService = createCrmService({ authorizeOperation: authorizeCrmOperation, repository: crmRepository });
   return createFunnelService({
     authorizeOperation: authorizeFunnelOperation,
@@ -55,7 +55,7 @@ test('[FUNNEL-SVC-1] o Service expõe exatamente as 18 operações (12 de funil/
 });
 
 test('[FUNNEL-SVC-2] sem autorizador de funil, sem ponte do CRM, sem repositório, sem crmRepository ou sem crmService o Service não existe', () => {
-  const funnelRepository = createInMemoryFunnelRepository();
+  const funnelRepository = criarArmazenamento().funnelRepository;
   const crmRepository = createInMemoryCrmRepository();
   const crmService = createCrmService({ authorizeOperation: authorizeCrmOperation, repository: crmRepository });
   const base = { authorizeOperation: authorizeFunnelOperation, authorizeCrmOperation, repository: funnelRepository, crmRepository, crmService };
@@ -128,7 +128,7 @@ test('[FUNNEL-SVC-5] campos desconhecidos no corpo são recusados ANTES de tocar
 });
 
 test('[FUNNEL-SVC-6] deleteFunnel/deleteStage propagam o código FUNNEL_HAS_CARDS/STAGE_HAS_CARDS do domínio, intacto', async () => {
-  const funnelRepository = createInMemoryFunnelRepository();
+  const funnelRepository = { ...criarArmazenamento().funnelRepository }; // cópia: o adapter do Supabase é congelado e este teste troca dois métodos
   funnelRepository.countCardsByFunnel = () => 1;
   funnelRepository.countCardsByStage = () => 1;
   const servico = criarServico({ funnelRepository });

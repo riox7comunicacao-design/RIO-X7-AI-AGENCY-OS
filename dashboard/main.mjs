@@ -28,6 +28,8 @@ import { createCrmView } from './views/crm.mjs';
 import { createCatalogsView } from './views/catalogs.mjs';
 import { createCrmSettingsView } from './views/crmSettings.mjs';
 import { createFunnelsView } from './views/funnels.mjs';
+import { createFunnelAdminView } from './views/funnelAdmin.mjs';
+import { createCommercialDashboardView } from './views/commercialDashboard.mjs';
 import { createProspectingView } from './views/prospecting.mjs';
 import { createProspectingExclusionsView } from './views/prospectingExclusions.mjs';
 import { createProspectingHistoryView } from './views/prospectingHistory.mjs';
@@ -335,8 +337,28 @@ export function startDashboard({ document, root, fetchImpl, sdk, navigation, pre
           main.replaceChildren(target);
           transient = createCrmSettingsView({ document, root: target, permissions });
           transient.render();
+        } else if (section === 'crm-commercial') {
+          // Dashboard Comercial: os indicadores reais das negociações (READ:CRM)
+          if (!permissions.canReadCrm) {
+            main.replaceChildren(h(document, 'p', { className: 'message error', role: 'alert', text: NO_ACCESS }));
+            return;
+          }
+          const target = container();
+          main.replaceChildren(target);
+          transient = createCommercialDashboardView({ document, root: target, api, permissions });
+          transient.load();
+        } else if (section === 'crm-funnel-admin') {
+          // Gestão de Funis e Etapas: MANAGE:FUNNELS (só ADMIN); sem a permissão nada é mostrado nem chamado
+          if (!permissions.canManageFunnels) {
+            main.replaceChildren(h(document, 'p', { className: 'message error', role: 'alert', text: NO_ACCESS }));
+            return;
+          }
+          const target = container();
+          main.replaceChildren(target);
+          transient = createFunnelAdminView({ document, root: target, api, permissions, ui });
+          transient.load();
         } else if (section === 'crm-future') {
-          // Dashboard Comercial, Metas e Configurações do CRM: páginas EM DESENVOLVIMENTO, sem dado nenhum
+          // Metas e Indicadores: página EM DESENVOLVIMENTO, sem dado nenhum
           if (!permissions.canReadCrm) {
             main.replaceChildren(h(document, 'p', { className: 'message error', role: 'alert', text: NO_ACCESS }));
             return;
@@ -360,7 +382,7 @@ export function startDashboard({ document, root, fetchImpl, sdk, navigation, pre
           }
           const target = container();
           main.replaceChildren(target);
-          transient = createFunnelsView({ document, root: target, api, permissions, navigate });
+          transient = createFunnelsView({ document, root: target, api, permissions, navigate, ui });
           transient.load();
         } else if (section === 'prospecting') {
           if (!permissions.canProposeLead) {

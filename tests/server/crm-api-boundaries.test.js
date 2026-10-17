@@ -78,9 +78,9 @@ test('[CRM-API-ARCH-3] a raiz de composição só chama a fábrica de src/servic
       '../services/approvalQueueService',
       '../services/catalogRepositoryFactory',
       '../services/catalogUsage',
+      '../services/commercialRepositoryFactory', // Fase D1.1 (decisão 0029): a fábrica das entidades comerciais (funis, cards, negociações) por REPOSITORY_MODE; a composição só passa CAMINHOS (modo file) e os Services já prontos
       '../services/crmIntegrationFileService',
       '../services/crmRepositoryFactory',
-      '../services/funnelFileService',
       '../services/permanentExclusionGuard',
       '../services/prospectingBriefFileService',
       '../services/prospectingExclusionRepositoryFactory',
@@ -104,7 +104,13 @@ test('[CRM-API-ARCH-3] a raiz de composição só chama a fábrica de src/servic
   // Etapa "Funis 2 — correção final de integridade CRM ↔ Card": a composição usa a fábrica de src/services/
   // funnelFileService.js para obter a checagem (uma FUNÇÃO só — ver o cabeçalho desse arquivo), nunca o
   // repositório de Funil nem o domínio diretamente (regra R12: src/server/ não pode importar src/crm/).
-  assert.equal(identificadores.has('createFileBackedActiveFunnelCardsChecker'), true);
+  assert.equal(identificadores.has('createConfiguredActiveFunnelCardsChecker'), true);
+  // Fase D1.1 (decisão 0029): funis e negociações seguem REPOSITORY_MODE pela fábrica comercial — a composição nunca monta um adapter de arquivo NEM o do Supabase à mão.
+  for (const proibido of ['createFileBackedFunnelService', 'createFileBackedNegotiationService', 'createFileBackedActiveFunnelCardsChecker', 'createFunnelService', 'createNegotiationService', 'createJsonFileFunnelRepository', 'createJsonFileNegotiationRepository', 'createSupabaseFunnelRepository', 'createSupabaseNegotiationRepository']) {
+    assert.equal(identificadores.has(proibido), false, `a composição não pode usar ${proibido}`);
+  }
+  assert.equal(identificadores.has('createConfiguredFunnelService'), true);
+  assert.equal(identificadores.has('createConfiguredNegotiationService'), true);
   // Catálogos do CRM (Fase 2B-1): a composição usa SÓ a fábrica de src/services (e o contador de uso, também de src/services) e a ponte de
   // autorização — nunca o domínio dos catálogos, o repositório, um adapter nem o Service construído à mão.
   for (const proibido of ['createCatalogService', 'createJsonFileCatalogRepository', 'createInMemoryCatalogRepository', 'createSupabaseCatalogRepository', 'catalogDomain', 'normalizeCatalogName']) {
@@ -126,8 +132,8 @@ test('[CRM-API-ARCH-4] a composição injeta o autorizador de src/auth e o camin
   assert.match(codigo, /const funnelsFilePath = resolveFile\(env\.RIO_X7_FUNNELS_PATH, DEFAULT_FUNNELS_FILE\);/);
   assert.match(
     codigo,
-    /const hasActiveFunnelCards = createFileBackedActiveFunnelCardsChecker\(\{\s*filePath:\s*funnelsFilePath\s*\}\);/,
-    'a checagem é uma FUNÇÃO só (ver o cabeçalho de funnelFileService.js), nunca o repositório de Funil inteiro'
+    /const hasActiveFunnelCards = createConfiguredActiveFunnelCardsChecker\(\{\s*env,\s*funnelsFilePath\s*\}\);/,
+    'a checagem é uma FUNÇÃO só (ver o cabeçalho de commercialRepositoryFactory.js), nunca o repositório de Funil inteiro; segue REPOSITORY_MODE'
   );
   assert.match(codigo, /createConfiguredCrmService\(\{\s*env,\s*authorizeOperation:\s*authorizeCrmOperation,\s*filePath:\s*crmFilePath,\s*hasActiveFunnelCards\s*\}\)/);
   assert.match(codigo, /createConfiguredCrmRepository\(\{\s*env,\s*filePath:\s*crmFilePath\s*\}\)/, 'o repositório bruto do CRM usa o MESMO caminho/cache que o crmService');

@@ -5,12 +5,21 @@
 const test = require('node:test');
 const assert = require('node:assert/strict');
 
-const funnelDomain = require('../../src/crm/funnelDomain');
-const { createInMemoryFunnelRepository } = require('../../src/crm/funnelRepository');
+const funnelDomainReal = require('../../src/crm/funnelDomain');
+// No Supabase o histórico de movimentação NUNCA é anônimo (o banco exige quem moveu); o domínio antigo aceitava `meta` vazio. Os testes que não olham QUEM moveu passam este operador padrão — o que o
+// Service sempre faz em produção. Os testes que olham o histórico passam o próprio operador.
+const QUEM_PADRAO = Object.freeze({ userId: 'user-teste', name: 'Operador Teste', role: 'ADMIN' });
+const funnelDomain = {
+  ...funnelDomainReal,
+  createCard: (repository, crmRepository, args, meta = {}) => funnelDomainReal.createCard(repository, crmRepository, args, { reviewedBy: QUEM_PADRAO, ...meta }),
+  moveCard: (repository, id, stageId, meta = {}) => funnelDomainReal.moveCard(repository, id, stageId, { reviewedBy: QUEM_PADRAO, ...meta }),
+};
+const { criarArmazenamento, MODO } = require('../helpers/commercialStorage');
 const crmDomain = require('../../src/crm/crmDomain');
 const { createInMemoryCrmRepository } = require('../../src/crm/crmRepository');
 
-const memRepo = () => createInMemoryFunnelRepository();
+// O MESMO conjunto roda nos dois modos (Fase D1.1): funnelDomain.test.js (memória) e funnelDomain.supabase.test.js (adapter do Supabase sobre o PostgREST falso).
+const memRepo = () => ({ ...criarArmazenamento().funnelRepository }); // uma CÓPIA (o adapter do Supabase é congelado; alguns testes trocam um método para simular um cenário)
 const OPERADOR = { userId: 'user-1', name: 'Alguém', role: 'ADMIN' };
 
 // Um registro do CRM real (para os testes de Card — a existência do registro é verificada de verdade, nunca fingida).
@@ -339,6 +348,14 @@ test('[FUNNEL-DOM-23] um card ARQUIVADO nunca bloqueia excluir o funil/etapa (os
   const card = await funnelDomain.createCard(repo, crmRepo, { funnelId: funnel.id, crmRecordId: record.id });
   await funnelDomain.deleteCard(repo, card.id);
 
+  if (MODO === 'supabase') {
+    // DIFERENÇA DELIBERADA entre os modos (decisão 0029): no banco o card arquivado continua ligado à etapa e ao funil (integridade referencial e histórico preservado) —
+    // por isso ele TAMBÉM impede excluí-los. O adapter de arquivo, que não tem chave estrangeira, só conta os ativos.
+    await assert.rejects(() => funnelDomain.deleteStage(repo, stage.id), (erro) => erro.code === 'STAGE_HAS_CARDS');
+    await assert.rejects(() => funnelDomain.deleteFunnel(repo, funnel.id), (erro) => erro.code === 'FUNNEL_HAS_CARDS');
+    assert.notEqual(await repo.getFunnel(funnel.id), null);
+    return;
+  }
   await assert.doesNotReject(() => funnelDomain.deleteStage(repo, stage.id));
   await assert.doesNotReject(() => funnelDomain.deleteFunnel(repo, funnel.id));
 });

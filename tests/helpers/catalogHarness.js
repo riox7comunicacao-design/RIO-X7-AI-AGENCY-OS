@@ -146,7 +146,7 @@ const campo = (s, campoNome) => s.browser.by.id(s.browser.root, `catalog-field-$
 const erroDoCampo = (s, campoNome) => s.browser.by.id(s.browser.root, `catalog-field-${campoNome}-error`);
 const linhas = (s) => s.browser.by.cls(s.browser.root, 'catalog-row');
 const linhaDe = (s, id) => s.browser.find(s.browser.root, (el) => el.localName === 'li' && el.getAttribute('data-id') === id);
-const nomes = (s) => linhas(s).map((li) => s.browser.find(li, (el) => el.localName === 'button' && el.getAttribute('data-action') === 'edit').textContent);
+const nomes = (s) => linhas(s).map((li) => s.browser.find(li, (el) => el.localName === 'button' && el.getAttribute('data-action') === 'details').textContent);
 const acao = (s, id, nomeDaAcao) => s.browser.find(s.browser.root, (el) => el.localName === 'button' && el.getAttribute('data-item') === id && el.getAttribute('data-action') === nomeDaAcao);
 const avisos = (s) => s.browser.findAll(s.browser.root, (el) => el.className === 'toast-message').map((el) => el.textContent);
 const texto = (s) => s.browser.root.textContent.replace(/\s+/g, ' ');

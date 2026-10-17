@@ -54,9 +54,9 @@ const botao = (s, rotulo, escopo) => s.browser.by.button(escopo || s.browser.roo
 const campo = (s, nome) => s.browser.by.id(s.browser.root, `catalog-field-${nome}`);
 const erroDe = (s, nome) => s.browser.by.id(s.browser.root, `catalog-field-${nome}-error`);
 const acao = (s, id, nome) => s.browser.find(s.browser.root, (el) => el.localName === 'button' && el.getAttribute('data-item') === id && el.getAttribute('data-action') === nome);
-const nomes = (s) => s.browser.by.cls(principal(s), 'catalog-row').map((li) => s.browser.find(li, (el) => el.localName === 'button' && el.getAttribute('data-action') === 'edit').textContent);
+const nomes = (s) => s.browser.by.cls(principal(s), 'catalog-row').map((li) => s.browser.find(li, (el) => el.localName === 'button' && el.getAttribute('data-action') === 'details').textContent);
 const linhas = (s) => s.browser.by.cls(principal(s), 'catalog-row');
-const idDe = (s, nome) => linhas(s).map((li) => [li.getAttribute('data-id'), s.browser.find(li, (el) => el.getAttribute('data-action') === 'edit').textContent]).find(([, n]) => n === nome)[0];
+const idDe = (s, nome) => linhas(s).map((li) => [li.getAttribute('data-id'), s.browser.find(li, (el) => el.getAttribute('data-action') === 'details').textContent]).find(([, n]) => n === nome)[0];
 const ir = async (s, hash) => {
   s.win.location.hash = hash;
   await s.browser.flush(12);

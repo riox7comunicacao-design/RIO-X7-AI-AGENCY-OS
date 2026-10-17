@@ -287,7 +287,7 @@ test('[CATORI-3] NENHUMA INTEGRAÇÃO: a tela só fala com a API dos catálogos 
   await clicar(s, acao(s, 'origin:2', 'down'));
   const rotulos = s.browser.by.tag(s.browser.root, 'button').map((b) => b.textContent);
   for (const rotulo of rotulos) assert.doesNotMatch(rotulo, /conectar|integrar|sincronizar|importar|whatsapp|meta ads|google ads|\bia\b/i, rotulo);
-  assert.deepEqual([...new Set(api.chamadas.map(([n]) => n))].sort(), ['criar', 'desativar', 'listar', 'reordenar']);
+  assert.deepEqual([...new Set(api.chamadas.map(([n]) => n))].sort(), ['criar', 'desativar', 'listar', 'obter', 'reordenar']); // "obter": a contagem de uso que o aviso de desativação mostra (somente leitura)
   assert.equal(s.browser.findAll(s.browser.root, (el) => el.localName === 'a' && /^https?:/i.test(el.getAttribute('href') || '')).length, 0, 'nenhum link externo');
   assert.deepEqual(avisos(s).length > 0, true);
   assert.ok(avisos(s).some((a) => /Ordem das origens atualizada\./.test(a)));

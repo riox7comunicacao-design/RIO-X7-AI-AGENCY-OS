@@ -178,13 +178,14 @@ test('[CATMODUI-6] RESPONSIVIDADE e TEMA (CSS): o grupo é uma grade que encolhe
   const novas = [grupo, periodicidades, regra('.catalog-form .modality-group > legend.required::after'), regra('.catalog-form .modality-option')].join(' ');
   assert.doesNotMatch(novas, /#[0-9a-fA-F]{3,8}\b|rgb\(|hsl\(/);
   // a linha da lista e o texto longo (todas as modalidades + periodicidades) quebram em vez de estourar
-  assert.match(regra('.catalog-row'), /flex-wrap:\s*wrap/);
+  assert.match(regra('.catalog-grid'), /grid-template-columns:\s*repeat\(auto-fill/);
+  assert.match(regra('.catalog-row'), /min-width:\s*0/);
   assert.match(regra('.catalog-meta'), /overflow-wrap:\s*anywhere/);
   assert.match(regra('.catalog-row-main'), /min-width:\s*0/);
   // o rótulo da caixa quebra e a caixa não encolhe
   assert.match(regra('.catalog-form .modality-option label'), /overflow-wrap:\s*anywhere/);
   assert.match(regra('.catalog-form .modality-option input'), /flex:\s*none/);
   // no celular os botões do painel ocupam a largura
-  const celular = /@media \(max-width: 760px\) \{\n  \.catalog-row-actions \{[\s\S]*?\.catalog-form-actions \.btn \{ flex: 1 1 100%; \}\n\}/.exec(CSS);
+  const celular = /@media \(max-width: 760px\) \{\n  \.catalog-grid \{[\s\S]*?\.catalog-form-actions \.btn \{ flex: 1 1 100%; \}\n\}/.exec(CSS);
   assert.ok(celular, 'a regra de celular dos cadastros continua');
 });

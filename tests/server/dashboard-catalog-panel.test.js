@@ -432,5 +432,5 @@ test('[CATROUTE-1] ROTAS dos catálogos: ida e volta de lista, novo e item (id c
   assert.deepEqual(parseRoute('#/crm/configuracoes/funis'), { name: 'crm-settings-funnels' });
   assert.deepEqual(parseRoute('#/crm/registro/crm%3Aa'), { name: 'crm-record', id: 'crm:a' });
   assert.equal(sectionOf({ name: 'crm-settings' }), 'crm-settings', 'a página de acessos aos cadastros');
-  assert.equal(sectionOf({ name: 'crm-settings-funnels' }), 'crm-future');
+  assert.equal(sectionOf({ name: 'crm-settings-funnels' }), 'crm-funnel-admin');
 });

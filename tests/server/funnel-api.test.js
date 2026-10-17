@@ -8,6 +8,8 @@ const assert = require('node:assert/strict');
 const { Readable } = require('node:stream');
 
 const { montarAmbiente, BRENO, RAFAEL } = require('./testEnv');
+// O MESMO conjunto roda nos dois modos (Fase D1.1): este arquivo (arquivo) e o `.supabase.test.js` (adapters do Supabase sobre o PostgREST falso).
+const MODO = process.env.NEG_TEST_STORAGE === 'supabase' ? 'supabase' : 'arquivo';
 
 function makeRequest({ method = 'GET', url = '/', headers = {}, body } = {}) {
   const req = body === undefined ? Readable.from([]) : Readable.from([Buffer.from(typeof body === 'string' ? body : JSON.stringify(body))]);
@@ -26,7 +28,7 @@ async function chamar(env, usuario, { method = 'GET', url, body, headers = {}, c
 }
 
 test('[FUNNEL-API-1] sem Authorization -> 401 em toda rota de funil; ADMIN autenticado -> 200/201 nas operações básicas', async (t) => {
-  const env = montarAmbiente(t, { usuarios: [BRENO], crm: true, funnels: true });
+  const env = montarAmbiente(t, { usuarios: [BRENO], crm: true, funnels: true, commercialStorage: MODO });
   const semAuth = await chamar(env, null, { url: '/api/funnels' });
   assert.equal(semAuth.status, 401);
 
@@ -45,7 +47,7 @@ test('[FUNNEL-API-1] sem Authorization -> 401 em toda rota de funil; ADMIN auten
 });
 
 test('[FUNNEL-API-2] COMMERCIAL_CLOSER (sem MANAGE:FUNNELS) recebe 403 em toda rota de funil, mesmo chamando a API diretamente', async (t) => {
-  const env = montarAmbiente(t, { usuarios: [BRENO, RAFAEL], crm: true, funnels: true });
+  const env = montarAmbiente(t, { usuarios: [BRENO, RAFAEL], crm: true, funnels: true, commercialStorage: MODO });
   const criado = await chamar(env, BRENO, { method: 'POST', url: '/api/funnels', body: { nome: 'Outbound' } });
   const funnelId = criado.json().item.id;
 
@@ -66,7 +68,7 @@ test('[FUNNEL-API-2] COMMERCIAL_CLOSER (sem MANAGE:FUNNELS) recebe 403 em toda r
 });
 
 test('[FUNNEL-API-3] PATCH edita; DELETE recusa com 409 FUNNEL_HAS_CARDS quando há cards, e exclui normalmente quando não há (nesta etapa, nunca há)', async (t) => {
-  const env = montarAmbiente(t, { usuarios: [BRENO], crm: true, funnels: true });
+  const env = montarAmbiente(t, { usuarios: [BRENO], crm: true, funnels: true, commercialStorage: MODO });
   const criado = await chamar(env, BRENO, { method: 'POST', url: '/api/funnels', body: { nome: 'Original' } });
   const funnelId = criado.json().item.id;
 
@@ -83,7 +85,7 @@ test('[FUNNEL-API-3] PATCH edita; DELETE recusa com 409 FUNNEL_HAS_CARDS quando 
 });
 
 test('[FUNNEL-API-4] etapas: criar, listar, editar, reordenar e excluir; independentes entre funis', async (t) => {
-  const env = montarAmbiente(t, { usuarios: [BRENO], crm: true, funnels: true });
+  const env = montarAmbiente(t, { usuarios: [BRENO], crm: true, funnels: true, commercialStorage: MODO });
   const a = (await chamar(env, BRENO, { method: 'POST', url: '/api/funnels', body: { nome: 'A' } })).json().item;
   const b = (await chamar(env, BRENO, { method: 'POST', url: '/api/funnels', body: { nome: 'B' } })).json().item;
 
@@ -108,7 +110,7 @@ test('[FUNNEL-API-4] etapas: criar, listar, editar, reordenar e excluir; indepen
 });
 
 test('[FUNNEL-API-5] copiar funil: novo id, mesmas etapas (novos ids), NUNCA copia cards/histórico; aceita nome novo', async (t) => {
-  const env = montarAmbiente(t, { usuarios: [BRENO], crm: true, funnels: true });
+  const env = montarAmbiente(t, { usuarios: [BRENO], crm: true, funnels: true, commercialStorage: MODO });
   const original = (await chamar(env, BRENO, { method: 'POST', url: '/api/funnels', body: { nome: 'Original' } })).json().item;
   await chamar(env, BRENO, { method: 'POST', url: `/api/funnels/${original.id}/stages`, body: { nome: 'Etapa 1' } });
 
@@ -122,7 +124,7 @@ test('[FUNNEL-API-5] copiar funil: novo id, mesmas etapas (novos ids), NUNCA cop
 });
 
 test('[FUNNEL-API-6] reordenar (funis e etapas): corpo com campo desconhecido é recusado (400); lista incompleta/estranha é recusada', async (t) => {
-  const env = montarAmbiente(t, { usuarios: [BRENO], crm: true, funnels: true });
+  const env = montarAmbiente(t, { usuarios: [BRENO], crm: true, funnels: true, commercialStorage: MODO });
   const a = (await chamar(env, BRENO, { method: 'POST', url: '/api/funnels', body: { nome: 'A' } })).json().item;
 
   const comCampoForjado = await chamar(env, BRENO, { method: 'POST', url: '/api/funnels/reorder', body: { orderedIds: [a.id], role: 'ADMIN' } });
@@ -134,7 +136,7 @@ test('[FUNNEL-API-6] reordenar (funis e etapas): corpo com campo desconhecido é
 });
 
 test('[FUNNEL-API-7] userId/role/permissions no corpo de criar/editar um funil são recusados (400) — nunca decidem autorização nem identidade', async (t) => {
-  const env = montarAmbiente(t, { usuarios: [BRENO], crm: true, funnels: true });
+  const env = montarAmbiente(t, { usuarios: [BRENO], crm: true, funnels: true, commercialStorage: MODO });
   for (const [campo, valor] of Object.entries({ userId: 'user-atacante', role: 'ADMIN', permissions: ['MANAGE:FUNNELS'], id: 'funnel:forjado' })) {
     const resposta = await chamar(env, BRENO, { method: 'POST', url: '/api/funnels', body: { nome: 'x', [campo]: valor } });
     assert.equal(resposta.status, 400, campo);
@@ -144,7 +146,7 @@ test('[FUNNEL-API-7] userId/role/permissions no corpo de criar/editar um funil s
 });
 
 test('[FUNNEL-API-8] registro/funil/etapa inexistente -> 404 com mensagem fixa', async (t) => {
-  const env = montarAmbiente(t, { usuarios: [BRENO], crm: true, funnels: true });
+  const env = montarAmbiente(t, { usuarios: [BRENO], crm: true, funnels: true, commercialStorage: MODO });
   assert.equal((await chamar(env, BRENO, { url: '/api/funnels/funnel:nao-existe' })).status, 404);
   assert.equal((await chamar(env, BRENO, { method: 'PATCH', url: '/api/funnels/funnel:nao-existe', body: { nome: 'x' } })).status, 404);
   assert.equal((await chamar(env, BRENO, { method: 'DELETE', url: '/api/funnel-stages/stage:nao-existe' })).status, 404);
@@ -156,14 +158,14 @@ test('[FUNNEL-API-9] método errado -> 405 com Allow exato; sem o Funnel Service
   assert.equal(semServico.status, 404);
   assert.equal((await chamar(env, BRENO, { url: '/api/approvals' })).status, 200, 'o resto do app segue igual');
 
-  const comServico = montarAmbiente(t, { usuarios: [BRENO], crm: true, funnels: true });
+  const comServico = montarAmbiente(t, { usuarios: [BRENO], crm: true, funnels: true, commercialStorage: MODO });
   const errado = await chamar(comServico, BRENO, { method: 'DELETE', url: '/api/funnels' });
   assert.equal(errado.status, 405);
   assert.equal(errado.headers.Allow, 'GET, POST');
 });
 
 test('[FUNNEL-API-10] query string -> 400 (a API não tem filtro nem busca)', async (t) => {
-  const env = montarAmbiente(t, { usuarios: [BRENO], crm: true, funnels: true });
+  const env = montarAmbiente(t, { usuarios: [BRENO], crm: true, funnels: true, commercialStorage: MODO });
   const resposta = await chamar(env, BRENO, { url: '/api/funnels?x=1' });
   assert.equal(resposta.status, 400);
 });
@@ -183,7 +185,7 @@ async function criarFunilComEtapas(env, usuario, nomes = ['Sem contato', 'Contat
 }
 
 test('[FUNNEL-API-11] criar card: POST /api/funnels/:id/cards -> 201, na primeira etapa, enriquecido com dados do CRM (nunca duplica no card); GET lista/detalha', async (t) => {
-  const env = montarAmbiente(t, { usuarios: [BRENO], crm: true, funnels: true });
+  const env = montarAmbiente(t, { usuarios: [BRENO], crm: true, funnels: true, commercialStorage: MODO });
   const record = await criarRegistro(env, BRENO, 'Clínica Alfa');
   const { funnel, etapas } = await criarFunilComEtapas(env, BRENO);
 
@@ -204,7 +206,7 @@ test('[FUNNEL-API-11] criar card: POST /api/funnels/:id/cards -> 201, na primeir
 });
 
 test('[FUNNEL-API-12] autorização de card: READ:CRM (ambos) lê; PROPOSE:CRM (ambos) cria/move; WRITE:CRM (só ADMIN) arquiva — sem token é 401', async (t) => {
-  const env = montarAmbiente(t, { usuarios: [BRENO, RAFAEL], crm: true, funnels: true });
+  const env = montarAmbiente(t, { usuarios: [BRENO, RAFAEL], crm: true, funnels: true, commercialStorage: MODO });
   const record = await criarRegistro(env, BRENO);
   const { funnel } = await criarFunilComEtapas(env, BRENO);
 
@@ -229,7 +231,7 @@ test('[FUNNEL-API-12] autorização de card: READ:CRM (ambos) lê; PROPOSE:CRM (
 });
 
 test('[FUNNEL-API-13] mover card: PATCH /api/funnel-cards/:id com { stageId, reason? } -> 200, e o histórico registra a movimentação (append-only)', async (t) => {
-  const env = montarAmbiente(t, { usuarios: [BRENO], crm: true, funnels: true });
+  const env = montarAmbiente(t, { usuarios: [BRENO], crm: true, funnels: true, commercialStorage: MODO });
   const record = await criarRegistro(env, BRENO);
   const { funnel, etapas } = await criarFunilComEtapas(env, BRENO);
   const card = (await chamar(env, BRENO, { method: 'POST', url: `/api/funnels/${funnel.id}/cards`, body: { crmRecordId: record.id } })).json().item;
@@ -245,7 +247,7 @@ test('[FUNNEL-API-13] mover card: PATCH /api/funnel-cards/:id com { stageId, rea
 });
 
 test('[FUNNEL-API-14] erros de card: 404 (card/registro/etapa inexistente), 409 (duplicidade, etapa de outro funil), 400 (campo desconhecido, corpo sem crmRecordId/stageId)', async (t) => {
-  const env = montarAmbiente(t, { usuarios: [BRENO], crm: true, funnels: true });
+  const env = montarAmbiente(t, { usuarios: [BRENO], crm: true, funnels: true, commercialStorage: MODO });
   const record = await criarRegistro(env, BRENO);
   const { funnel, etapas } = await criarFunilComEtapas(env, BRENO);
   const outro = await criarFunilComEtapas(env, BRENO, ['Só Etapa']);
@@ -277,7 +279,7 @@ test('[FUNNEL-API-14] erros de card: 404 (card/registro/etapa inexistente), 409 
 });
 
 test('[FUNNEL-API-15] arquivar um card não exclui o CRM Record — o registro continua existindo e legível normalmente', async (t) => {
-  const env = montarAmbiente(t, { usuarios: [BRENO], crm: true, funnels: true });
+  const env = montarAmbiente(t, { usuarios: [BRENO], crm: true, funnels: true, commercialStorage: MODO });
   const record = await criarRegistro(env, BRENO, 'Clínica Preservada');
   const { funnel } = await criarFunilComEtapas(env, BRENO);
   const card = (await chamar(env, BRENO, { method: 'POST', url: `/api/funnels/${funnel.id}/cards`, body: { crmRecordId: record.id } })).json().item;

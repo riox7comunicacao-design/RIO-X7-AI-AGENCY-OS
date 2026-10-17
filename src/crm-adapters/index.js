@@ -10,6 +10,8 @@ const { createSupabaseCrmRepository, DEFAULT_TABLE } = require('./crmSupabaseRep
 const { readSupabaseCrmConfig, isSupabaseCrmConfigured } = require('./crmSupabaseConfig');
 const { FIELD_COLUMNS, MANAGED_COLUMNS, camelToSnake, recordToRow, rowToRecord } = require('./crmSupabaseMapping');
 const { createSupabaseCatalogRepository, CATALOG_TABLES } = require('./crmSupabaseCatalogRepository');
+const { createSupabaseFunnelRepository, FUNNEL_REPOSITORY_ERROR } = require('./crmSupabaseFunnelRepository');
+const { createSupabaseNegotiationRepository, NEGOTIATION_REPOSITORY_ERROR } = require('./crmSupabaseNegotiationRepository');
 
 module.exports = {
   createSupabaseCrmRepository,
@@ -23,4 +25,8 @@ module.exports = {
   rowToRecord,
   createSupabaseCatalogRepository,
   CATALOG_TABLES,
+  createSupabaseFunnelRepository,
+  FUNNEL_REPOSITORY_ERROR,
+  createSupabaseNegotiationRepository,
+  NEGOTIATION_REPOSITORY_ERROR,
 };

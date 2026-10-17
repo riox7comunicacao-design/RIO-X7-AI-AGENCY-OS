@@ -140,22 +140,12 @@ export const PAGE_TITLES = Object.freeze({
   'not-found': 'Página não encontrada',
 });
 
-// As páginas futuras do CRM: o que cada uma vai ser. (Serviços, Nichos e Cores, Origens dos Leads e a página Configurações do CRM já existem — Fase 2B-2 —, por isso não estão mais aqui.) Nenhuma tem dado, botão de ação ou número — só a explicação honesta de que ainda não existe.
+// As páginas futuras do CRM: o que cada uma vai ser (o Dashboard Comercial e a Gestão de Funis e Etapas já existem — Fase D1). (Serviços, Nichos e Cores, Origens dos Leads e a página Configurações do CRM já existem — Fase 2B-2 —, por isso não estão mais aqui.) Nenhuma tem dado, botão de ação ou número — só a explicação honesta de que ainda não existe.
 export const FUTURE_PAGES = Object.freeze({
-  'crm-dashboard': {
-    title: 'Dashboard Comercial',
-    summary: 'Uma visão executiva do que acontece na área comercial: negociações em aberto, propostas, vendas, metas e o que precisa de atenção.',
-    plans: ['Quantidade e valor de negociações por etapa e por funil', 'Propostas enviadas, vendas fechadas e taxa de conversão', 'Follow-ups pendentes e atrasados', 'Desempenho por vendedor, nicho e funil'],
-  },
   'crm-goals': {
     title: 'Metas e Indicadores',
     summary: 'Metas por período, funil e responsável, comparadas com o que foi realizado.',
     plans: ['Metas de quantidade de negociações e de valor vendido', 'Meta versus realizado', 'Ticket médio e tempo médio de fechamento'],
-  },
-  'crm-settings-funnels': {
-    title: 'Gestão de Funis e Etapas',
-    summary: 'A administração dos funis de vendas e das etapas de cada um.',
-    plans: ['Criar, renomear, reordenar e arquivar funis', 'Criar, renomear e reordenar etapas', 'Excluir etapas vazias, quando for seguro'],
   },
 });
 

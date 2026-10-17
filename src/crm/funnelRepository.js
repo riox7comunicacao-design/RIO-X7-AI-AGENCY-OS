@@ -76,7 +76,7 @@ function createInMemoryFunnelRepository() {
       return [...cards.values()].filter((card) => card.funnelId === funnelId && isAtiva(card)).map(clone);
     },
     getCardByFunnelAndRecord(funnelId, crmRecordId) {
-      const card = [...cards.values()].find((c) => c.funnelId === funnelId && c.crmRecordId === crmRecordId && isAtiva(c));
+      const card = [...cards.values()].find((c) => c.funnelId === funnelId && c.crmRecordId === crmRecordId && isAtiva(c) && !c.negotiationId);
       return card ? clone(card) : null;
     },
     getCard(id) {
@@ -230,7 +230,7 @@ function createJsonFileFunnelRepository(filePath) {
         .map(clone);
     },
     getCardByFunnelAndRecord(funnelId, crmRecordId) {
-      const card = Object.values(readJsonFile(filePath).cards).find((c) => c.funnelId === funnelId && c.crmRecordId === crmRecordId && isAtiva(c));
+      const card = Object.values(readJsonFile(filePath).cards).find((c) => c.funnelId === funnelId && c.crmRecordId === crmRecordId && isAtiva(c) && !c.negotiationId);
       return card ? clone(card) : null;
     },
     getCard(id) {

@@ -133,8 +133,8 @@ test('[MIG-FUN-15] a migration NÃO é executada por nenhum script do projeto �
   buscar(path.join(REPO_ROOT, 'scripts'));
 });
 
-test('[MIG-FUN-16] a fábrica de composição (src/server/index.js) só usa o adapter de ARQUIVO para Funis nesta etapa — nenhum código de produção fala com estas tabelas ainda', () => {
+test('[MIG-FUN-16] a composição (src/server/index.js) obtém os Funis SÓ pela fábrica comercial (REPOSITORY_MODE decide: arquivo no desenvolvimento isolado, Supabase na produção — decisão 0029) e nunca fala com estas tabelas diretamente', () => {
   const index = fs.readFileSync(path.join(REPO_ROOT, 'src', 'server', 'index.js'), 'utf8');
-  assert.match(index, /createFileBackedFunnelService/);
+  assert.match(index, /createConfiguredFunnelService/);
   assert.doesNotMatch(index, /crm_funnels|crm_funnel_stages|crm_funnel_cards/);
 });
