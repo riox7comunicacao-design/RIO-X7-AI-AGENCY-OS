@@ -33,7 +33,10 @@ test('[MIG-CAT-1] o arquivo existe, segue a convenção de nome do CLI do Supaba
   assert.ok(fs.existsSync(MIGRATION_FILE));
   assert.match(path.basename(MIGRATION_FILE), /^\d{14}_[a-z0-9_]+\.sql$/);
   const todas = fs.readdirSync(MIGRATIONS_DIR).filter((nome) => nome.endsWith('.sql')).sort();
-  assert.equal(todas[todas.length - 1], path.basename(MIGRATION_FILE), 'é a mais nova');
+  // Era "a mais nova" até a Fase 2B-3.2B-H2, que acrescentou uma migration CORRETIVA posterior (created_by_user_id das Exclusões): o que
+  // importa continua valendo — as cinco migrations anteriores, e só elas, vêm antes desta.
+  assert.equal(todas.indexOf(path.basename(MIGRATION_FILE)), 5, 'exatamente as cinco migrations anteriores vêm antes');
+  assert.deepEqual(todas.slice(6), ['20261017090000_prospecting_permanent_exclusions_created_by_text.sql'], 'a única posterior é a corretiva das Exclusões Permanentes (H2)');
   assert.match(SQL.split('\n').slice(0, 14).join('\n'), /NÃO APLICADA\./, 'o cabeçalho diz que NÃO foi aplicada');
   assert.match(SQL, /decisão 0026/);
   assert.match(SQL, /Aplicar é uma ação humana e consciente do proprietário/i);

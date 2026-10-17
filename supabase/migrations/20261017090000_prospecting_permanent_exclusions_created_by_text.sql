@@ -1,0 +1,41 @@
+-- ============================================================================================================
+-- Prospecção — Exclusões Permanentes: created_by_user_id passa de UUID para TEXT (CRM 5.0, Fase 2B-3.2B-H2)
+-- ============================================================================================================
+-- NÃO APLICADA. Este arquivo é só a proposta versionada (ver tests/db/prospectingPermanentExclusionsCreatedByTextMigration.
+-- test.js, que só lê este texto). Aplicar é uma ação humana e consciente do proprietário, depois de revisar este arquivo.
+-- O estado real do banco NÃO foi consultado: não se sabe se a migration 20260930090000 já foi aplicada.
+--
+-- POR QUÊ: a migration 20260930090000 declara `created_by_user_id UUID`, mas o identificador do usuário do projeto (userId,
+-- src/auth/user.js#defineUser) é um TEXTO LIVRE não vazio ("breno", "user-admin"...), nunca convertido para UUID — o serviço grava o
+-- userId do administrador exatamente como veio do autorizador. Com a coluna UUID, o cadastro de uma Exclusão Permanente por um
+-- usuário cujo userId não é um UUID falharia no banco (invalid_text_representation, 22P02) e a tela responderia 503. Todas as outras
+-- colunas de autoria do projeto (catálogos, funis, exclusão administrativa do CRM) já são TEXT; esta era a única diferente.
+--
+-- NÃO MODIFICA A MIGRATION HISTÓRICA. Uma migration já versionada nunca é editada (supabase/README.md): a correção é esta, NOVA e
+-- POSTERIOR. O carimbo é posterior a todas as demais de propósito: assim o CLI (`supabase db push`) nunca a trata como "fora de
+-- ordem", qualquer que seja o estado real do banco.
+--
+-- FUNCIONA NOS DOIS CENÁRIOS, e SEM esconder a ausência da tabela:
+--   (a) a 20260930090000 JÁ foi aplicada: a coluna muda de tipo e os valores que existirem são preservados (um UUID vira o seu texto
+--       canônico, em minúsculas e com hífens; nenhum valor se perde);
+--   (b) as duas serão aplicadas em sequência: a primeira cria a tabela (vazia) com UUID e esta a corrige, antes de qualquer linha.
+-- Se a tabela NÃO existe, o comando FALHA com "relation ... does not exist" (42P01). De propósito NÃO há IF EXISTS, nem CREATE TABLE
+-- aqui: a ausência da tabela continua identificável, nunca criada em silêncio por esta correção.
+--
+-- O QUE MUDA — e SÓ isso: o TIPO da coluna created_by_user_id. NENHUMA regra nova de banco: a validação de "userId não vazio" já
+-- existe na aplicação (defineUser e o serviço das Exclusões), e uma restrição nova nem é necessária para corrigir a incompatibilidade
+-- (e poderia recusar um dado histórico). NADA mais: nenhuma outra coluna, nenhuma restrição criada ou removida, nenhum índice, nenhuma
+-- policy (a RLS continua ligada e SEM policy), o gatilho de updated_at, nenhum GRANT, nenhuma linha lida, inserida, alterada ou
+-- apagada (o DDL reescreve as linhas existentes sem disparar o gatilho: updated_at não muda), nenhum DROP, nenhum DELETE, nenhum
+-- TRUNCATE. A coluna não é usada por índice, constraint, view, função ou policy, então a mudança de tipo não depende de nada.
+--
+-- IMPACTO: ALTER COLUMN ... TYPE pede um bloqueio exclusivo curto e reescreve a tabela (que é pequena: Exclusões Permanentes são
+-- poucas). Aplique num momento sem promoções em andamento. É um ÚNICO comando, portanto atômico: ou vale inteiro ou não vale. Repetir
+-- o comando depois de aplicado é inofensivo (a coluna já é TEXT; nada muda).
+--
+-- DESFAZER não faz parte do arquivo e normalmente não é desejável (o tipo UUID é incompatível com o userId do projeto). Voltar a
+-- UUID só funcionaria se todos os valores gravados fossem UUIDs válidos.
+-- ============================================================================================================
+
+ALTER TABLE public.prospecting_permanent_exclusions
+  ALTER COLUMN created_by_user_id TYPE TEXT USING created_by_user_id::TEXT;
