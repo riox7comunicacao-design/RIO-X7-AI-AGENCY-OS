@@ -28,7 +28,7 @@
 --   5) crm_funnel_card_moves    gatilho: histórico IMUTÁVEL.
 --   6) FUNÇÕES (só service_role; SECURITY INVOKER; search_path fixo): commit_crm_negotiation_change (a negociação + o histórico + o card + o
 --      movimento do card, numa ÚNICA transação), commit_crm_funnel_card_change (idem para cards avulsos) e reorder_crm_funnel_stages.
---   7) RLS ligada, SEM policy, e privilégios de anon/authenticated REVOGADOS: só o servidor (service_role) acessa. O Dashboard nunca fala com estas
+--   7) RLS ligada, SEM policy, e privilégios de anon/authenticated REVOGADOS (tabelas, sequência e EXECUTE das oito funções — nominalmente: REVOKE FROM PUBLIC não basta no Supabase): só o servidor (service_role) acessa. O Dashboard nunca fala com estas
 --      tabelas: fala com a CRM-API, que autentica e aplica o RBAC (READ/PROPOSE/WRITE:CRM e MANAGE:FUNNELS) ANTES de chegar aqui.
 --
 -- ATOMICIDADE: a gravação de uma negociação e do seu histórico obrigatório é UMA chamada (uma função PL/pgSQL é uma transação): ou tudo vale, ou
@@ -533,14 +533,26 @@ BEGIN
 END
 $$;
 
-REVOKE ALL ON FUNCTION public.crm_negotiation_service_check(TEXT, TEXT, TEXT, BOOLEAN) FROM PUBLIC;
+-- EXECUTE: `REVOKE … FROM PUBLIC` NÃO retira os privilégios EXPLÍCITOS que o Supabase concede por padrão a `anon` e `authenticated` em todo objeto novo do schema public (descoberto na aplicação da
+-- PRE-1). Por isso a revogação é NOMINAL, nos três (PUBLIC, anon e authenticated), em TODAS as oito funções que esta migration cria — as quatro chamáveis por RPC e as quatro de gatilho — e só
+-- depois vem o GRANT às chamáveis para service_role. (Nenhuma outra função é criada aqui; a conferência é o passo 20 do verificar-DEPOIS.) A sequência do histórico recebe o mesmo tratamento.
+-- As assinaturas abaixo são EXATAMENTE as da criação; mudar uma assinatura sem mudar aqui deixa o objeto antigo exposto.
+REVOKE ALL ON FUNCTION public.crm_negotiation_service_check(TEXT, TEXT, TEXT, BOOLEAN) FROM PUBLIC, anon, authenticated;
 GRANT EXECUTE ON FUNCTION public.crm_negotiation_service_check(TEXT, TEXT, TEXT, BOOLEAN) TO service_role;
-REVOKE ALL ON FUNCTION public.commit_crm_negotiation_change(TEXT, JSONB, JSONB, JSONB, TIMESTAMPTZ) FROM PUBLIC;
+REVOKE ALL ON FUNCTION public.commit_crm_negotiation_change(TEXT, JSONB, JSONB, JSONB, TIMESTAMPTZ) FROM PUBLIC, anon, authenticated;
 GRANT EXECUTE ON FUNCTION public.commit_crm_negotiation_change(TEXT, JSONB, JSONB, JSONB, TIMESTAMPTZ) TO service_role;
-REVOKE ALL ON FUNCTION public.commit_crm_funnel_card_change(JSONB, JSONB, TEXT) FROM PUBLIC;
+REVOKE ALL ON FUNCTION public.commit_crm_funnel_card_change(JSONB, JSONB, TEXT) FROM PUBLIC, anon, authenticated;
 GRANT EXECUTE ON FUNCTION public.commit_crm_funnel_card_change(JSONB, JSONB, TEXT) TO service_role;
-REVOKE ALL ON FUNCTION public.reorder_crm_funnel_stages(TEXT, TEXT[]) FROM PUBLIC;
+REVOKE ALL ON FUNCTION public.reorder_crm_funnel_stages(TEXT, TEXT[]) FROM PUBLIC, anon, authenticated;
 GRANT EXECUTE ON FUNCTION public.reorder_crm_funnel_stages(TEXT, TEXT[]) TO service_role;
+-- as funções de GATILHO (só o banco as dispara; nenhum papel precisa executá-las):
+REVOKE ALL ON FUNCTION public.crm_history_is_append_only() FROM PUBLIC, anon, authenticated;
+REVOKE ALL ON FUNCTION public.crm_funnel_cards_integrity() FROM PUBLIC, anon, authenticated;
+REVOKE ALL ON FUNCTION public.crm_funnel_stages_integrity() FROM PUBLIC, anon, authenticated;
+REVOKE ALL ON FUNCTION public.crm_negotiations_card_consistency() FROM PUBLIC, anon, authenticated;
+-- a sequência do histórico (identidade): ninguém além do servidor
+REVOKE ALL ON SEQUENCE public.crm_negotiation_events_id_seq FROM PUBLIC, anon, authenticated;
+GRANT USAGE, SELECT ON SEQUENCE public.crm_negotiation_events_id_seq TO service_role;
 
 COMMENT ON TABLE public.crm_negotiations IS 'Negociações (CRM 5.0, D1.1): um cliente por um serviço, num funil. Dinheiro em centavos; nunca apagada; escrita só pelas funções commit_*.';
 COMMENT ON TABLE public.crm_negotiation_events IS 'Histórico imutável das negociações (append-only por gatilho).';

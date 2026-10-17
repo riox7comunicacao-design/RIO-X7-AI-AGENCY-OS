@@ -138,16 +138,53 @@ test('[MIG-NEG-6] ATOMICIDADE E FAIL-CLOSED NAS FUNÇÕES: uma função PL/pgSQL
   assert.ok(reordem.includes('a lista não confere com as etapas do funil') && reordem.includes('FOR UPDATE'));
 });
 
-test('[MIG-NEG-7] RLS E PRIVILÉGIOS MÍNIMOS: RLS ligada nas duas tabelas novas SEM policy; anon e authenticated sem acesso; as funções só para service_role (revogadas de PUBLIC); nenhuma policy, nenhum GRANT a anon/authenticated/PUBLIC', () => {
-  for (const tabela of ['crm_negotiations', 'crm_negotiation_events']) assert.match(codigo, new RegExp(`ALTER TABLE public\\.${tabela} ENABLE ROW LEVEL SECURITY;`));
+test('[MIG-NEG-7] RLS E PRIVILÉGIOS MÍNIMOS: RLS ligada nas duas tabelas novas SEM policy; anon e authenticated sem acesso a tabelas e sequência; EXECUTE revogado NOMINALMENTE de PUBLIC, anon e authenticated em TODAS as funções criadas (as 4 chamáveis e as 4 de gatilho); service_role autorizada nas 4 chamáveis; nada de SECURITY DEFINER; assinaturas exatas', () => {
+  for (const tabela of ['crm_negotiations', 'crm_negotiation_events']) assert.match(codigo, new RegExp('ALTER TABLE public\\.' + tabela + ' ENABLE ROW LEVEL SECURITY;'));
   assert.doesNotMatch(codigo, /CREATE\s+POLICY/i);
   assert.match(codigo, /REVOKE ALL ON TABLE public\.crm_negotiations, public\.crm_negotiation_events FROM anon;/);
   assert.match(codigo, /REVOKE ALL ON TABLE public\.crm_negotiations, public\.crm_negotiation_events FROM authenticated;/);
-  const concessoes = [...codigo.matchAll(/GRANT\s+([^;]+?)\s+TO\s+([^;]+);/gi)].map((m) => `${norm(m[1])} -> ${norm(m[2])}`);
-  assert.ok(concessoes.length === 4 && concessoes.every((c) => /^EXECUTE ON FUNCTION public\.\w+\([^)]*\) -> service_role$/.test(c)), concessoes.join(' | '));
-  assert.doesNotMatch(codigo, /GRANT[^;]*\sTO\s[^;]*\b(anon|authenticated|PUBLIC)\b/); // (PUBLIC em maiúsculas: o schema `public` não conta)
-  const revogadas = [...codigo.matchAll(/REVOKE ALL ON FUNCTION public\.(\w+)/g)].map((m) => m[1]).sort();
-  assert.deepEqual(revogadas, ['commit_crm_funnel_card_change', 'commit_crm_negotiation_change', 'crm_negotiation_service_check', 'reorder_crm_funnel_stages']);
+  // a sequência do histórico: revogada dos três e liberada só ao servidor
+  assert.match(codigo, /REVOKE ALL ON SEQUENCE public\.crm_negotiation_events_id_seq FROM PUBLIC, anon, authenticated;/);
+  assert.match(codigo, /GRANT USAGE, SELECT ON SEQUENCE public\.crm_negotiation_events_id_seq TO service_role;/);
+
+  // TODAS as funções que a migration CRIA (não uma lista presumida): nome + tipos dos argumentos, sem os nomes dos parâmetros (p_algo TIPO)
+  const tiposDe = (argumentos) => norm(argumentos).split(',').map((a) => a.trim()).filter(Boolean).map((a) => a.replace(/^p_\w+\s+/, '')).join(', ');
+  const criadas = [...codigo.matchAll(/CREATE FUNCTION public\.(\w+)\(([^)]*)\)/g)].map((m) => m[1] + '(' + tiposDe(m[2]) + ')').sort();
+  assert.deepEqual(criadas, [
+    'commit_crm_funnel_card_change(JSONB, JSONB, TEXT)',
+    'commit_crm_negotiation_change(TEXT, JSONB, JSONB, JSONB, TIMESTAMPTZ)',
+    'crm_funnel_cards_integrity()',
+    'crm_funnel_stages_integrity()',
+    'crm_history_is_append_only()',
+    'crm_negotiation_service_check(TEXT, TEXT, TEXT, BOOLEAN)',
+    'crm_negotiations_card_consistency()',
+    'reorder_crm_funnel_stages(TEXT, TEXT[])',
+  ], 'a migration cria exatamente estas 8 funções (4 chamáveis e 4 de gatilho), com estas assinaturas');
+
+  // REVOKE: cada função criada é revogada de PUBLIC, anon e authenticated — e SÓ disso (service_role nunca é revogada)
+  const revogacoes = [...codigo.matchAll(/REVOKE ALL ON FUNCTION public\.(\w+)\(([^)]*)\) FROM ([^;]+);/g)].map((m) => ({ assinatura: m[1] + '(' + norm(m[2]) + ')', de: norm(m[3]) }));
+  assert.equal(revogacoes.length, 8, 'uma revogação por função criada');
+  for (const r of revogacoes) assert.equal(r.de, 'PUBLIC, anon, authenticated', r.assinatura + ': o REVOKE FROM PUBLIC sozinho NÃO retira o EXECUTE explícito de anon e authenticated no Supabase');
+  assert.deepEqual(revogacoes.map((r) => r.assinatura).sort(), criadas, 'as assinaturas revogadas são EXATAMENTE as criadas (nenhuma função fica de fora)');
+  assert.doesNotMatch(codigo, /REVOKE[^;]*\bservice_role\b/, 'service_role nunca é revogada');
+  assert.equal([...codigo.matchAll(/REVOKE ALL ON FUNCTION/g)].length, 8);
+  assert.doesNotMatch(codigo, /REVOKE ALL ON FUNCTION [^;]*FROM PUBLIC;/, 'nenhum REVOKE ficou só FROM PUBLIC');
+
+  // GRANT: só EXECUTE, só para service_role, só nas 4 chamáveis (as de gatilho não precisam de nenhum papel); mais a sequência
+  const concessoes = [...codigo.matchAll(/GRANT\s+([^;]+?)\s+TO\s+([^;]+);/gi)].map((m) => norm(m[1]) + ' -> ' + norm(m[2]));
+  const chamaveis = ['commit_crm_funnel_card_change(JSONB, JSONB, TEXT)', 'commit_crm_negotiation_change(TEXT, JSONB, JSONB, JSONB, TIMESTAMPTZ)', 'crm_negotiation_service_check(TEXT, TEXT, TEXT, BOOLEAN)', 'reorder_crm_funnel_stages(TEXT, TEXT[])'];
+  const funcoesComGrant = concessoes.filter((c) => c.startsWith('EXECUTE ON FUNCTION')).map((c) => /^EXECUTE ON FUNCTION public\.(.+) -> service_role$/.exec(c)).map((m) => (m ? norm(m[1]) : null));
+  assert.deepEqual(funcoesComGrant.sort(), chamaveis, 'service_role executa as 4 chamáveis — e só elas');
+  assert.deepEqual(concessoes.filter((c) => !c.startsWith('EXECUTE ON FUNCTION')), ['USAGE, SELECT ON SEQUENCE public.crm_negotiation_events_id_seq -> service_role']);
+  assert.doesNotMatch(codigo, /GRANT[^;]*\sTO\s[^;]*\b(anon|authenticated|PUBLIC)\b/); // (PUBLIC em maiúsculas: o schema public não conta)
+  // a ordem importa: o GRANT à service_role de uma função vem DEPOIS do REVOKE dela
+  for (const f of chamaveis) {
+    const base = f.split('(')[0];
+    assert.ok(codigo.indexOf('REVOKE ALL ON FUNCTION public.' + base + '(') < codigo.indexOf('GRANT EXECUTE ON FUNCTION public.' + base + '('), base + ': revoga primeiro, concede depois');
+  }
+  // nenhuma função eleva privilégios (todas SECURITY INVOKER, a omissão do padrão) e a migration não mexe em privilégios padrão nem em papéis
+  assert.doesNotMatch(codigo, /SECURITY DEFINER/i);
+  assert.doesNotMatch(codigo, /\bALTER\s+DEFAULT\s+PRIVILEGES\b|\bALTER\s+FUNCTION\b|\bALTER\s+ROLE\b|\bCREATE\s+ROLE\b/i, 'a migration não mexe em privilégios padrão nem em papéis');
 });
 
 test('[MIG-NEG-8] PARIDADE COM O CÓDIGO: os nomes das funções e dos parâmetros que os adapters chamam existem EXATAMENTE assim na migration; os marcadores de erro que os adapters reconhecem são os que a migration lança; a conta de centavos e os limites coincidem com o domínio', () => {
