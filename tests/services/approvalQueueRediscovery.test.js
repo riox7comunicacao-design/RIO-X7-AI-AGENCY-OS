@@ -24,6 +24,7 @@ const { createFileBackedCrmService } = require('../../src/services/crmFileServic
 const { createLeadReconsiderationService } = require('../../src/services/leadReconsiderationService');
 const { createCrmIntegrationService, PROMOTION_OUTCOME, PROMOTION_ERROR } = require('../../src/services/crmIntegrationService');
 const { JOB_STATUS } = require('../../src/research-prospector/prospectingJob');
+const { FILE_MODE_UNVERIFIED } = require('../../src/services/permanentExclusionGuard');
 const { admin, closer, criarServicos } = require('../helpers/promotionFixtures');
 const { siteDe, paginaBoa, candidato, motorFake, ambiente: ambienteDeJob, iniciar, paginasBoas } = require('../helpers/jobFixtures');
 
@@ -234,7 +235,7 @@ test('[SNAPSHOT-7] RECONCILIAÇÃO: a promoção falha DEPOIS de gravar no CRM; 
     },
     recordPromotionBlocked: (...args) => env.promocao.recordPromotionBlocked(...args),
   };
-  const servico = createCrmIntegrationService({ approvalQueueService: env.fila, approvalPromotionService: promocaoQueFalha, crmService: env.crm, authorizeOperation: authorizeCrmOperation });
+  const servico = createCrmIntegrationService({ approvalQueueService: env.fila, approvalPromotionService: promocaoQueFalha, crmService: env.crm, authorizeOperation: authorizeCrmOperation, permanentExclusions: FILE_MODE_UNVERIFIED });
   await recusa(async () => await servico.promoteProspect(admin(), id), PROMOTION_ERROR.PARTIAL);
   assert.equal(env.registrosDoCrm().length, 1);
   const crmAntes = env.textoDoCrm();

@@ -82,34 +82,70 @@ function validateExclusionInput(raw, { partial = false } = {}) {
   return { ok: true, value };
 }
 
-// O critério de correspondência (seção 4). `exclusion`: { ativo, empresaNomeNormalizado, cidade, estado, dominio }.
-// `finding`: um achado bruto (rawFinding) — usa só empresa/cidade/estado/site, nunca inventa nem consulta rede.
-function matchesExclusion(finding, exclusion) {
-  if (!isPlainObject(finding) || !isPlainObject(exclusion) || exclusion.ativo !== true) return false;
+// Como UMA exclusão se relaciona com UM candidato (Fase 2B-3.2B — a promoção para o CRM precisa distinguir o que a ingestão
+// sempre tratou como um `false` só):
+//   CORRESPONDENCIA_CONFIRMADA — o domínio bate, ou o nome bate e todo o contexto geográfico que a exclusão especifica bate.
+//   AMBIGUA                    — o nome bate, nenhuma informação geográfica do candidato CONTRADIZ a exclusão, mas o candidato não
+//                                traz a que a exclusão exige: não dá para confirmar nem descartar que é a mesma empresa.
+//   SEM_CORRESPONDENCIA        — inativa, nome diferente ou algum dado geográfico do candidato CONTRADIZ a exclusão.
+const EXCLUSION_MATCH = Object.freeze({
+  CORRESPONDENCIA_CONFIRMADA: 'CORRESPONDENCIA_CONFIRMADA',
+  AMBIGUA: 'AMBIGUA',
+  SEM_CORRESPONDENCIA: 'SEM_CORRESPONDENCIA',
+});
+
+// O veredito de uma VERIFICAÇÃO (um candidato contra a lista inteira): os três acima mais DADOS_INSUFICIENTES — o candidato não tem um
+// nome verificável, então a lista nem é consultada. Uma consulta que FALHA ou vem incompleta não é um veredito: é um erro.
+const EXCLUSION_VERDICT = Object.freeze({ ...EXCLUSION_MATCH, DADOS_INSUFICIENTES: 'DADOS_INSUFICIENTES' });
+
+// Uma restrição geográfica da exclusão contra o dado do candidato: 'IGUAL' | 'DIFERENTE' | 'DESCONHECIDO'. Uma restrição da
+// exclusão que nem normaliza para um texto utilizável não pode ser conferida: DESCONHECIDO (nunca "diferente" em silêncio).
+function compareLocation(exclusionValue, findingValue) {
+  const wanted = normalizeLocation(exclusionValue);
+  if (!wanted) return 'DESCONHECIDO';
+  const actual = normalizeLocation(findingValue);
+  if (!actual) return 'DESCONHECIDO';
+  return actual === wanted ? 'IGUAL' : 'DIFERENTE';
+}
+
+// O critério de correspondência (seção 4), com o resultado em TRÊS valores. `exclusion`: { ativo, empresaNomeNormalizado, cidade,
+// estado, dominio }. `finding`: um achado bruto ou o candidato à promoção — usa só empresa/cidade/estado/site, nunca inventa nem
+// consulta rede. Os identificadores são os de sempre (nome, cidade, estado e domínio): nada de telefone, Instagram ou e-mail.
+function classifyExclusionMatch(finding, exclusion) {
+  if (!isPlainObject(finding) || !isPlainObject(exclusion) || exclusion.ativo !== true) return EXCLUSION_MATCH.SEM_CORRESPONDENCIA;
 
   // Domínio: critério independente do nome — quando a exclusão tem domínio cadastrado E o finding tem site, e os
   // dois normalizam para o MESMO host, bloqueia.
   if (exclusion.dominio) {
     const exclusionDomain = normalizeDomain(exclusion.dominio);
     const findingDomain = normalizeDomain(finding.site);
-    if (exclusionDomain && findingDomain && exclusionDomain === findingDomain) return true;
+    if (exclusionDomain && findingDomain && exclusionDomain === findingDomain) return EXCLUSION_MATCH.CORRESPONDENCIA_CONFIRMADA;
   }
 
   const exclusionName = exclusion.empresaNomeNormalizado || normalizeCompanyName(exclusion.empresa);
   const findingName = normalizeCompanyName(finding.empresa);
-  if (!exclusionName || !findingName || exclusionName !== findingName) return false;
+  if (!exclusionName || !findingName || exclusionName !== findingName) return EXCLUSION_MATCH.SEM_CORRESPONDENCIA;
 
-  // Contexto geográfico: só exigido quando a EXCLUSÃO o especifica. Um finding sem essa informação é AMBÍGUO —
-  // nunca bloqueia sozinho (a regra explícita da seção 4/9: ausência não é liberação, mas também não é bloqueio).
-  if (exclusion.cidade) {
-    const findingCidade = normalizeLocation(finding.cidade);
-    if (!findingCidade || findingCidade !== normalizeLocation(exclusion.cidade)) return false;
-  }
-  if (exclusion.estado) {
-    const findingEstado = normalizeLocation(finding.estado);
-    if (!findingEstado || findingEstado !== normalizeLocation(exclusion.estado)) return false;
-  }
-  return true;
+  // Contexto geográfico: só exigido quando a EXCLUSÃO o especifica. Um dado que CONTRADIZ a exclusão a descarta; a ausência do
+  // dado que ela exige deixa a identidade AMBÍGUA — a ingestão continua não bloqueando por isso (matchesExclusion abaixo), mas a
+  // promoção para o CRM não pode tratá-la como "sem correspondência".
+  const checks = [];
+  if (exclusion.cidade) checks.push(compareLocation(exclusion.cidade, finding.cidade));
+  if (exclusion.estado) checks.push(compareLocation(exclusion.estado, finding.estado));
+  if (checks.includes('DIFERENTE')) return EXCLUSION_MATCH.SEM_CORRESPONDENCIA;
+  if (checks.includes('DESCONHECIDO')) return EXCLUSION_MATCH.AMBIGUA;
+  return EXCLUSION_MATCH.CORRESPONDENCIA_CONFIRMADA;
 }
 
-module.exports = { LIMITS, DEFAULT_PAIS, normalizeCompanyName, validateExclusionInput, matchesExclusion, CREATE_KEYS };
+// O critério que a INGESTÃO usa, inalterado: só uma correspondência CONFIRMADA bloqueia; a ambiguidade nunca bloqueia sozinha ali.
+function matchesExclusion(finding, exclusion) {
+  return classifyExclusionMatch(finding, exclusion) === EXCLUSION_MATCH.CORRESPONDENCIA_CONFIRMADA;
+}
+
+// O candidato tem o mínimo para ser verificado? A comparação com uma exclusão parte do NOME (toda exclusão tem nome): sem um nome que
+// normalize para um texto utilizável não há como dizer se é, ou não, uma empresa excluída.
+function hasVerifiableIdentity(finding) {
+  return isPlainObject(finding) && normalizeCompanyName(finding.empresa) !== null;
+}
+
+module.exports = { LIMITS, DEFAULT_PAIS, EXCLUSION_MATCH, EXCLUSION_VERDICT, normalizeCompanyName, validateExclusionInput, classifyExclusionMatch, matchesExclusion, hasVerifiableIdentity, CREATE_KEYS };

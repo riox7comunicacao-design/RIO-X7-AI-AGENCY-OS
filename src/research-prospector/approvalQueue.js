@@ -69,8 +69,26 @@ const PERMISSION = Object.freeze({
 //   PROMOTION_RESULT — como o item chegou a "promovido": criou-se um registro novo (CRIADO) ou já existia um registro
 //                      que esta mesma promoção tinha criado antes de uma falha (RECONCILIADO).
 //   PROMOTION_BLOCK  — por que uma tentativa foi bloqueada (só auditoria; o estado do item nunca muda por isso).
+//                      EXCLUSAO_PERMANENTE / EXCLUSAO_AMBIGUA / EXCLUSAO_NAO_VERIFICAVEL (Fase 2B-3.2B): a empresa bate com uma Exclusão
+//                      Permanente, pode bater e a localização não permite confirmar, ou não tem um nome verificável. São CÓDIGOS DE
+//                      AUDITORIA, não estados: a máquina de estados não mudou. A mesma
+//                      recusa repetida, pela mesma pessoa, soma um contador em vez de abrir uma linha nova a cada tentativa.
 const PROMOTION_RESULT = Object.freeze({ CRIADO: 'CRIADO', RECONCILIADO: 'RECONCILIADO' });
-const PROMOTION_BLOCK = Object.freeze({ DNC: 'DNC', DUPLICADO: 'DUPLICADO', DADOS_INSUFICIENTES: 'DADOS_INSUFICIENTES' });
+const PROMOTION_BLOCK = Object.freeze({
+  DNC: 'DNC',
+  DUPLICADO: 'DUPLICADO',
+  DADOS_INSUFICIENTES: 'DADOS_INSUFICIENTES',
+  EXCLUSAO_PERMANENTE: 'EXCLUSAO_PERMANENTE',
+  EXCLUSAO_AMBIGUA: 'EXCLUSAO_AMBIGUA',
+  EXCLUSAO_NAO_VERIFICAVEL: 'EXCLUSAO_NAO_VERIFICAVEL',
+});
+const COALESCED_BLOCKS = Object.freeze([PROMOTION_BLOCK.EXCLUSAO_PERMANENTE, PROMOTION_BLOCK.EXCLUSAO_AMBIGUA, PROMOTION_BLOCK.EXCLUSAO_NAO_VERIFICAVEL]);
+// Teto de linhas de bloqueio de exclusão por item: passado ele, a recusa idêntica soma na última linha igual DA MESMA PESSOA (a soma "em
+// sequência, pela mesma pessoa" sozinha não limita operadores que se alternam). Cada linha diz só o que o seu autor fez e nenhuma tentativa
+// se perde (o contador soma). O histórico fica limitado a este teto mais UMA linha por (pessoa, código) que chega depois dele: o limite
+// real depende da quantidade de operadores (hoje só o ADMIN promove) — não é um teto global rígido.
+const MAX_EXCLUSION_BLOCK_ENTRIES = 20;
+const BLOCK_ATTEMPTS_SUFFIX = / \((\d+) tentativas\)$/;
 const MAX_CRM_RECORD_ID_LENGTH = 200;
 const MAX_BLOCK_REASON_LENGTH = 500;
 
@@ -669,12 +687,50 @@ function createApprovalPromotionActions(options) {
     const crmRecordId = existente === undefined || existente === null ? null : readCrmRecordId(existente);
     const item = requireApprovedItem(queue, id);
     const now = new Date().toISOString();
+    const motivoBase = `Promoção bloqueada: ${motivo.trim()}`;
+
+    // Os bloqueios de Exclusão Permanente se repetem a cada clique de "Promover": a MESMA recusa (mesmo código, motivo e registro do
+    // CRM) seguida, pela MESMA pessoa, vira uma linha só, com um contador (e a data da última tentativa). Uma recusa diferente (outro
+    // código, outro motivo ou OUTRA pessoa) abre uma linha própria — até o teto MAX_EXCLUSION_BLOCK_ENTRIES; depois dele, a recusa
+    // idêntica soma na última linha igual DA MESMA PESSOA (nunca na de outra: uma linha só diz o que o seu autor fez) e, se aquela
+    // pessoa ainda não tem linha daquele código, abre a sua. Por isso o limite real é o teto mais UMA linha por (pessoa, código) que
+    // chega depois dele — depende da quantidade de operadores, não é um teto global rígido. Os demais bloqueios (DNC, duplicidade,
+    // dados) seguem como sempre.
+    if (COALESCED_BLOCKS.includes(codigo)) {
+      const isSameBlock = (entry) =>
+        isPlainObject(entry) &&
+        entry.actor === ACTOR.HUMAN &&
+        isPlainObject(entry.reviewedBy) &&
+        entry.reviewedBy.userId === blockedBy.userId &&
+        isPlainObject(entry.promocao) &&
+        entry.promocao.resultado === 'BLOQUEADO' &&
+        entry.promocao.codigo === codigo &&
+        entry.promocao.crmRecordId === crmRecordId &&
+        typeof entry.motivo === 'string' &&
+        entry.motivo.replace(BLOCK_ATTEMPTS_SUFFIX, '') === motivoBase;
+      const last = item.historico[item.historico.length - 1];
+      let target = null;
+      if (isSameBlock(last)) {
+        target = last;
+      } else {
+        const exclusionBlocks = item.historico.filter((entry) => isPlainObject(entry) && isPlainObject(entry.promocao) && entry.promocao.resultado === 'BLOQUEADO' && COALESCED_BLOCKS.includes(entry.promocao.codigo));
+        if (exclusionBlocks.length >= MAX_EXCLUSION_BLOCK_ENTRIES) target = [...item.historico].reverse().find(isSameBlock) || null;
+      }
+      if (target !== null) {
+        const previousAttempts = Number.isInteger(target.promocao.tentativas) ? target.promocao.tentativas : 1;
+        target.promocao.tentativas = previousAttempts + 1;
+        target.promocao.ultimaTentativaEm = now;
+        target.motivo = `${motivoBase} (${target.promocao.tentativas} tentativas)`;
+        return item;
+      }
+    }
+
     item.historico.push({
       timestamp: now,
       from: QUEUE_STATE.APROVADO_PARA_CRM,
       to: QUEUE_STATE.APROVADO_PARA_CRM,
       actor: ACTOR.HUMAN,
-      motivo: `Promoção bloqueada: ${motivo.trim()}`,
+      motivo: motivoBase,
       reviewedBy: { ...blockedBy },
       promocao: { resultado: 'BLOQUEADO', codigo, crmRecordId },
     });
@@ -779,6 +835,7 @@ module.exports = {
   PERMISSION,
   PROMOTION_RESULT,
   PROMOTION_BLOCK,
+  MAX_EXCLUSION_BLOCK_ENTRIES,
   DNC_BLOCKED,
   REDISCOVERY_HISTORY_TYPE,
   MAX_REDISCOVERY_HISTORY_ENTRIES,

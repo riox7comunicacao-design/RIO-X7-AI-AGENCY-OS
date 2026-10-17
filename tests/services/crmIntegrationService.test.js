@@ -28,6 +28,7 @@ const path = require('node:path');
 const queueDomain = require('../../src/research-prospector/approvalQueue');
 const { createCrmIntegrationService, PROMOTION_OUTCOME, PROMOTION_ERROR } = require('../../src/services/crmIntegrationService');
 const { authorizeCrmOperation } = require('../../src/auth');
+const { FILE_MODE_UNVERIFIED } = require('../../src/services/permanentExclusionGuard');
 const { CRM_STATUS, CRM_WRITABLE_FIELDS } = require('../../src/crm');
 const { analyzeSource } = require('../helpers/staticImports');
 const {
@@ -130,23 +131,28 @@ function promocaoComFalhas(promocao, { recordPromotion = 0, recordPromotionBlock
   return { recordPromotion: proteger('recordPromotion'), recordPromotionBlocked: proteger('recordPromotionBlocked') };
 }
 
-const outroServico = (env, { crm, promocao, fila } = {}) =>
+const outroServico = (env, { crm, promocao, fila, exclusoes } = {}) =>
   createCrmIntegrationService({
     approvalQueueService: fila || env.fila,
     approvalPromotionService: promocao || env.promocao,
     crmService: crm || env.crm,
     authorizeOperation: authorizeCrmOperation,
+    permanentExclusions: exclusoes || FILE_MODE_UNVERIFIED, // Fase 2B-3.2B: obrigatória; estes testes usam o marcador EXPLÍCITO do modo arquivo
   });
 
 // ===========================================================================
 // 1) O fluxo principal
 // ===========================================================================
-test('[INT-1] o serviço só existe com as quatro dependências e um autorizador síncrono; a superfície é UMA operação (promoteProspect) e o objeto é congelado', (t) => {
+test('[INT-1] o serviço só existe com as cinco dependências (a quinta, a guarda das Exclusões Permanentes, é obrigatória) e um autorizador síncrono; a superfície é UMA operação (promoteProspect) e o objeto é congelado', (t) => {
   const env = ambienteAprovado(t);
   assert.equal(Object.isFrozen(env.integracao), true);
   assert.deepEqual(Object.keys(env.integracao), ['promoteProspect']);
-  const base = { approvalQueueService: env.fila, approvalPromotionService: env.promocao, crmService: env.crm, authorizeOperation: authorizeCrmOperation };
+  const base = { approvalQueueService: env.fila, approvalPromotionService: env.promocao, crmService: env.crm, authorizeOperation: authorizeCrmOperation, permanentExclusions: FILE_MODE_UNVERIFIED };
   assert.throws(() => createCrmIntegrationService(undefined), /exige \{ approvalQueueService \}/);
+  // a guarda é OBRIGATÓRIA: omitida, nula ou forjada à mão (uma cópia do marcador não é o marcador) o serviço não existe
+  for (const invalida of [undefined, null, {}, 'sim', { mode: 'FILE_MODE_UNVERIFIED' }, { mode: 'ENFORCED' }]) {
+    assert.throws(() => createCrmIntegrationService({ ...base, permanentExclusions: invalida }), /exige \{ permanentExclusions \}/, String(JSON.stringify(invalida)));
+  }
   for (const [nome, funcoes] of [
     ['approvalQueueService', ['getProspect']],
     ['approvalPromotionService', ['recordPromotion', 'recordPromotionBlocked']],
@@ -195,7 +201,7 @@ test('[INT-3] o retorno é o registro do CRM de verdade: idêntico ao que o CRM 
   const resultado = await promover(env, 'a');
   assert.deepEqual(resultado.record, await env.crm.getRecord(admin(), resultado.crmRecordId));
   assert.deepEqual(JSON.parse(JSON.stringify(resultado)), resultado, 'o resultado é JSON puro');
-  assert.deepEqual(Object.keys(resultado).sort(), ['aprovacao', 'crmRecordId', 'outcome', 'possivelDuplicidade', 'promocao', 'prospectId', 'record']);
+  assert.deepEqual(Object.keys(resultado).sort(), ['aprovacao', 'crmRecordId', 'exclusoes', 'outcome', 'possivelDuplicidade', 'promocao', 'prospectId', 'record']);
   assert.deepEqual(Object.keys(resultado.record).sort(), ['id', ...CRM_WRITABLE_FIELDS, 'status', 'dataDeEntrada', 'historico'].sort());
   const texto = JSON.stringify(resultado);
   for (const segredo of ['auth-admin-promo', 'auth-closer-promo', 'admin-promo@example.test', 'closer-promo@example.test', 'permissions', 'APPROVE:', 'WRITE:CRM', 'token']) {
@@ -963,7 +969,7 @@ test('[INT-44] fronteira arquitetural: o serviço importa só a fila (domínio e
   assert.deepEqual(analise.issues, []);
   assert.deepEqual(
     analise.refs.map((ref) => ref.specifier).sort(),
-    ['../auth', '../research-prospector/approvalQueue', '../research-prospector/discovery', './prospectToCrmFields'],
+    ['../auth', '../research-prospector/approvalQueue', '../research-prospector/discovery', '../research-prospector/permanentExclusion', './permanentExclusionGuard', './prospectToCrmFields'],
     'a lista de importações é fechada'
   );
   const identificadores = new Set(analise.tokens.filter((token) => token.type === 'id').map((token) => token.value));
@@ -991,7 +997,7 @@ test('[INT-45] a permissão exigida é só WRITE:CRM (pela ponte do CRM, logo no
     return authorizeCrmOperation(contexto, permissao);
   };
   const env = ambienteAprovado(t);
-  const servico = createCrmIntegrationService({ approvalQueueService: env.fila, approvalPromotionService: env.promocao, crmService: env.crm, authorizeOperation: autorizador });
+  const servico = createCrmIntegrationService({ approvalQueueService: env.fila, approvalPromotionService: env.promocao, crmService: env.crm, authorizeOperation: autorizador, permanentExclusions: FILE_MODE_UNVERIFIED });
   await servico.promoteProspect(admin(), env.ids.a);
   assert.deepEqual(pedidos, ['WRITE:CRM'], 'a integração pede exatamente WRITE:CRM à ponte do CRM');
   await semEfeitos(env, async () => await assert.rejects(async () => await servico.promoteProspect(closer(), env.ids.a), /permissão|WRITE:CRM/i));
@@ -1018,11 +1024,11 @@ test('[INT-46] um autorizador do CRM defeituoso falha fechado ANTES de tudo: fal
   const observadoFila = { getProspect: (...args) => { leituras.push('getProspect'); return env.fila.getProspect(...args); } };
   await semEfeitos(env, async () => {
     for (const [nome, autorizador] of defeituosos) {
-      const servico = createCrmIntegrationService({ approvalQueueService: observadoFila, approvalPromotionService: env.promocao, crmService: env.crm, authorizeOperation: autorizador });
+      const servico = createCrmIntegrationService({ approvalQueueService: observadoFila, approvalPromotionService: env.promocao, crmService: env.crm, authorizeOperation: autorizador, permanentExclusions: FILE_MODE_UNVERIFIED });
       await assert.rejects(async () => await servico.promoteProspect(admin(), env.ids.a), /autorização recusada/, nome);
     }
     const falha = new Error('negado pelo autorizador do teste');
-    const lanca = createCrmIntegrationService({ approvalQueueService: observadoFila, approvalPromotionService: env.promocao, crmService: env.crm, authorizeOperation: () => { throw falha; } });
+    const lanca = createCrmIntegrationService({ approvalQueueService: observadoFila, approvalPromotionService: env.promocao, crmService: env.crm, authorizeOperation: () => { throw falha; }, permanentExclusions: FILE_MODE_UNVERIFIED });
     await assert.rejects(async () => await lanca.promoteProspect(admin(), env.ids.a), (erro) => erro === falha);
   });
   assert.deepEqual(leituras, [], 'a fila nem foi consultada antes da autorização');

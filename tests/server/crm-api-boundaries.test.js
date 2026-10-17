@@ -81,6 +81,7 @@ test('[CRM-API-ARCH-3] a raiz de composição só chama a fábrica de src/servic
       '../services/crmIntegrationFileService',
       '../services/crmRepositoryFactory',
       '../services/funnelFileService',
+      '../services/permanentExclusionGuard',
       '../services/prospectingBriefFileService',
       '../services/prospectingExclusionRepositoryFactory',
       '../services/prospectingFileService',
@@ -136,6 +137,6 @@ test('[CRM-API-ARCH-4] a composição injeta o autorizador de src/auth e o camin
   assert.match(codigo, /createFileBackedProspectingService\(\{\s*authorizeProposer: authorizeProposerForLeadApproval,\s*authorizeOperation: authorizeCrmOperation,/, 'a composição liga as duas pontes certas: PROPOSE e CRM (nunca a de aprovação)');
   const inicio = codigo.indexOf('createFileBackedProspectingService({');
   assert.doesNotMatch(codigo.slice(inicio, inicio + 400), /authorizeReviewer/);
-  assert.match(codigo, /createFileBackedCrmIntegrationService\(\{[^}]*queuePath: resolveFile\(env\.RIO_X7_QUEUE_PATH, undefined\),\s*crmService,\s*\}\)/, 'a promoção recebe o MESMO objeto crmService, nunca reconstrói o CRM a partir de um caminho');
+  assert.match(codigo, /createFileBackedCrmIntegrationService\(\{[^}]*queuePath: resolveFile\(env\.RIO_X7_QUEUE_PATH, undefined\),\s*crmService,\s*permanentExclusions,\s*\}\)/, 'a promoção recebe o MESMO objeto crmService, nunca reconstrói o CRM a partir de um caminho');
   assert.match(codigo, /createFileBackedProspectingService\(\{[^}]*queuePath: resolveFile\(env\.RIO_X7_QUEUE_PATH, undefined\),\s*crmService,\s*\}\)/, 'a prospecção recebe o MESMO objeto crmService, nunca reconstrói o CRM a partir de um caminho');
 });

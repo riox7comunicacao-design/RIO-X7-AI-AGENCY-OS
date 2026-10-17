@@ -27,9 +27,9 @@ async function erroDe(fn) {
 
 const forcaDigital = { empresa: 'Força Digital', motivo: 'Exclusão permanente de prospecção', cidade: 'Petrópolis', estado: 'RJ' };
 
-test('[EXCL-SVC-1] o Service expõe exatamente as 7 operações, congelado', () => {
+test('[EXCL-SVC-1] o Service expõe exatamente as 8 operações (as 6 administrativas, isExcluded da ingestão e verifyCandidate da promoção), congelado', () => {
   const servico = criarServico();
-  assert.deepEqual(Object.keys(servico).sort(), ['activate', 'create', 'deactivate', 'getById', 'isExcluded', 'list', 'update']);
+  assert.deepEqual(Object.keys(servico).sort(), ['activate', 'create', 'deactivate', 'getById', 'isExcluded', 'list', 'update', 'verifyCandidate']);
   assert.ok(Object.isFrozen(servico));
 });
 

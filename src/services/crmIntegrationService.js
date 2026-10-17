@@ -41,6 +41,20 @@
 //   6. FALHAS — nunca deixam um estado impossível: o CRM é gravado ANTES da fila, e a única janela ("criado no CRM, fila
 //      não atualizada") é recuperável e detectada (regra 3b). Um registro apontado pela fila que não existe no CRM (ou
 //      que não é o desta promoção) é INCONSISTENTE: nada é alterado e o erro é claro.
+//   7. EXCLUSÕES PERMANENTES (Fase 2B-3.2B) — uma aprovação humana não basta: imediatamente ANTES de criar um registro NOVO, no
+//      servidor, a empresa é conferida contra a lista INTEIRA de Exclusões Permanentes, com os dados que seriam gravados no CRM (empresa,
+//      cidade, estado e site — o snapshot aprovado nunca é alterado). Uma exclusão cadastrada DEPOIS da aprovação também bloqueia. Os
+//      resultados NÃO são equivalentes:
+//        CORRESPONDENCIA_CONFIRMADA -> PROMOTION_BLOCKED_EXCLUSION (409), auditada na fila;
+//        AMBIGUA (mesmo nome, localização não confirma) -> PROMOTION_EXCLUSION_AMBIGUOUS (409), auditada, suspensa até uma revisão humana;
+//        DADOS_INSUFICIENTES (sem nome verificável) -> PROMOTION_EXCLUSION_IDENTITY_INSUFFICIENT (409), auditada;
+//        a consulta falhou, veio incompleta ou devolveu algo desconhecido -> PROMOTION_EXCLUSION_CHECK_UNAVAILABLE (503), SEM auditoria
+//          (é transitório: nenhuma decisão sobre a empresa é gravada) e SEM registro no CRM;
+//        SEM_CORRESPONDENCIA, depois de uma consulta válida e completa -> a promoção segue (e isso nunca é gravado como "liberado").
+//      A dependência `permanentExclusions` é OBRIGATÓRIA: o serviço de verdade, ou o marcador explícito de que o modo arquivo não tem o
+//      serviço operacional (permanentExclusionGuard.js) — omitir é um erro na criação. Com o marcador a promoção segue, mas NÃO comprova
+//      a ausência de exclusões (o servidor avisa na inicialização). JA_PROMOVIDO e a reconciliação não criam registro novo e por isso
+//      não consultam a lista. A verificação só LÊ: nunca altera, desativa nem remove uma exclusão.
 //
 // CONCORRÊNCIA — honesto: dentro de UM processo, promoteProspect é indivisível de ponta a ponta (ler a fila, olhar o CRM,
 // criar, gravar a fila): o CRM é assíncrono desde a decisão 0023, então as promoções de um mesmo serviço rodam UMA POR VEZ, na
@@ -57,7 +71,9 @@
 const approvalQueueDomain = require('../research-prospector/approvalQueue');
 const { DNC_STATUS } = require('../research-prospector/discovery');
 const { PERMISSION } = require('../auth');
+const { EXCLUSION_VERDICT } = require('../research-prospector/permanentExclusion');
 const { mapProspectToCrmFields } = require('./prospectToCrmFields');
+const { FILE_MODE_UNVERIFIED, isPermanentExclusionGuard } = require('./permanentExclusionGuard');
 
 const { QUEUE_STATE, ACTOR, PROMOTION_RESULT, PROMOTION_BLOCK } = approvalQueueDomain;
 
@@ -79,6 +95,17 @@ const PROMOTION_ERROR = Object.freeze({
   INSUFFICIENT_DATA: 'PROMOTION_INSUFFICIENT_DATA',
   INCONSISTENT: 'PROMOTION_INCONSISTENT',
   PARTIAL: 'PROMOTION_PARTIAL',
+  // Exclusões Permanentes (Fase 2B-3.2B) — mensagens fixas, sem nenhum dado da empresa nem da exclusão.
+  BLOCKED_EXCLUSION: 'PROMOTION_BLOCKED_EXCLUSION',
+  EXCLUSION_AMBIGUOUS: 'PROMOTION_EXCLUSION_AMBIGUOUS',
+  EXCLUSION_IDENTITY_INSUFFICIENT: 'PROMOTION_EXCLUSION_IDENTITY_INSUFFICIENT',
+  EXCLUSION_CHECK_UNAVAILABLE: 'PROMOTION_EXCLUSION_CHECK_UNAVAILABLE',
+});
+
+// Como a verificação das Exclusões Permanentes terminou numa promoção que CRIOU um registro (campo `exclusoes` do resultado).
+const EXCLUSIONS_CHECK = Object.freeze({
+  VERIFICADA: 'VERIFICADA', // consulta válida e completa, sem correspondência
+  NAO_DISPONIVEL_MODO_ARQUIVO: 'NAO_DISPONIVEL_MODO_ARQUIVO', // o modo arquivo não tem o serviço: a ausência de exclusões NÃO foi comprovada
 });
 
 const MARKER_PREFIX = 'Promovido da Approval Queue (prospect ';
@@ -176,9 +203,10 @@ function requireProspectId(prospectId) {
 // approvalQueueService: o Approval Queue Service (getProspect). approvalPromotionService: a auditoria da promoção na fila
 // (recordPromotion, recordPromotionBlocked). crmService: o CRM Service (listRecords, getRecord, createRecord).
 // authorizeOperation: a porta do CRM (em produção, authorizeCrmOperation de src/auth), usada só para exigir WRITE:CRM
-// logo no início. Todas OBRIGATÓRIAS, sem padrão: sem elas o Service nem existe.
+// logo no início. permanentExclusions: a guarda das Exclusões Permanentes (permanentExclusionGuard.js — o serviço de verdade ou o
+// marcador explícito do modo arquivo). Todas OBRIGATÓRIAS, sem padrão: sem elas o Service nem existe.
 function createCrmIntegrationService(dependencies) {
-  const { approvalQueueService, approvalPromotionService, crmService, authorizeOperation } = dependencies || {};
+  const { approvalQueueService, approvalPromotionService, crmService, authorizeOperation, permanentExclusions } = dependencies || {};
 
   const requireFunctions = (owner, name, functions) => {
     if (typeof owner !== 'object' || owner === null) throw new Error(`createCrmIntegrationService exige { ${name} }`);
@@ -195,6 +223,13 @@ function createCrmIntegrationService(dependencies) {
   if (isAsyncFunction(authorizeOperation)) {
     throw new Error('createCrmIntegrationService: o autorizador deve ser síncrono (uma função async devolveria uma Promise)');
   }
+  if (!isPermanentExclusionGuard(permanentExclusions)) {
+    throw new Error(
+      'createCrmIntegrationService exige { permanentExclusions } (a guarda das Exclusões Permanentes: o serviço de verdade, ou o marcador explícito do modo arquivo — nunca omitida)'
+    );
+  }
+  const exclusionsUnverified = permanentExclusions === FILE_MODE_UNVERIFIED;
+  const verifyExclusions = exclusionsUnverified ? null : (candidate) => permanentExclusions.verify(candidate);
 
   // As funções ficam capturadas aqui: alterar os objetos injetados depois da criação não muda o Service.
   const { getProspect } = approvalQueueService;
@@ -228,7 +263,9 @@ function createCrmIntegrationService(dependencies) {
     return found ? found[0] : null;
   };
 
-  function result(outcome, prospectId, record, approval, promocao, possivelDuplicidade) {
+  // `exclusoes`: como a verificação das Exclusões Permanentes terminou (EXCLUSIONS_CHECK) — só numa promoção que CRIOU um registro; nas
+  // demais (JA_PROMOVIDO, RECONCILIADO) nenhum registro novo foi criado e a lista não foi consultada: null.
+  function result(outcome, prospectId, record, approval, promocao, possivelDuplicidade, exclusoes) {
     return {
       outcome,
       prospectId,
@@ -237,7 +274,61 @@ function createCrmIntegrationService(dependencies) {
       aprovacao: approval,
       promocao: { resultado: promocao.resultado, crmRecordId: promocao.crmRecordId, promovidoEm: promocao.promovidoEm, promovidoPor: promocao.promovidoPor },
       possivelDuplicidade: possivelDuplicidade || null,
+      exclusoes: exclusoes || null,
     };
+  }
+
+  // A verificação OBRIGATÓRIA das Exclusões Permanentes (regra 7), feita sobre os campos que serão gravados no CRM. Só chega aqui uma
+  // promoção que vai CRIAR um registro novo e que já passou por autorização, aprovação humana, DNC e mapeamento. Devolve o EXCLUSIONS_CHECK
+  // quando pode seguir; do contrário lança — e nada foi gravado no CRM.
+  async function enforcePermanentExclusions(context, prospectId, fields) {
+    if (exclusionsUnverified) return EXCLUSIONS_CHECK.NAO_DISPONIVEL_MODO_ARQUIVO;
+
+    const unavailable = () =>
+      promotionError(
+        PROMOTION_ERROR.EXCLUSION_CHECK_UNAVAILABLE,
+        'não foi possível verificar as Exclusões Permanentes agora; por segurança a promoção foi bloqueada e nenhum registro foi criado no CRM — tente novamente em instantes'
+      );
+    // Só o que seria gravado no CRM; um campo que o mapeamento omitiu fica ausente (nunca inventado).
+    const candidate = {
+      ...(hasOwn(fields, 'empresa') ? { empresa: fields.empresa } : {}),
+      ...(hasOwn(fields, 'cidade') ? { cidade: fields.cidade } : {}),
+      ...(hasOwn(fields, 'estado') ? { estado: fields.estado } : {}),
+      ...(hasOwn(fields, 'site') ? { site: fields.site } : {}),
+    };
+    let verdict;
+    try {
+      verdict = await verifyExclusions(candidate);
+    } catch {
+      throw unavailable(); // falha de rede, 401/404/500, timeout, resposta inválida ou incompleta: nunca "nada encontrado"
+    }
+    // Qualquer coisa que não seja um dos quatro vereditos conhecidos é uma verificação que NÃO foi concluída.
+    if (!isPlainObject(verdict) || !hasOwn(verdict, 'resultado') || !Object.values(EXCLUSION_VERDICT).includes(verdict.resultado)) throw unavailable();
+
+    switch (verdict.resultado) {
+      case EXCLUSION_VERDICT.SEM_CORRESPONDENCIA:
+        return EXCLUSIONS_CHECK.VERIFICADA;
+      case EXCLUSION_VERDICT.CORRESPONDENCIA_CONFIRMADA:
+        throw blocked(context, prospectId, PROMOTION_BLOCK.EXCLUSAO_PERMANENTE, PROMOTION_ERROR.BLOCKED_EXCLUSION, 'esta empresa consta nas Exclusões Permanentes de Prospecção', null);
+      case EXCLUSION_VERDICT.AMBIGUA:
+        throw blocked(
+          context,
+          prospectId,
+          PROMOTION_BLOCK.EXCLUSAO_AMBIGUA,
+          PROMOTION_ERROR.EXCLUSION_AMBIGUOUS,
+          'há uma Exclusão Permanente com o mesmo nome e a localização deste prospect não permite confirmar se é a mesma empresa — a promoção foi suspensa até uma revisão humana',
+          null
+        );
+      default:
+        throw blocked(
+          context,
+          prospectId,
+          PROMOTION_BLOCK.EXCLUSAO_NAO_VERIFICAVEL,
+          PROMOTION_ERROR.EXCLUSION_IDENTITY_INSUFFICIENT,
+          'o prospect não tem dados suficientes (um nome verificável) para conferir as Exclusões Permanentes',
+          null
+        );
+    }
   }
 
   // O registro do CRM que a fila diz ter sido promovido tem de EXISTIR e ser o desta promoção; senão é uma
@@ -305,6 +396,11 @@ function createCrmIntegrationService(dependencies) {
       throw blocked(context, id, PROMOTION_BLOCK.DADOS_INSUFICIENTES, PROMOTION_ERROR.INSUFFICIENT_DATA, 'o prospect não tem o nome da empresa, obrigatório no CRM', null);
     }
 
+    // 5b) Exclusões Permanentes (regra 7): imediatamente antes de criar um registro NOVO, sobre os campos que seriam gravados. Aqui, e só
+    // aqui, entre a consulta e a criação existe a janela de atomicidade descrita em docs/decisions/0016 (nada a fecha entre os dois
+    // armazenamentos); por isso a consulta é o último passo antes de createRecord.
+    const exclusionsCheck = await enforcePermanentExclusions(context, id, fields);
+
     // 6) criar no CRM (o CRM Service autoriza WRITE:CRM; o DOMÍNIO decide identidade, duplicidade e DNC)
     let created;
     try {
@@ -356,7 +452,7 @@ function createCrmIntegrationService(dependencies) {
       partial.cause = error;
       throw partial;
     }
-    return result(PROMOTION_OUTCOME.CRIADO, id, created.record, approval, queued.promocao, possivelDuplicidade);
+    return result(PROMOTION_OUTCOME.CRIADO, id, created.record, approval, queued.promocao, possivelDuplicidade, exclusionsCheck);
   }
 
   // Um registro do CRM já existe para este prospect (criado por uma promoção interrompida): só a fila é atualizada.
@@ -378,4 +474,4 @@ function createCrmIntegrationService(dependencies) {
   return Object.freeze({ promoteProspect });
 }
 
-module.exports = { createCrmIntegrationService, PROMOTION_OUTCOME, PROMOTION_ERROR };
+module.exports = { createCrmIntegrationService, PROMOTION_OUTCOME, PROMOTION_ERROR, EXCLUSIONS_CHECK };

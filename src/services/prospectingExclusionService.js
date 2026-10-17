@@ -17,7 +17,15 @@
 // nunca é gravado nem tratado como uma decisão permanente de "liberado"; é reavaliado a cada chamada.
 
 const crypto = require('node:crypto');
-const { validateExclusionInput, matchesExclusion } = require('../research-prospector/permanentExclusion');
+const {
+  EXCLUSION_MATCH,
+  EXCLUSION_VERDICT: VERDICT,
+  normalizeCompanyName,
+  validateExclusionInput,
+  classifyExclusionMatch,
+  matchesExclusion,
+  hasVerifiableIdentity,
+} = require('../research-prospector/permanentExclusion');
 const { assertValidPermanentExclusionRepository } = require('../research-prospector/permanentExclusionRepository');
 const { PERMISSION } = require('../auth');
 
@@ -35,6 +43,15 @@ const ERROR = Object.freeze({
   NOT_FOUND: 'EXCLUSION_NOT_FOUND',
   PERSISTENCE: 'EXCLUSION_PERSISTENCE',
 });
+
+// O veredito da verificação OBRIGATÓRIA da promoção (verifyCandidate; os valores vêm de EXCLUSION_VERDICT, no domínio) — quatro situações
+// que NÃO são equivalentes:
+//   CORRESPONDENCIA_CONFIRMADA — há uma exclusão ATIVA que bate com o candidato.
+//   AMBIGUA                    — nenhuma confirmada, mas há uma exclusão ativa de mesmo nome que o candidato não permite confirmar
+//                                nem descartar (falta a cidade/UF que ela exige).
+//   SEM_CORRESPONDENCIA        — a lista INTEIRA foi consultada e nada bate nem é ambíguo.
+//   DADOS_INSUFICIENTES        — o candidato não tem um nome verificável; a lista nem é consultada.
+// A QUINTA situação — a consulta falhar ou vier incompleta — não é um veredito: é um erro (EXCLUSION_PERSISTENCE).
 
 const isPlainObject = (value) => {
   if (typeof value !== 'object' || value === null || Array.isArray(value)) return false;
@@ -161,7 +178,41 @@ function createProspectingExclusionService(dependencies) {
     return todas.find((exclusao) => matchesExclusion(finding, exclusao)) || false;
   }
 
-  return Object.freeze({ list, getById, create, update, deactivate, activate, isExcluded });
+  // A verificação OBRIGATÓRIA da promoção para o CRM (Fase 2B-3.2B). Como isExcluded, é uma checagem INTERNA, sem autorização própria:
+  // quem chega até aqui já passou pelas duas autorizações da promoção (APPROVE:LEAD_APPROVAL e WRITE:CRM), e nenhuma rota expõe esta
+  // função. Diferente de isExcluded, ela:
+  //   - separa os quatro vereditos (VERDICT) em vez de devolver `false` para tudo;
+  //   - devolve só os IDS das exclusões que bateram — nunca o motivo, o nome ou o domínio cadastrados;
+  //   - FALHA FECHADA: uma lista que não é uma lista, uma linha que não é um objeto, ou uma exclusão ATIVA sem um nome utilizável não
+  //     são "nada encontrado": viram EXCLUSION_PERSISTENCE, como uma leitura que falha. Só um repositório que devolve a lista COMPLETA
+  //     (o adapter do Supabase garante isso ou lança) pode produzir SEM_CORRESPONDENCIA.
+  async function verifyCandidate(candidate) {
+    if (!hasVerifiableIdentity(candidate)) return Object.freeze({ resultado: VERDICT.DADOS_INSUFICIENTES, exclusaoIds: [] });
+    const unreadable = () => new ProspectingExclusionError(ERROR.PERSISTENCE, 'Exclusões Permanentes: não foi possível consultar a lista.');
+    let todas;
+    try {
+      todas = await repository.list();
+    } catch {
+      throw unreadable();
+    }
+    if (!Array.isArray(todas)) throw unreadable();
+    const confirmadas = [];
+    const ambiguas = [];
+    for (const exclusao of todas) {
+      if (!isPlainObject(exclusao)) throw unreadable();
+      if (exclusao.ativo !== true) continue;
+      if (!(exclusao.empresaNomeNormalizado || normalizeCompanyName(exclusao.empresa))) throw unreadable();
+      const relacao = classifyExclusionMatch(candidate, exclusao);
+      const id = typeof exclusao.id === 'string' ? exclusao.id : null;
+      if (relacao === EXCLUSION_MATCH.CORRESPONDENCIA_CONFIRMADA) confirmadas.push(id);
+      else if (relacao === EXCLUSION_MATCH.AMBIGUA) ambiguas.push(id);
+    }
+    if (confirmadas.length > 0) return Object.freeze({ resultado: VERDICT.CORRESPONDENCIA_CONFIRMADA, exclusaoIds: Object.freeze(confirmadas) });
+    if (ambiguas.length > 0) return Object.freeze({ resultado: VERDICT.AMBIGUA, exclusaoIds: Object.freeze(ambiguas) });
+    return Object.freeze({ resultado: VERDICT.SEM_CORRESPONDENCIA, exclusaoIds: Object.freeze([]) });
+  }
+
+  return Object.freeze({ list, getById, create, update, deactivate, activate, isExcluded, verifyCandidate });
 }
 
-module.exports = { createProspectingExclusionService, ProspectingExclusionError, ERROR };
+module.exports = { createProspectingExclusionService, ProspectingExclusionError, ERROR, VERDICT };

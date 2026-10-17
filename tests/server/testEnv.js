@@ -18,6 +18,7 @@ const { createFileBackedCrmIntegrationService } = require('../../src/services/cr
 const { createFileBackedProspectingService } = require('../../src/services/prospectingFileService');
 const { createFileBackedProspectingBriefService } = require('../../src/services/prospectingBriefFileService');
 const { createProspectingExclusionService } = require('../../src/services/prospectingExclusionService');
+const { createConfiguredPermanentExclusionGuard } = require('../../src/services/prospectingExclusionRepositoryFactory');
 const { createInMemoryPermanentExclusionRepository } = require('../../src/research-prospector/permanentExclusionRepository');
 const { createLeadReconsiderationService } = require('../../src/services/leadReconsiderationService');
 const { createInMemoryLeadProfileRepository } = require('../../src/research-prospector/leadProfileRepository');
@@ -185,13 +186,20 @@ function montarAmbiente(
   const arquivoFunnels = funnels ? funnelFilePath || novoArquivoFunnels(t) : undefined;
   const hasActiveFunnelCards = arquivoFunnels ? createFileBackedActiveFunnelCardsChecker({ filePath: arquivoFunnels }) : undefined;
   const crmService = crmServiceInjetado || (crm ? createFileBackedCrmService({ authorizeOperation: authorizeCrmOperation, filePath: arquivoCrm, hasActiveFunnelCards }) : undefined);
+  // Prospecting Permanent Exclusion Service (Workbench, Etapa 2): `prospectingExclusion: true` liga o Service REAL
+  // sobre um repositório de MEMÓRIA (esta funcionalidade não tem adapter de arquivo — só Supabase/produção e
+  // memória/teste, ver o cabeçalho de permanentExclusionRepository.js). Criado ANTES da promoção (Fase 2B-3.2B): ela depende dele.
+  const prospectingExclusionService = prospectingExclusionInjetado || (prospectingExclusion ? createProspectingExclusionService({ authorizeOperation: authorizeProspectingExclusionOperation, repository: createInMemoryPermanentExclusionRepository() }) : undefined);
+  // A guarda das Exclusões Permanentes da promoção (Fase 2B-3.2B): a MESMA função de composição da produção. Com `prospectingExclusion: true` a promoção
+  // CONFERE a lista (em memória); sem ele, REPOSITORY_MODE ausente = modo arquivo = o marcador explícito (a promoção não verifica exclusões).
+  const permanentExclusions = createConfiguredPermanentExclusionGuard({ env: {}, exclusionService: prospectingExclusionService });
   // Promoção Approval Queue → CRM (opcional): `integracao: true` liga a fábrica REAL de produção sobre a MESMA fila e o MESMO
   // arquivo do CRM (exige `crm: true`); `crmIntegrationService` injeta um double no lugar.
   if (integracao && !arquivoCrm) throw new Error('montarAmbiente: integracao exige crm: true');
   const crmIntegrationService =
     integracaoInjetada ||
     (integracao
-      ? createFileBackedCrmIntegrationService({ authorizeReviewer: authorizeReviewerForApprovalQueue, authorizeOperation: authorizeCrmOperation, queuePath: filePath, crmService })
+      ? createFileBackedCrmIntegrationService({ authorizeReviewer: authorizeReviewerForApprovalQueue, authorizeOperation: authorizeCrmOperation, queuePath: filePath, crmService, permanentExclusions })
       : undefined);
   // Prospecting Service (opcional): `prospeccao: true` liga a fábrica REAL de produção sobre a MESMA fila e o MESMO CRM (exige
   // `crm: true`), com o arquivo dos lotes em diretório temporário (`batchPath`); `prospectingService` injeta um double.
@@ -206,7 +214,6 @@ function montarAmbiente(
   // Prospecting Permanent Exclusion Service (Workbench, Etapa 2): `prospectingExclusion: true` liga o Service REAL
   // sobre um repositório de MEMÓRIA (esta funcionalidade não tem adapter de arquivo — só Supabase/produção e
   // memória/teste, ver o cabeçalho de permanentExclusionRepository.js).
-  const prospectingExclusionService = prospectingExclusionInjetado || (prospectingExclusion ? createProspectingExclusionService({ authorizeOperation: authorizeProspectingExclusionOperation, repository: createInMemoryPermanentExclusionRepository() }) : undefined);
 
   // Prospecting Brief Service (Workbench, Etapa "Prospecção 1"): `prospectingBrief: true` liga a fábrica REAL sobre
   // o MESMO `prospectingService` acima (exige `prospeccao: true` — nunca reconstrói o Prospecting Service).

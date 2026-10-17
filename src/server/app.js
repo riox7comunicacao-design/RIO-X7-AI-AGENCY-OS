@@ -180,6 +180,11 @@ const CATALOG = Object.freeze({
   PROMOTION_INSUFFICIENT_DATA: [409, 'Os dados deste prospect não são suficientes para entrar no CRM.'],
   PROMOTION_INCONSISTENT: [409, 'O estado deste prospect está inconsistente entre a fila e o CRM. Nada foi alterado; peça uma revisão.'],
   PROMOTION_PARTIAL: [409, 'A promoção foi concluída só em parte. Tente promover de novo.'],
+  // Exclusões Permanentes na promoção (Fase 2B-3.2B): mensagens FIXAS — nunca o nome, o motivo nem o domínio de uma exclusão.
+  PROMOTION_BLOCKED_EXCLUSION: [409, 'Promoção bloqueada: esta empresa consta nas Exclusões Permanentes de Prospecção.'],
+  PROMOTION_EXCLUSION_AMBIGUOUS: [409, 'Promoção suspensa: há uma Exclusão Permanente com o mesmo nome e a localização deste prospect não permite confirmar se é a mesma empresa. É necessária uma revisão humana.'],
+  PROMOTION_EXCLUSION_IDENTITY_INSUFFICIENT: [409, 'Promoção bloqueada: este prospect não tem dados suficientes para conferir as Exclusões Permanentes.'],
+  PROMOTION_EXCLUSION_CHECK_UNAVAILABLE: [503, 'Não foi possível verificar as Exclusões Permanentes agora. Por segurança a promoção foi bloqueada e nenhum registro foi criado. Tente novamente em instantes.'],
   // Prospecting Service V1, por `code` estável do serviço. Mensagens FIXAS: nunca o valor recusado, o texto do serviço, um
   // caminho, um id de prospect ou o texto do erro de armazenamento. A recusa de AUTORIZAÇÃO não passa por aqui (é 403 pelos
   // caminhos de sempre).
@@ -323,6 +328,10 @@ const PROMOTION_CODES = Object.freeze({
   PROMOTION_INSUFFICIENT_DATA: 'PROMOTION_INSUFFICIENT_DATA',
   PROMOTION_INCONSISTENT: 'PROMOTION_INCONSISTENT',
   PROMOTION_PARTIAL: 'PROMOTION_PARTIAL',
+  PROMOTION_BLOCKED_EXCLUSION: 'PROMOTION_BLOCKED_EXCLUSION',
+  PROMOTION_EXCLUSION_AMBIGUOUS: 'PROMOTION_EXCLUSION_AMBIGUOUS',
+  PROMOTION_EXCLUSION_IDENTITY_INSUFFICIENT: 'PROMOTION_EXCLUSION_IDENTITY_INSUFFICIENT',
+  PROMOTION_EXCLUSION_CHECK_UNAVAILABLE: 'PROMOTION_EXCLUSION_CHECK_UNAVAILABLE',
 });
 
 // Os `code` do domínio de Funis (funnelDomain.js) que a API reconhece — mapeamento identidade (o `code` do erro já

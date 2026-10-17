@@ -70,7 +70,9 @@ const { createFileBackedCrmIntegrationService } = require('../services/crmIntegr
 const { createFileBackedProspectingService } = require('../services/prospectingFileService');
 // Prospecting Permanent Exclusion Service (Workbench, Etapa 2) — mesma REPOSITORY_MODE do CRM; só existe em
 // "supabase" (nunca um terceiro adapter local — ver o cabeçalho de prospectingExclusionRepositoryFactory.js).
-const { createConfiguredProspectingExclusionService } = require('../services/prospectingExclusionRepositoryFactory');
+const { createConfiguredProspectingExclusionService, createConfiguredPermanentExclusionGuard } = require('../services/prospectingExclusionRepositoryFactory');
+// A guarda das Exclusões Permanentes da promoção (Fase 2B-3.2B): o aviso da inicialização quando o modo não tem o serviço.
+const { GUARD_MODE, FILE_MODE_WARNING } = require('../services/permanentExclusionGuard');
 // Catalog Service (CRM 5.0, Fase 2B-1 — Serviços, Nichos e Origens dos Leads): mesma REPOSITORY_MODE do CRM ("file" por padrão, com um
 // arquivo local; "supabase" exige as tabelas da migration NÃO APLICADA). O contador de uso lê o MESMO repositório bruto do CRM.
 const { createConfiguredCatalogService } = require('../services/catalogRepositoryFactory');
@@ -195,6 +197,19 @@ function createServer(env = process.env, options = {}) {
   // confirmar que um registro existe antes de criar um card; ele NUNCA autoriza nem decide nada sozinho.
   const crmRepository = createConfiguredCrmRepository({ env, filePath: crmFilePath });
 
+  // Prospecting Permanent Exclusion Service (Workbench, Etapa 2): OPCIONAL — só existe quando REPOSITORY_MODE=
+  // supabase (a fábrica devolve `undefined` em "file", nunca um terceiro adapter local — ver o cabeçalho de
+  // prospectingExclusionRepositoryFactory.js). Sem ele, o Prospecting Brief Service abaixo simplesmente não
+  // recebe `checkPermanentExclusion` — o padrão de sempre ("nunca excluir por este motivo") continua valendo.
+  // (Criado ANTES da promoção desde a Fase 2B-3.2B: a promoção depende dele.)
+  const prospectingExclusionService = createConfiguredProspectingExclusionService({ env, authorizeOperation: authorizeProspectingExclusionOperation });
+
+  // A GUARDA das Exclusões Permanentes da promoção (Fase 2B-3.2B) — OBRIGATÓRIA, nunca omitida em silêncio: com o serviço acima (Supabase)
+  // a promoção CONFERE a lista inteira antes de criar um registro; em REPOSITORY_MODE=file (sem o serviço) é o MARCADOR explícito de que
+  // este modo não tem a funcionalidade — o servidor avisa na inicialização e uma promoção aqui não comprova a ausência de exclusões. Em
+  // REPOSITORY_MODE=supabase sem o serviço a composição FALHA: o marcador do modo arquivo nunca vale ali, e não existe opção que o ligue.
+  const permanentExclusions = createConfiguredPermanentExclusionGuard({ env, exclusionService: prospectingExclusionService });
+
   // A promoção Approval Queue → CRM (decisão 0016) e a prospecção: as MESMAS portas de autorização e o MESMO
   // OBJETO `crmService` acima — INJETADO, nunca reconstruído (etapa 3F, corrige o BLOCKER 1 da etapa 3E). Antes,
   // estas duas fábricas recebiam só um { crmPath } e montavam CADA UMA o seu próprio CRM Service por trás; o
@@ -210,6 +225,7 @@ function createServer(env = process.env, options = {}) {
     authorizeOperation: authorizeCrmOperation,
     queuePath: resolveFile(env.RIO_X7_QUEUE_PATH, undefined),
     crmService,
+    permanentExclusions,
   });
 
   // O Prospecting Service (submissão de prospecção): a MESMA fila e o MESMO `crmService` e as pontes de PROPOSE:LEAD_APPROVAL e do
@@ -220,12 +236,6 @@ function createServer(env = process.env, options = {}) {
     queuePath: resolveFile(env.RIO_X7_QUEUE_PATH, undefined),
     crmService,
   });
-
-  // Prospecting Permanent Exclusion Service (Workbench, Etapa 2): OPCIONAL — só existe quando REPOSITORY_MODE=
-  // supabase (a fábrica devolve `undefined` em "file", nunca um terceiro adapter local — ver o cabeçalho de
-  // prospectingExclusionRepositoryFactory.js). Sem ele, o Prospecting Brief Service abaixo simplesmente não
-  // recebe `checkPermanentExclusion` — o padrão de sempre ("nunca excluir por este motivo") continua valendo.
-  const prospectingExclusionService = createConfiguredProspectingExclusionService({ env, authorizeOperation: authorizeProspectingExclusionOperation });
 
   // Prospecting Brief Service (Workbench, Etapa "Prospecção 1"; exclusões permanentes desde a Etapa 2): o MESMO
   // `prospectingService` acima, injetado — nunca reconstruído. Arquivo próprio (data/prospecting-briefs.json,
@@ -311,23 +321,24 @@ function createServer(env = process.env, options = {}) {
     log: options.log,
     authTimeoutMs: options.authTimeoutMs,
   });
-  return { server: http.createServer(app.listener), app, host, port, usersCount: userStore.all().length };
+  return { server: http.createServer(app.listener), app, host, port, usersCount: userStore.all().length, permanentExclusionsMode: permanentExclusions.mode };
 }
 
 async function start(env = process.env, options = {}) {
-  const { server, host, port, usersCount } = createServer(env, options);
+  const { server, host, port, usersCount, permanentExclusionsMode } = createServer(env, options);
   await new Promise((resolve, reject) => {
     server.once('error', reject);
     server.listen(port, host, resolve);
   });
-  return { server, host, port: server.address().port, usersCount };
+  return { server, host, port: server.address().port, usersCount, permanentExclusionsMode };
 }
 
 function main() {
   start(process.env, { log: (line) => console.log(line) }).then(
-    ({ server, host, port, usersCount }) => {
+    ({ server, host, port, usersCount, permanentExclusionsMode }) => {
       const shown = host.includes(':') ? `[${host}]` : host;
       console.log(`Rio X7 AI Agency OS — Dashboard em http://${shown}:${port} (${usersCount} usuário(s) carregado(s))`);
+      if (permanentExclusionsMode !== GUARD_MODE.ENFORCED) console.warn(FILE_MODE_WARNING);
       if (host !== DEFAULT_HOST && host !== 'localhost' && host !== '::1') {
         console.warn('Atenção: o servidor fala HTTP puro e não está limitado ao computador local — coloque um proxy HTTPS na frente antes de expor.');
       }

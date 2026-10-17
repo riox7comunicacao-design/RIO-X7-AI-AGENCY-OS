@@ -16,6 +16,7 @@
 
 const { readRepositoryMode, REPOSITORY_MODE } = require('./crmRepositoryFactory');
 const { createProspectingExclusionService } = require('./prospectingExclusionService');
+const { FILE_MODE_UNVERIFIED, createEnforcedPermanentExclusionGuard } = require('./permanentExclusionGuard');
 const { createSupabaseProspectingExclusionRepository } = require('../prospecting-adapters/prospectingExclusionSupabaseRepository');
 
 // { env } (padrão process.env). Devolve o repositório puro, ou `undefined` fora do modo "supabase".
@@ -32,4 +33,19 @@ function createConfiguredProspectingExclusionService({ env = process.env, author
   return createProspectingExclusionService({ authorizeOperation, repository });
 }
 
-module.exports = { createConfiguredProspectingExclusionRepository, createConfiguredProspectingExclusionService };
+// A GUARDA da promoção para o CRM (Fase 2B-3.2B) — a dependência obrigatória do CRM Integration Service (ver permanentExclusionGuard.js):
+//   - com o Service de Exclusões Permanentes (Supabase em produção, ou um repositório em memória nos testes): a verificação é FEITA;
+//   - sem ele, em REPOSITORY_MODE=file (ausente ou "file"): o MARCADOR de que este modo não tem o serviço operacional — não uma consulta;
+//   - sem ele, em REPOSITORY_MODE=supabase: ERRO na composição. O marcador do modo arquivo nunca é usado em silêncio no modo Supabase, e
+//     não existe fallback de Supabase para arquivo.
+// Um REPOSITORY_MODE inválido também falha aqui (readRepositoryMode), como no resto da composição.
+function createConfiguredPermanentExclusionGuard({ env = process.env, exclusionService } = {}) {
+  const modo = readRepositoryMode(env);
+  if (exclusionService !== undefined && exclusionService !== null) return createEnforcedPermanentExclusionGuard(exclusionService);
+  if (modo === REPOSITORY_MODE.SUPABASE) {
+    throw new Error('Exclusões Permanentes: REPOSITORY_MODE=supabase exige o serviço de Exclusões Permanentes ligado à promoção — o marcador do modo arquivo não é permitido neste modo');
+  }
+  return FILE_MODE_UNVERIFIED;
+}
+
+module.exports = { createConfiguredProspectingExclusionRepository, createConfiguredProspectingExclusionService, createConfiguredPermanentExclusionGuard };

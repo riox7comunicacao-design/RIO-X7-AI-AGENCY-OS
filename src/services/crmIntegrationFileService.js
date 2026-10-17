@@ -38,8 +38,10 @@ function requireCrmService(crmService) {
   }
 }
 
+// permanentExclusions: a guarda das Exclusões Permanentes (permanentExclusionGuard.js), decidida UMA VEZ por quem compõe — o serviço de
+// verdade ou o marcador explícito do modo arquivo. Aqui só é repassada: quem a exige (e recusa a omissão) é createCrmIntegrationService.
 function createFileBackedCrmIntegrationService(dependencies) {
-  const { authorizeReviewer, authorizeOperation, queuePath, crmService } = dependencies || {};
+  const { authorizeReviewer, authorizeOperation, queuePath, crmService, permanentExclusions } = dependencies || {};
   if (queuePath !== undefined) requirePath(queuePath, 'queuePath');
   requireCrmService(crmService);
   return createCrmIntegrationService({
@@ -47,6 +49,7 @@ function createFileBackedCrmIntegrationService(dependencies) {
     approvalPromotionService: createApprovalPromotionService({ authorizeReviewer, queuePath }),
     crmService,
     authorizeOperation,
+    permanentExclusions,
   });
 }
 

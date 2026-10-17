@@ -18,6 +18,7 @@ const { createApprovalQueueService } = require('../../src/services/approvalQueue
 const { createApprovalPromotionService } = require('../../src/services/approvalPromotionService');
 const { createFileBackedCrmService } = require('../../src/services/crmFileService');
 const { createCrmIntegrationService } = require('../../src/services/crmIntegrationService');
+const { FILE_MODE_UNVERIFIED } = require('../../src/services/permanentExclusionGuard');
 const { ROLE, USER_STATUS, defineUser, authorizeReviewerForApprovalQueue, authorizeCrmOperation } = require('../../src/auth');
 const { createAuthorizationContext } = require('./authFixtures');
 
@@ -80,6 +81,9 @@ function criarServicos(queuePath, crmPath, opcoes = {}) {
     approvalPromotionService: opcoes.promocao || promocao,
     crmService: opcoes.crm || crm,
     authorizeOperation: authorizeCrmOperation,
+    // Fase 2B-3.2B: a guarda das Exclusões Permanentes é OBRIGATÓRIA. Por padrão os testes antigos usam o marcador EXPLÍCITO do modo
+    // arquivo (a promoção não verifica exclusões); os testes de exclusão passam `opcoes.exclusoes` (uma guarda ENFORCED).
+    permanentExclusions: opcoes.exclusoes || FILE_MODE_UNVERIFIED,
   });
   return { fila, promocao, crm, integracao };
 }

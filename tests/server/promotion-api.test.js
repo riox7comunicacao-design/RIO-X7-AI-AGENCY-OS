@@ -17,6 +17,7 @@ const { createApp, mapErrorToHttp } = require('../../src/server/app');
 const { createFileBackedCrmIntegrationService } = require('../../src/services/crmIntegrationFileService');
 const { authorizeReviewerForApprovalQueue, authorizeCrmOperation } = require('../../src/auth');
 const { PROMOTION_ERROR } = require('../../src/services/crmIntegrationService');
+const { FILE_MODE_UNVERIFIED } = require('../../src/services/permanentExclusionGuard');
 const { isIssuedAuthorizationContext } = require('../helpers/authFixtures');
 const { montarAmbiente, BRENO, RAFAEL, EX_COLABORADOR } = require('./testEnv');
 
@@ -289,26 +290,30 @@ test('[PROMO-API-20] um code desconhecido, ou herdado do protótipo, é 500 — 
     assert.equal(mapErrorToHttp(erro).code, 'INTERNAL', code);
   }
   const conflitos = Object.values(PROMOTION_ERROR).map((code) => mapErrorToHttp(Object.assign(new Error('Promoção: texto interno com /caminho e site.example.test'), { code })));
-  assert.equal(conflitos.length, 9);
+  assert.equal(conflitos.length, 13); // 9 de antes + os 4 das Exclusões Permanentes (Fase 2B-3.2B)
   for (const falha of conflitos) {
     assert.notEqual(falha.status, 500, falha.code);
     assert.equal(falha.message.includes('texto interno'), false);
   }
   assert.deepEqual(
     Object.values(PROMOTION_ERROR).map((code) => mapErrorToHttp(Object.assign(new Error('x'), { code })).status).sort(),
-    [400, 404, 409, 409, 409, 409, 409, 409, 409]
+    [400, 404, 409, 409, 409, 409, 409, 409, 409, 409, 409, 409, 503]
   );
 });
 
 test('[PROMO-API-21] a fábrica de arquivos exige um crmService já pronto (injetado por quem compõe — etapa 3F, sem padrão escondido), aceita a fila sem caminho (o padrão do domínio) e devolve só promoteProspect', (t) => {
   const env = ambiente(t);
-  const base = { authorizeReviewer: authorizeReviewerForApprovalQueue, authorizeOperation: authorizeCrmOperation, queuePath: env.filePath, crmService: env.crmService };
+  const base = { authorizeReviewer: authorizeReviewerForApprovalQueue, authorizeOperation: authorizeCrmOperation, queuePath: env.filePath, crmService: env.crmService, permanentExclusions: FILE_MODE_UNVERIFIED };
   for (const invalido of [undefined, '', '   ', 42, null, {}]) {
     assert.throws(() => createFileBackedCrmIntegrationService({ ...base, crmService: invalido }), /crmService/);
   }
   assert.throws(() => createFileBackedCrmIntegrationService({ ...base, queuePath: '' }), /queuePath/);
   assert.throws(() => createFileBackedCrmIntegrationService(undefined), /crmService/);
   assert.throws(() => createFileBackedCrmIntegrationService({ ...base, authorizeOperation: undefined }));
+  // Fase 2B-3.2B: a guarda das Exclusões Permanentes é obrigatória também na fábrica de arquivos (nunca omitida em silêncio)
+  for (const invalida of [undefined, null, {}, { mode: 'FILE_MODE_UNVERIFIED' }]) {
+    assert.throws(() => createFileBackedCrmIntegrationService({ ...base, permanentExclusions: invalida }), /permanentExclusions/);
+  }
   const servico = createFileBackedCrmIntegrationService({ ...base, queuePath: undefined });
   assert.deepEqual(Object.keys(servico), ['promoteProspect']);
 });
