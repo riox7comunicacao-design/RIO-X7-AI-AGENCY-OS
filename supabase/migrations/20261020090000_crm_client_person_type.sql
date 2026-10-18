@@ -20,6 +20,11 @@
 --      empresa): sem isto, excluir uma PF faria o INSERT de auditoria violar o NOT NULL de crm_record_deletions.empresa e a exclusão falharia.
 --      A auditoria continua guardando o registro COMPLETO em record_snapshot (as colunas novas entram sozinhas, via to_jsonb). O corpo da função é o
 --      de sempre; só a expressão do nome muda. O EXECUTE é restabelecido NOMINALMENTE (PUBLIC, anon e authenticated revogados; só service_role).
+--   5) PRIVILÉGIOS (correção de segurança): no Supabase, toda tabela nova do schema public nasce com SELECT/INSERT/UPDATE/DELETE concedidos a `anon` e `authenticated` (a RLS ligada e
+--      SEM policy é a única barreira hoje: o banco real confirmou essas concessões em crm_records). Esta migration REVOGA, NOMINALMENTE, todo privilégio direto de PUBLIC, anon e
+--      authenticated sobre crm_records e sobre crm_record_deletions (a auditoria guarda o registro completo, inclusive CPF/CNPJ e nome), sobre as duas sequências de identidade e sobre a
+--      função de gatilho crm_records_bump_version(), e RESTABELECE só para service_role o que o servidor usa. O backend acessa o CRM SÓ pelo PostgREST com a chave service_role
+--      (src/crm-adapters/*); a chave anon do navegador serve apenas para autenticar (login/getUser) e nunca lê estas tabelas. Mantém a RLS ligada e ZERO policies; nenhuma linha muda.
 --
 -- O QUE NÃO FAZ: não cria nem altera nenhuma linha de dados; não infere o tipo de nenhum registro antigo (todos ficam com tipo NULL até uma pessoa
 -- definir pela tela); não cria índice único em cpf/cnpj (a duplicidade é decidida pelo domínio, como a de site e telefone — a proteção entre processos
@@ -32,6 +37,7 @@
 --   d) SÓ ENTÃO atualizar o código (git pull) e subir o servidor novo. O código novo grava as quatro colunas em TODO registro: sem a migration, toda
 --      escrita no CRM seria recusada pelo PostgREST. O servidor ANTIGO continua compatível com o banco migrado (ignora as colunas novas).
 --
+-- (Os REVOKE de privilégios da seção 5 são correções de segurança e NÃO são desfeitos: nenhum caminho legítimo depende de anon/authenticated nestas tabelas.)
 -- DESFAZER (só ENQUANTO NENHUMA Pessoa Física tiver sido cadastrada — com PF gravada, `empresa` é NULL nela e o NOT NULL não volta; nesse caso NÃO desfaça):
 --   a) ALTER TABLE public.crm_records DROP CONSTRAINT crm_records_identificacao_check, DROP CONSTRAINT crm_records_tipo_pessoa_check,
 --        DROP CONSTRAINT crm_records_nome_completo_check, DROP CONSTRAINT crm_records_cpf_check, DROP CONSTRAINT crm_records_cnpj_check;
@@ -50,6 +56,9 @@ BEGIN
   END IF;
   IF to_regclass('public.crm_record_deletions') IS NULL OR to_regprocedure('public.delete_crm_record_with_audit(text,text,text,text,text)') IS NULL THEN
     RAISE EXCEPTION 'pré-requisito ausente: auditoria de exclusão do CRM (20260928090000_crm_delete_audit.sql)';
+  END IF;
+  IF to_regclass('public.crm_records_seq_seq') IS NULL OR to_regclass('public.crm_record_deletions_id_seq') IS NULL OR to_regprocedure('public.crm_records_bump_version()') IS NULL THEN
+    RAISE EXCEPTION 'pré-requisito ausente: as sequências de identidade de crm_records/crm_record_deletions ou a função crm_records_bump_version() (a seção de privilégios as nomeia)';
   END IF;
   IF EXISTS (
     SELECT 1 FROM information_schema.columns
@@ -155,3 +164,17 @@ COMMENT ON FUNCTION public.delete_crm_record_with_audit IS
 -- EXECUTE nominal: no Supabase, REVOKE FROM PUBLIC sozinho NÃO retira os EXECUTE explícitos de anon e authenticated.
 REVOKE ALL ON FUNCTION public.delete_crm_record_with_audit(TEXT, TEXT, TEXT, TEXT, TEXT) FROM PUBLIC, anon, authenticated;
 GRANT EXECUTE ON FUNCTION public.delete_crm_record_with_audit(TEXT, TEXT, TEXT, TEXT, TEXT) TO service_role;
+
+-- ------------------------------------------------------------------------------------------------------------
+-- 4) PRIVILÉGIOS: nenhum acesso direto de PUBLIC, anon ou authenticated; só service_role (o backend). RLS segue ligada, sem policy.
+--    REVOKE ALL ao nível da tabela também retira qualquer privilégio de COLUNA que exista. O que o servidor usa de crm_records e da auditoria é restabelecido só para service_role.
+-- ------------------------------------------------------------------------------------------------------------
+REVOKE ALL ON TABLE public.crm_records FROM PUBLIC, anon, authenticated;
+GRANT SELECT, INSERT, UPDATE, DELETE ON TABLE public.crm_records TO service_role;
+REVOKE ALL ON TABLE public.crm_record_deletions FROM PUBLIC, anon, authenticated;
+GRANT SELECT, INSERT ON TABLE public.crm_record_deletions TO service_role;
+REVOKE ALL ON SEQUENCE public.crm_records_seq_seq FROM PUBLIC, anon, authenticated;
+GRANT USAGE, SELECT ON SEQUENCE public.crm_records_seq_seq TO service_role;
+REVOKE ALL ON SEQUENCE public.crm_record_deletions_id_seq FROM PUBLIC, anon, authenticated;
+GRANT USAGE, SELECT ON SEQUENCE public.crm_record_deletions_id_seq TO service_role;
+REVOKE ALL ON FUNCTION public.crm_records_bump_version() FROM PUBLIC, anon, authenticated;

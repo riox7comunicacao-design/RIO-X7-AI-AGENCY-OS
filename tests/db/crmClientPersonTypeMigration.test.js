@@ -58,7 +58,8 @@ test('[MIG-PERSON-3] o PRIMEIRO comando confere os pré-requisitos e ABORTA (crm
   assert.match(bloco, /to_regprocedure\('public\.delete_crm_record_with_audit\(text,text,text,text,text\)'\) IS NULL/);
   assert.match(bloco, /column_name IN \('tipo_pessoa', 'nome_completo', 'cpf', 'cnpj'\)/);
   assert.match(bloco, /esta migration já foi aplicada/);
-  assert.equal([...bloco.matchAll(/RAISE EXCEPTION/g)].length, 3);
+  assert.match(bloco, /to_regclass\('public\.crm_records_seq_seq'\) IS NULL OR to_regclass\('public\.crm_record_deletions_id_seq'\) IS NULL OR to_regprocedure\('public\.crm_records_bump_version\(\)'\) IS NULL/, 'a seção de privilégios nomeia sequências e uma função: o pré-requisito as confere');
+  assert.equal([...bloco.matchAll(/RAISE EXCEPTION/g)].length, 4);
   assert.doesNotMatch(bloco, /ALTER|CREATE|DROP|INSERT|UPDATE|DELETE/);
   assert.ok(sem.indexOf('ADD COLUMN') > sem.indexOf('DO $$'), 'as colunas só vêm depois da conferência');
 });
@@ -227,14 +228,62 @@ test('[MIG-PERSON-9] AUDITORIA DA EXCLUSÃO: delete_crm_record_with_audit manté
   assert.match(SQL, /REVOKE ALL ON FUNCTION public\.delete_crm_record_with_audit\(TEXT, TEXT, TEXT, TEXT, TEXT\) FROM PUBLIC, anon, authenticated;/);
   assert.match(SQL, /GRANT EXECUTE ON FUNCTION public\.delete_crm_record_with_audit\(TEXT, TEXT, TEXT, TEXT, TEXT\) TO service_role;/);
   assert.ok(SQL.indexOf('CREATE OR REPLACE FUNCTION') < SQL.indexOf('REVOKE ALL ON FUNCTION'), 'o EXECUTE é restabelecido DEPOIS de recriar a função');
-  assert.equal([...comandos(SQL).matchAll(/\bGRANT\b/g)].length, 1, 'um único GRANT, para service_role');
+  assert.ok([...comandos(SQL).matchAll(/\bGRANT\b[^;]*;/g)].every((m) => /\bTO service_role;$/.test(m[0])), 'todo GRANT da migration é para service_role (nunca anon, authenticated ou PUBLIC)');
 });
 
-test('[MIG-PERSON-10] sem estrutura nova de acesso: nenhuma policy, nenhum GRANT a anon/authenticated/PUBLIC, nenhum REVOKE de tabela; a RLS de crm_records (ligada, sem policy) não é tocada', () => {
+test('[MIG-PERSON-10] a RLS de crm_records (ligada, SEM policy) não é tocada: nenhuma policy criada/removida, RLS nem ligada nem desligada, nenhum GRANT a anon/authenticated/PUBLIC', () => {
   const c = comandos(SQL);
   assert.doesNotMatch(c, /GRANT[^;]*\b(anon|authenticated|PUBLIC)\b/);
-  assert.doesNotMatch(c, /ENABLE ROW LEVEL SECURITY|DISABLE ROW LEVEL SECURITY|CREATE POLICY|DROP POLICY/);
-  assert.doesNotMatch(c, /REVOKE[^;]*ON TABLE/);
+  assert.doesNotMatch(c, /ENABLE ROW LEVEL SECURITY|DISABLE ROW LEVEL SECURITY|FORCE ROW LEVEL SECURITY|CREATE POLICY|DROP POLICY|ALTER POLICY/);
+});
+
+// ---- os PRIVILÉGIOS (correção de segurança: o banco real concede SELECT/INSERT/UPDATE/DELETE a anon e authenticated em crm_records) ----
+const REVOKE_TABELA = (nome) => `REVOKE ALL ON TABLE public.${nome} FROM PUBLIC, anon, authenticated;`;
+const PRIVILEGIOS = [
+  REVOKE_TABELA('crm_records'),
+  'GRANT SELECT, INSERT, UPDATE, DELETE ON TABLE public.crm_records TO service_role;',
+  REVOKE_TABELA('crm_record_deletions'),
+  'GRANT SELECT, INSERT ON TABLE public.crm_record_deletions TO service_role;',
+  'REVOKE ALL ON SEQUENCE public.crm_records_seq_seq FROM PUBLIC, anon, authenticated;',
+  'GRANT USAGE, SELECT ON SEQUENCE public.crm_records_seq_seq TO service_role;',
+  'REVOKE ALL ON SEQUENCE public.crm_record_deletions_id_seq FROM PUBLIC, anon, authenticated;',
+  'GRANT USAGE, SELECT ON SEQUENCE public.crm_record_deletions_id_seq TO service_role;',
+  'REVOKE ALL ON FUNCTION public.crm_records_bump_version() FROM PUBLIC, anon, authenticated;',
+];
+
+test('[MIG-PERSON-13] PRIVILÉGIOS: crm_records e a auditoria perdem TODO acesso direto de PUBLIC, anon e authenticated (nominalmente, os três) e o service_role fica com o que o servidor usa; o mesmo para as duas sequências e a função de gatilho — o conjunto EXATO de comandos', () => {
+  const c = comandos(SQL);
+  const achados = [...c.matchAll(/\b(?:REVOKE|GRANT)\b[^;]*;/g)].map((m) => m[0].replace(/\s+/g, ' ').trim());
+  const doSql = achados.filter((comando) => !/delete_crm_record_with_audit/.test(comando));
+  assert.deepEqual(doSql, PRIVILEGIOS, 'exatamente estes REVOKE/GRANT (fora os da função de exclusão), nesta ordem');
+  for (const comando of PRIVILEGIOS) assert.ok(SQL.includes(comando), comando);
+  // todo REVOKE nomeia os TRÊS: PUBLIC, anon e authenticated (REVOKE FROM PUBLIC sozinho não retira as concessões explícitas do Supabase)
+  for (const revoke of achados.filter((comando) => comando.startsWith('REVOKE'))) assert.match(revoke, /FROM PUBLIC, anon, authenticated;$/, revoke);
+  // nunca se revoga nada de service_role
+  assert.doesNotMatch(c, /REVOKE[^;]*service_role/);
+  // ordem: o corpo novo da função de exclusão e os privilégios vêm DEPOIS de a coluna e a restrição existirem
+  assert.ok(c.indexOf('crm_records_identificacao_check') < c.indexOf('REVOKE ALL ON TABLE public.crm_records'));
+  // sem DROP/CREATE de tabela, sem alterar dado, sem tocar na RLS
+  assert.doesNotMatch(c, /ALTER TABLE public\.crm_record_deletions|ALTER TABLE public\.crm_records ENABLE|ALTER TABLE public\.crm_records DISABLE/);
+});
+
+test('[MIG-PERSON-14] os privilégios são MÍNIMOS e o backend não depende de anon/authenticated: todo acesso a tabelas do CRM no servidor é pelo PostgREST com a chave service_role; a chave anon só autentica', () => {
+  const ler = (...partes) => fs.readFileSync(path.join(ROOT, ...partes), 'utf8');
+  // o cliente PostgREST dos adapters manda a chave de SERVIÇO (apikey e Bearer); nenhuma chave anon passa por ele
+  const cliente = ler('src', 'crm-adapters', 'postgrestClient.js');
+  assert.match(cliente, /apikey: serviceRoleKey, Authorization: `Bearer \$\{serviceRoleKey\}`/);
+  assert.doesNotMatch(cliente, /ANON/i);
+  const config = ler('src', 'crm-adapters', 'crmSupabaseConfig.js');
+  assert.match(config, /SUPABASE_SERVICE_ROLE_KEY/);
+  assert.doesNotMatch(config, /ANON/i);
+  // a chave anon só existe na autenticação (auth.getUser/getSession), nunca num acesso a tabela
+  const auth = ler('src', 'auth', 'authAdapter.js');
+  assert.doesNotMatch(auth, /\.from\(|rest\/v1/);
+  // o navegador usa o SDK só para autenticar; nenhuma consulta a tabela no Dashboard
+  const principal = ler('dashboard', 'main.mjs');
+  assert.doesNotMatch(principal, /\.from\(['"]|rest\/v1/);
+  // e a única chave que o servidor entrega ao navegador é a anon (já pública por definição); a de serviço nunca
+  assert.doesNotMatch(ler('src', 'server', 'index.js').split('\n').filter((linha) => /publicConfig/.test(linha)).join('\n'), /service/i);
 });
 
 test('[MIG-PERSON-11] NADA EXECUTA a migration: nenhum arquivo de src/ ou scripts/ a lê ou a cita, e o package.json não tem script de migration; só testes a leem', () => {
