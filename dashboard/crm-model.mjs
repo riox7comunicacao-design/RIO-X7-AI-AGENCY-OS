@@ -428,15 +428,26 @@ export const CLIENT_FORM_SECTIONS = Object.freeze({
   ]),
   mais: Object.freeze([
     Object.freeze({ id: 'redes', title: 'Redes sociais e presença digital', keys: Object.freeze(['site', 'instagram', 'facebook', 'googlePerfil']) }),
-    Object.freeze({ id: 'adicionais', title: 'Informações adicionais', keys: Object.freeze(['cargo', 'cidade', 'estado', 'observacoes']) }),
+    Object.freeze({ id: 'adicionais', title: 'Informações adicionais', keys: Object.freeze(['cargo', 'cidade', 'estado']) }),
     Object.freeze({
       id: 'legado',
       title: 'Diagnóstico e histórico comercial',
-      keys: Object.freeze(['servicoPotencial', 'temperatura', 'problemaIdentificado', 'raioXDeNicho', 'raioXPersonalizado', 'statusDoDiagnostico', 'linkDoRaioX', 'dataDaAnalise', 'valorProposta', 'valorTotal']),
+      keys: Object.freeze(['servicoPotencial', 'temperatura', 'problemaIdentificado', 'raioXDeNicho', 'raioXPersonalizado', 'statusDoDiagnostico', 'linkDoRaioX', 'dataDaAnalise', 'valorProposta', 'valorTotal', 'observacoes']),
     }),
     Object.freeze({ id: 'agenda', title: 'Reunião e próxima ação', keys: Object.freeze(['ultimaInteracao', 'dataDaReuniao', 'linkDoMeet', 'proximaAcao', 'dataDaProximaAcao']) }),
   ]),
 });
+
+// Fase D2.1: as ABAS dentro de "Mais informações (opcional)". Cada aba mostra as seções (`sections`: ids de CLIENT_FORM_SECTIONS.mais) que lhe cabem; os campos continuam sendo exatamente os mesmos, só
+// distribuídos por assunto. A aba "Entrada" não tem campo do registro: guarda o status inicial e o motivo da entrada (que não são campos do cliente e a tela monta). O responsável fica em
+// "Classificação" (à vista, no bloco principal): é um campo do cadastro essencial e não se repete aqui.
+export const CLIENT_MORE_TABS = Object.freeze([
+  Object.freeze({ key: 'digital', label: 'Digital', sections: Object.freeze(['redes']) }),
+  Object.freeze({ key: 'adicionais', label: 'Adicionais', sections: Object.freeze(['adicionais']) }),
+  Object.freeze({ key: 'comercial', label: 'Comercial', sections: Object.freeze(['legado']) }),
+  Object.freeze({ key: 'funil', label: 'Funil', sections: Object.freeze(['agenda']) }),
+  Object.freeze({ key: 'entrada', label: 'Entrada', sections: Object.freeze([]) }),
+]);
 
 // ---------------------------------------------------------------------------
 // Formulários: do que a pessoa digita para o corpo da CRM-API

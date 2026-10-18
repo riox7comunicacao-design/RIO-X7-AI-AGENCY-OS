@@ -33,6 +33,7 @@ import { createCatalogField, createCatalogNotice } from '../ui/catalogField.mjs'
 import { CATALOG_FIELDS, createCatalogLookup } from '../crm-catalog-lookup.mjs';
 import {
   CLIENT_FORM_SECTIONS,
+  CLIENT_MORE_TABS,
   CRM_STATUSES,
   DEFAULT_INITIAL_STATUS,
   FIELD_GROUPS,
@@ -1188,6 +1189,9 @@ export function createCrmView({ document, root, api, permissions, navigate = () 
     const labels = new Map(); // campo -> o <label> (o "(obrigatório)" muda conforme o tipo)
     const moreKeys = new Set(CLIENT_FORM_SECTIONS.mais.flatMap((spec) => spec.keys));
     let moreDetails = null;
+    let moreTabs = null; // Fase D2.1: as abas de "Mais informações" (só no layout 'client')
+    let entryBody = null; // o corpo da aba "Entrada" (addMore guarda ali a entrada no CRM)
+    const moreTabOfKey = new Map(CLIENT_MORE_TABS.flatMap((tab) => tab.sections.flatMap((id) => CLIENT_FORM_SECTIONS.mais.find((spec) => spec.id === id).keys.map((key) => [key, tab.key]))));
     const errorSlots = new Map();
     const datalists = new Map();
     const catalogFields = []; // os campos de seleção assistida deste formulário (cada um assina o seu catálogo até ser descartado)
@@ -1365,12 +1369,24 @@ export function createCrmView({ document, root, api, permissions, navigate = () 
         el('fieldset', { className: 'form-block', id: 'crm-block-' + spec.id }, el('legend', { text: spec.title }), el('div', { className: 'form-grid' }, ...spec.keys.map((key) => control(FIELD_BY_KEY.get(key)))));
       // os blocos principais primeiro: os campos de catálogo consultam a API na ORDEM em que são criados (nicho, origem, serviço)
       const principalBlocks = CLIENT_FORM_SECTIONS.principal.map(block);
+      // Fase D2.1: o resto em ABAS (como as da edição): trocar de aba não perde o digitado — todos os campos ficam no DOM o tempo todo — e nunca salva nada.
+      entryBody = el('div', { className: 'edit-tab-body', id: 'crm-new-entry' });
+      moreTabs = createTabs(document, {
+        idPrefix: 'crm-new-more',
+        label: 'Mais informações do cliente',
+        active: CLIENT_MORE_TABS[0].key,
+        tabs: CLIENT_MORE_TABS.map((tab) => ({
+          key: tab.key,
+          label: tab.label,
+          content: tab.key === 'entrada' ? entryBody : el('div', { className: 'edit-tab-body' }, ...tab.sections.map((id) => block(CLIENT_FORM_SECTIONS.mais.find((spec) => spec.id === id)))),
+        })),
+      });
       moreDetails = el(
         'details',
         { className: 'form-more', id: 'crm-new-more' },
         el('summary', { text: 'Mais informações (opcional)' }),
         el('p', { className: 'muted', text: 'Redes sociais, informações adicionais, diagnóstico e histórico comercial. Nada aqui é obrigatório: pode ser preenchido agora ou depois, na ficha do cliente.' }),
-        ...CLIENT_FORM_SECTIONS.mais.map(block)
+        moreTabs.element
       );
       element = el('div', { className: 'field-form field-form-client' }, catalogNotice ? catalogNotice.element : null, ...principalBlocks, moreDetails);
     } else {
@@ -1395,7 +1411,8 @@ export function createCrmView({ document, root, api, permissions, navigate = () 
       element,
       // o formulário de novo cliente guarda aqui blocos extras (ex.: a entrada no CRM) dentro da seção expansível
       addMore(node) {
-        if (moreDetails) moreDetails.append(node);
+        if (entryBody) entryBody.append(node);
+        else if (moreDetails) moreDetails.append(node);
       },
       read() {
         const read = {};
@@ -1416,6 +1433,12 @@ export function createCrmView({ document, root, api, permissions, navigate = () 
           for (const key of Object.keys(errors)) perTab.set(tabOfKey.get(key), (perTab.get(tabOfKey.get(key)) || 0) + 1);
           for (const tab of RECORD_TABS) if (tab.sections.length > 0) tabsApi.setBadge(tab.key, perTab.has(tab.key) ? String(perTab.get(tab.key)) : '');
         }
+        // no novo cliente, o mesmo para as abas de "Mais informações"
+        if (moreTabs) {
+          const perTab = new Map();
+          for (const key of Object.keys(errors)) if (moreTabOfKey.has(key)) perTab.set(moreTabOfKey.get(key), (perTab.get(moreTabOfKey.get(key)) || 0) + 1);
+          for (const tab of CLIENT_MORE_TABS) moreTabs.setBadge(tab.key, perTab.has(tab.key) ? String(perTab.get(tab.key)) : '');
+        }
       },
       focusFirst() {
         // novo cliente: o tipo (nada foi escolhido ainda); edição: o primeiro campo de identificação visível (a empresa, num registro antigo)
@@ -1428,6 +1451,7 @@ export function createCrmView({ document, root, api, permissions, navigate = () 
         if (!key) return;
         if (tabsApi) tabsApi.select(tabOfKey.get(key), { notify: false }); // abre a aba do primeiro erro, para o foco poder chegar nele
         if (moreDetails && moreKeys.has(key)) moreDetails.open = true; // um erro na seção recolhida a abre
+        if (moreTabs && moreTabOfKey.has(key)) moreTabs.select(moreTabOfKey.get(key), { notify: false }); // e a aba do campo com erro
         controls.get(key).focus();
       },
       // As sugestões vêm dos dados já carregados (a lista pode chegar depois de o formulário abrir).

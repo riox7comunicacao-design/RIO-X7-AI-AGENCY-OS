@@ -1083,6 +1083,12 @@ a.settings-card:focus-visible { outline: 3px solid var(--brand-strong); outline-
 .form-more { margin: 4px 0 12px; padding: 6px 12px; border: 1px dashed var(--line-strong); border-radius: 10px; }
 .form-more > summary { cursor: pointer; padding: 6px 0; font-weight: 700; }
 .form-more[open] > summary { margin-bottom: 8px; }
+/* Fase D2.1: as abas de "Mais informações" — a altura mínima evita o salto ao trocar de aba; o foco fica dentro da faixa (a lista rola na horizontal); no celular as abas quebram de linha em vez de cortar o título */
+.form-more .tab-list { gap: 4px; }
+.form-more .tab:focus-visible { outline-offset: -3px; }
+.form-more .tab-panels { min-height: 14rem; }
+.form-more .tab-panel { padding-top: 12px; }
+@media (max-width: 480px) { .form-more { padding: 6px 8px; } .form-more .tab-list { flex-wrap: wrap; overflow-x: visible; } .form-more .tab { padding: 8px 10px; font-size: 14px; } .form-more .tab-panels { min-height: 0; } }
 .crm-person-badge { margin-left: 8px; }
 .client-search { margin-bottom: 4px; }
 @media (max-width: 640px) { .crm-person-type { grid-template-columns: 1fr; } }
