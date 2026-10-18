@@ -7,7 +7,7 @@
 
 import { h } from '../dom.mjs';
 import { formField } from '../ui/index.mjs';
-import { formatMoney } from '../crm-model.mjs';
+import { clientName, clientOptionLabel, formatMoney, normalizeDocument, normalizeText } from '../crm-model.mjs';
 import { parseMoney } from '../catalog-model.mjs';
 import { PAYMENT_OPTIONS, PERIODICITY_OPTIONS, TERM_PRESETS, MESSAGES, buildCreateBody, buildPatchBody, emptyFormValues, formValuesFromNegotiation, negotiationErrorInfo, previewFinance, scheduleText, fieldMessage, parseTerm } from '../negotiation-model.mjs';
 import { textOf } from '../format.mjs';
@@ -15,10 +15,11 @@ import { textOf } from '../format.mjs';
 const idOf = (field) => `negotiation-field-${field}`;
 const FIELD_ORDER = Object.freeze(['crmRecordId', 'funnelId', 'serviceId', 'prazoMeses', 'formaPagamento', 'periodicidade', 'valorNegociado', 'previsaoFechamento']);
 
-// document. mode: 'create' | 'edit'. negotiation: a negociação atual (edição). funnels: [{ id, nome, ativo }]. funnelId: o funil já escolhido no quadro. clients: [{ id, empresa }]. services: os itens do catálogo
+// document. mode: 'create' | 'edit'. negotiation: a negociação atual (edição). funnels: [{ id, nome, ativo }]. funnelId: o funil já escolhido no quadro. clients: [{ id, empresa, tipoPessoa, nomeCompleto, cpf, cnpj }] (o nome mostrado é o do tipo: nome completo da PF, empresa da PJ). initialClientId: o cliente já escolhido (vindo da ficha do cliente). services: os itens do catálogo
 // (ativos) com as modalidades. onSubmit(body): Promise (o dono grava; se rejeitar, o erro aparece AQUI e o formulário continua aberto). onCancel(): fecha pelo caminho normal.
-export function createNegotiationForm({ document, mode, negotiation = null, funnels = [], funnelId = '', clients = [], services = [], onSubmit, onBusy = () => {}, onCancel = () => {} }) {
-  const initial = mode === 'edit' ? formValuesFromNegotiation(negotiation) : emptyFormValues(funnelId);
+export function createNegotiationForm({ document, mode, negotiation = null, funnels = [], funnelId = '', clients = [], initialClientId = '', services = [], onSubmit, onBusy = () => {}, onCancel = () => {} }) {
+  // Um cliente pré-escolhido só vale se for um dos que a lista oferece (nunca um id solto): o servidor confere de novo.
+  const initial = mode === 'edit' ? formValuesFromNegotiation(negotiation) : { ...emptyFormValues(funnelId), crmRecordId: clients.some((client) => client.id === initialClientId) ? initialClientId : '' };
   let baseline = { ...initial };
   let busy = false;
   const el = (tag, props, ...children) => h(document, tag, props, ...children);
@@ -37,8 +38,8 @@ export function createNegotiationForm({ document, mode, negotiation = null, funn
     control.value = initial[field] || '';
     return control;
   };
-  const clientOptions = clients.map((client) => ({ value: client.id, label: textOf(client.empresa) || 'Sem nome' }));
-  if (mode === 'edit' && negotiation && !clientOptions.some((entry) => entry.value === negotiation.crmRecordId)) clientOptions.push({ value: negotiation.crmRecordId, label: textOf(negotiation.cliente && negotiation.cliente.empresa) || 'Cliente' });
+  const clientOptions = clients.map((client) => ({ value: client.id, label: clientOptionLabel(client) }));
+  if (mode === 'edit' && negotiation && !clientOptions.some((entry) => entry.value === negotiation.crmRecordId)) clientOptions.push({ value: negotiation.crmRecordId, label: clientName(negotiation.cliente) || 'Cliente' });
   const funnelOptions = funnels.filter((funnel) => funnel.ativo !== false).map((funnel) => ({ value: funnel.id, label: funnel.nome }));
   const serviceOptions = knownServices.map((item) => ({ value: item.id, label: item.nome }));
   if (mode === 'edit' && negotiation && !serviceOptions.some((entry) => entry.value === negotiation.serviceId)) serviceOptions.push({ value: negotiation.serviceId, label: `${textOf(negotiation.servicoNome) || 'Serviço'} (desativado)` });
@@ -46,6 +47,25 @@ export function createNegotiationForm({ document, mode, negotiation = null, funn
   const controls = {}; // campo -> { setError, setHidden, element, control, focus() }
   const clientControl = select('crmRecordId', 'Escolha o cliente', clientOptions);
   const funnelControl = select('funnelId', 'Escolha o funil', funnelOptions);
+  const CLIENT_SEARCH_MIN = 6;
+  const clientSearch =
+    mode === 'create' && clients.length >= CLIENT_SEARCH_MIN
+      ? el('input', { id: 'negotiation-client-search', type: 'search', autocomplete: 'off', placeholder: 'Buscar cliente por nome, telefone, CPF ou CNPJ', 'aria-label': 'Buscar cliente' })
+      : null;
+  function paintClientOptions() {
+    const wanted = normalizeText(clientSearch ? String(clientSearch.value || '') : '');
+    const chosen = String(clientControl.value || '');
+    const digits = normalizeDocument(wanted).toLowerCase();
+    const matches = (client) => {
+      if (wanted === '') return true;
+      const text = normalizeText([clientName(client), client.contato, client.telefone, client.whatsapp, client.email].map((value) => textOf(value)).join(' '));
+      const documents = (normalizeDocument(client.cpf) + ' ' + normalizeDocument(client.cnpj)).toLowerCase();
+      return wanted.split(/\s+/).every((token) => text.includes(token)) || (digits.length >= 3 && documents.includes(digits));
+    };
+    const shown = clientOptions.filter((entry) => entry.value === chosen || matches(clients.find((client) => client.id === entry.value) || {}));
+    clientControl.replaceChildren(el('option', { value: '', text: shown.length === 0 ? 'Nenhum cliente encontrado' : 'Escolha o cliente' }), ...shown.map((entry) => el('option', { value: entry.value, text: entry.label })));
+    clientControl.value = chosen;
+  }
   const serviceControl = select('serviceId', 'Escolha o serviço', serviceOptions);
   const periodicityControl = el('select', { id: idOf('periodicidade') }, el('option', { value: '', text: 'Escolha a periodicidade' }), ...PERIODICITY_OPTIONS.map((entry) => el('option', { value: entry.value, text: entry.label })));
   periodicityControl.value = initial.periodicidade || '';
@@ -220,6 +240,7 @@ export function createNegotiationForm({ document, mode, negotiation = null, funn
     onAnyChange();
   });
   clientControl.addEventListener('change', () => controls.crmRecordId.setError(null));
+  if (clientSearch) clientSearch.addEventListener('input', paintClientOptions);
   funnelControl.addEventListener('change', () => controls.funnelId.setError(null));
   for (const row of paymentRows) row.input.addEventListener('change', () => { controls.formaPagamento.setError(null); controls.periodicidade.setError(null); onAnyChange(); });
   for (const row of termRows) {
@@ -244,6 +265,7 @@ export function createNegotiationForm({ document, mode, negotiation = null, funn
     saveButton.disabled = busy;
     cancelButton.disabled = busy;
     saveButton.textContent = busy ? 'Salvando…' : 'Salvar';
+    if (clientSearch) clientSearch.disabled = busy;
     for (const control of [clientControl, funnelControl, serviceControl, periodicityControl, valueControl, dateControl, termInput, ...paymentRows.map((row) => row.input), ...termRows.map((row) => row.input)]) {
       if (mode === 'edit' && (control === clientControl || control === funnelControl)) continue;
       control.disabled = busy;
@@ -287,6 +309,7 @@ export function createNegotiationForm({ document, mode, negotiation = null, funn
     { className: 'catalog-form negotiation-form', novalidate: 'novalidate', onsubmit: (event) => { event.preventDefault(); submit(); } },
     messageRegion,
     el('p', { className: 'muted required-note', text: 'Os campos marcados com * são obrigatórios.' }),
+    ...(clientSearch ? [el('div', { className: 'field client-search' }, el('label', { for: 'negotiation-client-search', text: 'Buscar cliente' }), clientSearch)] : []),
     controls.crmRecordId.element,
     controls.funnelId.element,
     controls.serviceId.element,

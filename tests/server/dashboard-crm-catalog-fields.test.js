@@ -159,13 +159,14 @@ test('[CATFLD-2] QUEM ADMINISTRA lê também os desativados (para poder confirm�
 
 test('[CATFLD-3] CRIAR escolhendo nas listas: o corpo enviado ao CRM leva os NOMES como texto nos mesmos campos de sempre, e só os preenchidos; os catálogos não são escritos', async () => {
   const s = await abrirNovo({ permissions: ADMIN, items: [] });
-  s.browser.type(s.browser.by.label(s.root, 'Empresa (obrigatório)'), 'Clínica Nova');
+  s.browser.click(s.browser.by.label(s.root, 'Pessoa Jurídica'));
+  s.browser.type(s.browser.by.label(s.root, 'Nome da empresa (obrigatório)'), 'Clínica Nova');
   await escolher(s, 'nicho', 'Estética');
   await escolher(s, 'origem', 'Indicação');
   await escolher(s, 'servicoPotencial', 'Gestão de redes sociais');
-  await clicar(s, botao(s, 'Criar registro'));
+  await clicar(s, botao(s, 'Cadastrar cliente'));
   const [chamada] = s.api.callsOf('createCrm');
-  assert.deepEqual(chamada.args[0], { empresa: 'Clínica Nova', nicho: 'Estética', origem: 'Indicação', servicoPotencial: 'Gestão de redes sociais' });
+  assert.deepEqual(chamada.args[0], { tipoPessoa: 'PJ', empresa: 'Clínica Nova', nicho: 'Estética', origem: 'Indicação', servicoPotencial: 'Gestão de redes sociais' });
   assert.ok(Object.values(chamada.args[0]).every((valor) => typeof valor === 'string'), 'tudo texto');
   assert.deepEqual(Object.keys(s.api).filter((nome) => /Catalog/.test(nome)), ['listCatalog'], 'a API falsa nem tem como escrever em catálogo');
   assert.equal(s.api.store.items.length, 1);
@@ -174,11 +175,12 @@ test('[CATFLD-3] CRIAR escolhendo nas listas: o corpo enviado ao CRM leva os NOM
 
 test('[CATFLD-4] "Nenhum" deixa o campo em branco: escolher e voltar a "Nenhum" não envia o campo; nada é preenchido por conta própria', async () => {
   const s = await abrirNovo({ permissions: ADMIN, items: [] });
-  s.browser.type(s.browser.by.label(s.root, 'Empresa (obrigatório)'), 'Clínica Vazia');
+  s.browser.click(s.browser.by.label(s.root, 'Pessoa Jurídica'));
+  s.browser.type(s.browser.by.label(s.root, 'Nome da empresa (obrigatório)'), 'Clínica Vazia');
   await escolher(s, 'nicho', 'Estética');
   await escolher(s, 'nicho', 'Nenhum (deixar em branco)');
-  await clicar(s, botao(s, 'Criar registro'));
-  assert.deepEqual(s.api.callsOf('createCrm')[0].args[0], { empresa: 'Clínica Vazia' });
+  await clicar(s, botao(s, 'Cadastrar cliente'));
+  assert.deepEqual(s.api.callsOf('createCrm')[0].args[0], { tipoPessoa: 'PJ', empresa: 'Clínica Vazia' });
 });
 
 // ---------------------------------------------------------------------------------------------------------------------------------------------
@@ -268,7 +270,8 @@ test('[CATFLD-9] ITEM DESATIVADO: quem administra vê "Desativado" (a API autori
 
 test('[CATFLD-10] "INFORMAR OUTRO VALOR" (só ADMIN): abre o texto livre com o foco, o valor é enviado como TEXTO e NÃO é criado no catálogo; trocar para um item e voltar não perde o que foi digitado', async () => {
   const s = await abrirNovo({ permissions: ADMIN, items: [] });
-  s.browser.type(s.browser.by.label(s.root, 'Empresa (obrigatório)'), 'Clínica Livre');
+  s.browser.click(s.browser.by.label(s.root, 'Pessoa Jurídica'));
+  s.browser.type(s.browser.by.label(s.root, 'Nome da empresa (obrigatório)'), 'Clínica Livre');
   assert.equal(texto(s, 'nicho').hidden, true);
   await escolher(s, 'nicho', 'Informar outro valor');
   assert.equal(texto(s, 'nicho').hidden, false, 'o texto livre aparece');
@@ -280,8 +283,8 @@ test('[CATFLD-10] "INFORMAR OUTRO VALOR" (só ADMIN): abre o texto livre com o f
   assert.equal(texto(s, 'nicho').hidden, true);
   await escolher(s, 'nicho', 'Informar outro valor');
   assert.equal(texto(s, 'nicho').value, 'Nicho de transição', 'o que foi digitado continua ali');
-  await clicar(s, botao(s, 'Criar registro'));
-  assert.deepEqual(s.api.callsOf('createCrm')[0].args[0], { empresa: 'Clínica Livre', nicho: 'Nicho de transição' });
+  await clicar(s, botao(s, 'Cadastrar cliente'));
+  assert.deepEqual(s.api.callsOf('createCrm')[0].args[0], { tipoPessoa: 'PJ', empresa: 'Clínica Livre', nicho: 'Nicho de transição' });
   assert.equal(s.api.store.catalogs.nichos.length, 4, 'nenhum item foi criado no catálogo');
 });
 
@@ -312,10 +315,11 @@ test('[CATFLD-12] CATÁLOGO VAZIO: o campo é de texto livre, com um aviso infor
   const links = s.browser.findAll(s.root, (el) => el.localName === 'a' && /^Abrir o cadastro de/.test(el.textContent));
   assert.deepEqual(links.map((a) => [a.textContent, a.getAttribute('href')]), [['Abrir o cadastro de Nichos e Cores', '#/crm/configuracoes/nichos'], ['Abrir o cadastro de Origens dos Leads', '#/crm/configuracoes/origens'], ['Abrir o cadastro de Serviços', '#/crm/configuracoes/servicos']]);
   assert.ok(links.every((a) => a.getAttribute('target') === '_blank' && /noopener/.test(a.getAttribute('rel'))), 'abre noutra aba: o rascunho do formulário fica onde está');
-  s.browser.type(s.browser.by.label(s.root, 'Empresa (obrigatório)'), 'Clínica Texto');
+  s.browser.click(s.browser.by.label(s.root, 'Pessoa Jurídica'));
+  s.browser.type(s.browser.by.label(s.root, 'Nome da empresa (obrigatório)'), 'Clínica Texto');
   s.browser.type(texto(s, 'nicho'), 'Fisioterapia');
-  await clicar(s, botao(s, 'Criar registro'));
-  assert.deepEqual(s.api.callsOf('createCrm')[0].args[0], { empresa: 'Clínica Texto', nicho: 'Fisioterapia' });
+  await clicar(s, botao(s, 'Cadastrar cliente'));
+  assert.deepEqual(s.api.callsOf('createCrm')[0].args[0], { tipoPessoa: 'PJ', empresa: 'Clínica Texto', nicho: 'Fisioterapia' });
 
   const escritor = await abrirNovo({ permissions: ESCRITOR, items: [], catalogs: vazio });
   assert.match(textoDoAviso(escritor, 'nicho'), /Cadastro sem itens ativos/);
@@ -343,9 +347,10 @@ test('[CATFLD-14] ATUALIZAR OPÇÕES num catálogo vazio: quando o ADMIN cadastr
   assert.equal(opcaoDe(seletor(s, 'nicho'), 'Nutrição esportiva — fora do catálogo').value, 'legacy', 'o digitado virou o valor atual');
   assert.deepEqual(opcoes(seletor(s, 'nicho')).slice(2, 4), ['Nutrição', 'Psicologia']);
   assert.equal(visao(s, 'origem'), 'text', 'os outros campos seguem como estavam');
-  s.browser.type(s.browser.by.label(s.root, 'Empresa (obrigatório)'), 'Clínica Atualizada');
-  await clicar(s, botao(s, 'Criar registro'));
-  assert.deepEqual(s.api.callsOf('createCrm')[0].args[0], { empresa: 'Clínica Atualizada', nicho: 'Nutrição esportiva' });
+  s.browser.click(s.browser.by.label(s.root, 'Pessoa Jurídica'));
+  s.browser.type(s.browser.by.label(s.root, 'Nome da empresa (obrigatório)'), 'Clínica Atualizada');
+  await clicar(s, botao(s, 'Cadastrar cliente'));
+  assert.deepEqual(s.api.callsOf('createCrm')[0].args[0], { tipoPessoa: 'PJ', empresa: 'Clínica Atualizada', nicho: 'Nutrição esportiva' });
 });
 
 test('[CATFLD-15] TRÊS CATÁLOGOS INDISPONÍVEIS (503, estrutura de dados não preparada): UM só aviso, no início do formulário, diz que os campos seguem disponíveis para preenchimento manual e oferece "Verificar novamente"; os três campos não repetem o aviso; o digitado fica e criar o registro funciona', async () => {
@@ -373,7 +378,8 @@ test('[CATFLD-15] TRÊS CATÁLOGOS INDISPONÍVEIS (503, estrutura de dados não 
   assert.equal(conta(t, 'listCatalog'), 3, 'uma leitura por catálogo e nada mais (sem polling)');
 
   // o digitado fica; "Verificar novamente" com o servidor ainda fora do ar: uma leitura por catálogo, um aviso só, o foco volta ao botão
-  t.browser.type(t.browser.by.label(t.root, 'Empresa (obrigatório)'), 'Clínica Sem Catálogo');
+  t.browser.click(t.browser.by.label(t.root, 'Pessoa Jurídica'));
+  t.browser.type(t.browser.by.label(t.root, 'Nome da empresa (obrigatório)'), 'Clínica Sem Catálogo');
   t.browser.type(texto(t, 'origem'), 'Indicação de colega');
   t.browser.type(t.browser.by.label(t.root, 'Valor da proposta'), '1500');
   const botaoDoAviso = t.browser.by.button(avisos[0], 'Verificar novamente');
@@ -387,8 +393,8 @@ test('[CATFLD-15] TRÊS CATÁLOGOS INDISPONÍVEIS (503, estrutura de dados não 
   assert.equal(t.browser.document.activeElement, t.browser.by.button(avisosCompartilhados(t)[0], 'Verificar novamente'), 'o foco volta ao botão (o novo, o antigo foi refeito)');
 
   // o CRM continua funcionando: salva o texto, e nenhum valor financeiro é inventado
-  await clicar(t, botao(t, 'Criar registro'));
-  assert.deepEqual(t.api.callsOf('createCrm')[0].args[0], { empresa: 'Clínica Sem Catálogo', origem: 'Indicação de colega', valorProposta: 1500 });
+  await clicar(t, botao(t, 'Cadastrar cliente'));
+  assert.deepEqual(t.api.callsOf('createCrm')[0].args[0], { tipoPessoa: 'PJ', empresa: 'Clínica Sem Catálogo', origem: 'Indicação de colega', valorProposta: 1500 });
   assert.equal(t.api.store.items[0].origem, 'Indicação de colega');
 });
 
@@ -406,9 +412,10 @@ test('[CATFLD-16] 503 DEPOIS RECUPERADO: "Tentar novamente" vira a lista; o text
   assert.equal(visao(s, 'origem'), 'select');
   assert.equal(seletor(s, 'origem').value, 'legacy');
   assert.equal(opcaoDe(seletor(s, 'origem'), 'Rede de contatos — fora do catálogo').value, 'legacy');
-  s.browser.type(s.browser.by.label(s.root, 'Empresa (obrigatório)'), 'Clínica Recuperada');
-  await clicar(s, botao(s, 'Criar registro'));
-  assert.deepEqual(s.api.callsOf('createCrm')[0].args[0], { empresa: 'Clínica Recuperada', origem: 'Rede de contatos' });
+  s.browser.click(s.browser.by.label(s.root, 'Pessoa Jurídica'));
+  s.browser.type(s.browser.by.label(s.root, 'Nome da empresa (obrigatório)'), 'Clínica Recuperada');
+  await clicar(s, botao(s, 'Cadastrar cliente'));
+  assert.deepEqual(s.api.callsOf('createCrm')[0].args[0], { tipoPessoa: 'PJ', empresa: 'Clínica Recuperada', origem: 'Rede de contatos' });
 });
 
 test('[CATFLD-17] FALHA TRANSITÓRIA DE REDE nos três catálogos: UM aviso de falha TEMPORÁRIA — sem dizer que a estrutura do banco está ausente — com "Verificar novamente"; a edição segue possível e o PATCH leva só o alterado', async () => {
@@ -456,7 +463,8 @@ test('[CATFLD-19] RESPOSTA TARDIA com a pessoa NO CAMPO: o texto livre não é t
   await s.view.show(NOVO);
   await retida.arrived;
   assert.equal(visao(s, 'nicho'), 'text', 'enquanto carrega, o campo é de texto: nada fica bloqueado');
-  s.browser.type(s.browser.by.label(s.root, 'Empresa (obrigatório)'), 'Clínica Tardia');
+  s.browser.click(s.browser.by.label(s.root, 'Pessoa Jurídica'));
+  s.browser.type(s.browser.by.label(s.root, 'Nome da empresa (obrigatório)'), 'Clínica Tardia');
   texto(s, 'nicho').focus();
   s.browser.type(texto(s, 'nicho'), 'Dermatologia estética');
   retida.release();
@@ -471,9 +479,9 @@ test('[CATFLD-19] RESPOSTA TARDIA com a pessoa NO CAMPO: o texto livre não é t
   assert.equal(seletor(s, 'nicho').value, 'legacy');
   assert.equal(opcaoDe(seletor(s, 'nicho'), 'Dermatologia estética — fora do catálogo').value, 'legacy');
   assert.match(textoDoAviso(s, 'nicho'), /^Fora do catálogo/);
-  assert.equal(s.browser.by.label(s.root, 'Empresa (obrigatório)').value, 'Clínica Tardia', 'o resto do rascunho está intacto');
-  await clicar(s, botao(s, 'Criar registro'));
-  assert.deepEqual(s.api.callsOf('createCrm')[0].args[0], { empresa: 'Clínica Tardia', nicho: 'Dermatologia estética' });
+  assert.equal(s.browser.by.label(s.root, 'Nome da empresa (obrigatório)').value, 'Clínica Tardia', 'o resto do rascunho está intacto');
+  await clicar(s, botao(s, 'Cadastrar cliente'));
+  assert.deepEqual(s.api.callsOf('createCrm')[0].args[0], { tipoPessoa: 'PJ', empresa: 'Clínica Tardia', nicho: 'Dermatologia estética' });
 });
 
 test('[CATFLD-20] RESPOSTA TARDIA com a pessoa fora do campo: a lista aparece sozinha, o que foi digitado vira o valor atual e um texto idêntico a um item oficial já fica escolhido — sem criar nem trocar nada', async () => {
@@ -487,9 +495,10 @@ test('[CATFLD-20] RESPOSTA TARDIA com a pessoa fora do campo: a lista aparece so
   assert.equal(visao(s, 'nicho'), 'select');
   assert.equal(seletor(s, 'nicho').children.find((o) => o.value === seletor(s, 'nicho').value).textContent, 'Estética', 'idêntico ao item oficial: já é ele, sem aviso');
   assert.equal(textoDoAviso(s, 'nicho'), '');
-  s.browser.type(s.browser.by.label(s.root, 'Empresa (obrigatório)'), 'Clínica X');
-  await clicar(s, botao(s, 'Criar registro'));
-  assert.deepEqual(s.api.callsOf('createCrm')[0].args[0], { empresa: 'Clínica X', nicho: 'Estética' });
+  s.browser.click(s.browser.by.label(s.root, 'Pessoa Jurídica'));
+  s.browser.type(s.browser.by.label(s.root, 'Nome da empresa (obrigatório)'), 'Clínica X');
+  await clicar(s, botao(s, 'Cadastrar cliente'));
+  assert.deepEqual(s.api.callsOf('createCrm')[0].args[0], { tipoPessoa: 'PJ', empresa: 'Clínica X', nicho: 'Estética' });
 });
 
 test('[CATFLD-21] AVISO DE MUDANÇA DOS CATÁLOGOS com a edição aberta: as opções novas chegam SEM tirar a escolha da pessoa, e só quando ela sai do campo; a escolha e o rascunho continuam', async () => {
@@ -520,9 +529,10 @@ test('[CATFLD-22] UM ITEM ESCOLHIDO QUE DEIXA DE SER OFERECIDO (desativado noutr
   await s.browser.flush(8);
   assert.equal(seletor(s, 'nicho').value, 'legacy');
   assert.equal(opcaoDe(seletor(s, 'nicho'), 'Estética — fora do catálogo').value, 'legacy');
-  s.browser.type(s.browser.by.label(s.root, 'Empresa (obrigatório)'), 'Clínica Y');
-  await clicar(s, botao(s, 'Criar registro'));
-  assert.deepEqual(s.api.callsOf('createCrm')[0].args[0], { empresa: 'Clínica Y', nicho: 'Estética' });
+  s.browser.click(s.browser.by.label(s.root, 'Pessoa Jurídica'));
+  s.browser.type(s.browser.by.label(s.root, 'Nome da empresa (obrigatório)'), 'Clínica Y');
+  await clicar(s, botao(s, 'Cadastrar cliente'));
+  assert.deepEqual(s.api.callsOf('createCrm')[0].args[0], { tipoPessoa: 'PJ', empresa: 'Clínica Y', nicho: 'Estética' });
 });
 
 test('[CATFLD-23] O CATÁLOGO FICA VAZIO com o formulário aberto: o valor de agora vai para o texto livre, intacto', async () => {
@@ -571,10 +581,11 @@ test('[CATFLD-25] NENHUM VALOR FINANCEIRO é tocado: escolher um serviço (que t
   assert.equal(s.api.store.items[0].valorTotal, 3000);
 
   const novo = await abrirNovo({ permissions: ADMIN, items: [] });
-  novo.browser.type(novo.browser.by.label(novo.root, 'Empresa (obrigatório)'), 'Sem Valor');
+  novo.browser.click(novo.browser.by.label(novo.root, 'Pessoa Jurídica'));
+  novo.browser.type(novo.browser.by.label(novo.root, 'Nome da empresa (obrigatório)'), 'Sem Valor');
   await escolher(novo, 'servicoPotencial', 'Gestão de redes sociais');
-  await clicar(novo, botao(novo, 'Criar registro'));
-  assert.deepEqual(Object.keys(novo.api.callsOf('createCrm')[0].args[0]).sort(), ['empresa', 'servicoPotencial']);
+  await clicar(novo, botao(novo, 'Cadastrar cliente'));
+  assert.deepEqual(Object.keys(novo.api.callsOf('createCrm')[0].args[0]).sort(), ['empresa', 'servicoPotencial', 'tipoPessoa']);
 });
 
 test('[CATFLD-26] SÓ UM SERVIÇO por registro: o campo de serviço é uma escolha única (nada de seleção múltipla) e grava um único nome', async () => {
@@ -590,7 +601,7 @@ test('[CATFLD-27] PERMISSÕES: quem só lê o CRM (COMMERCIAL_CLOSER) não tem f
   assert.equal(conta(closer, 'listCatalog'), 0, 'nenhuma consulta: formulário nenhum');
   await closer.view.show(NOVO);
   await closer.browser.flush(8);
-  assert.match(textoDaTela(closer), /Sua conta não pode criar registros no CRM/);
+  assert.match(textoDaTela(closer), /Sua conta não pode cadastrar clientes no CRM/);
   assert.equal(conta(closer, 'listCatalog'), 0);
 
   const semLeitura = await abrirNovo({ permissions: { canReadCrm: false, canWriteCrm: true } });
@@ -608,10 +619,11 @@ test('[CATFLD-28] SEM INTEGRAÇÃO (API sem listCatalog): o formulário é o de 
     assert.equal(texto(s, chave).getAttribute('list'), `crm-suggest-${chave}`);
   }
   assert.doesNotMatch(textoDaTela(s), /opções oficiais|cadastro/i);
-  s.browser.type(s.browser.by.label(s.root, 'Empresa (obrigatório)'), 'Clínica Clássica');
+  s.browser.click(s.browser.by.label(s.root, 'Pessoa Jurídica'));
+  s.browser.type(s.browser.by.label(s.root, 'Nome da empresa (obrigatório)'), 'Clínica Clássica');
   s.browser.type(texto(s, 'nicho'), 'Qualquer texto');
-  await clicar(s, botao(s, 'Criar registro'));
-  assert.deepEqual(s.api.callsOf('createCrm')[0].args[0], { empresa: 'Clínica Clássica', nicho: 'Qualquer texto' });
+  await clicar(s, botao(s, 'Cadastrar cliente'));
+  assert.deepEqual(s.api.callsOf('createCrm')[0].args[0], { tipoPessoa: 'PJ', empresa: 'Clínica Clássica', nicho: 'Qualquer texto' });
 });
 
 test('[CATFLD-29] CONSULTAS: uma leitura por catálogo ao abrir o formulário; reabrir com o cache valendo não lê de novo; a lista do CRM (sem formulário) nunca consulta catálogos', async () => {
@@ -805,7 +817,8 @@ test('[CATFLD-39] RECUPERAÇÃO após "Verificar novamente": uma leitura por cat
   await s.browser.flush(8);
   s.browser.type(texto(s, 'nicho'), 'Fisioterapia');
   s.browser.type(texto(s, 'servicoPotencial'), 'Consultoria geral');
-  s.browser.type(s.browser.by.label(s.root, 'Empresa (obrigatório)'), 'Clínica Recuperada');
+  s.browser.click(s.browser.by.label(s.root, 'Pessoa Jurídica'));
+  s.browser.type(s.browser.by.label(s.root, 'Nome da empresa (obrigatório)'), 'Clínica Recuperada');
   s.api.store.catalogFailures = {};
   const verificar = s.browser.by.button(avisosCompartilhados(s)[0], 'Verificar novamente');
   verificar.focus();
@@ -821,8 +834,8 @@ test('[CATFLD-39] RECUPERAÇÃO após "Verificar novamente": uma leitura por cat
   assert.equal(s.browser.document.activeElement, seletor(s, 'nicho'), 'o foco vai para o primeiro campo do catálogo');
   assert.equal(s.browser.by.cls(s.root, 'toast').length, 0);
   assert.doesNotMatch(textoDaTela(s), /Registro criado|sucesso/i);
-  await clicar(s, botao(s, 'Criar registro'));
-  assert.deepEqual(s.api.callsOf('createCrm')[0].args[0], { empresa: 'Clínica Recuperada', nicho: 'Fisioterapia', servicoPotencial: 'Consultoria geral' });
+  await clicar(s, botao(s, 'Cadastrar cliente'));
+  assert.deepEqual(s.api.callsOf('createCrm')[0].args[0], { tipoPessoa: 'PJ', empresa: 'Clínica Recuperada', nicho: 'Fisioterapia', servicoPotencial: 'Consultoria geral' });
 });
 
 test('[CATFLD-40] RECUPERAÇÃO PARCIAL: se só alguns catálogos voltam, o aviso compartilhado é trocado pelo aviso específico do que ainda falha (com o seu "Tentar novamente"), e os que voltaram viram lista', async () => {
@@ -915,9 +928,10 @@ test('[CATFLD-44] NOMENCLATURA: o rótulo visível é "Origem do Lead" (formulá
   assert.equal(texto(s, 'origem').getAttribute('name'), 'origem', 'o nome técnico do campo');
   assert.equal(texto(s, 'origem').getAttribute('aria-label'), 'Origem do Lead (outro valor)');
   await escolher(s, 'origem', 'Indicação');
-  s.browser.type(s.browser.by.label(s.root, 'Empresa (obrigatório)'), 'Clínica Nome');
-  await clicar(s, botao(s, 'Criar registro'));
-  assert.deepEqual(s.api.callsOf('createCrm')[0].args[0], { empresa: 'Clínica Nome', origem: 'Indicação' }, 'a API continua recebendo `origem`');
+  s.browser.click(s.browser.by.label(s.root, 'Pessoa Jurídica'));
+  s.browser.type(s.browser.by.label(s.root, 'Nome da empresa (obrigatório)'), 'Clínica Nome');
+  await clicar(s, botao(s, 'Cadastrar cliente'));
+  assert.deepEqual(s.api.callsOf('createCrm')[0].args[0], { tipoPessoa: 'PJ', empresa: 'Clínica Nome', origem: 'Indicação' }, 'a API continua recebendo `origem`');
 
   // a edição e a ficha de leitura
   const e = await abrirEdicao({ items: [await registro({ origem: 'Indicação' })] });
@@ -930,10 +944,10 @@ test('[CATFLD-44] NOMENCLATURA: o rótulo visível é "Origem do Lead" (formulá
   const { FIELD_GROUPS, WRITABLE_KEYS, EDITABLE_FIELDS } = await import('../../dashboard/crm-model.mjs');
   const campos = FIELD_GROUPS.flatMap((grupo) => grupo.fields);
   assert.equal(campos.find((campo) => campo.key === 'origem').label, 'Origem do Lead');
-  assert.equal(WRITABLE_KEYS.length, 31, 'os 31 campos do CRM');
+  assert.equal(WRITABLE_KEYS.length, 35, 'os 31 campos legados do CRM + os 4 de identificação PF/PJ');
   assert.deepEqual([...WRITABLE_KEYS].sort(), [...CRM_WRITABLE_FIELDS].sort(), 'as mesmas chaves do servidor');
-  assert.equal(EDITABLE_FIELDS.length, 31);
-  assert.equal(campos.length, 33, 'os 31 graváveis e os 2 só de exibição (status e data de entrada)');
+  assert.equal(EDITABLE_FIELDS.length, 35);
+  assert.equal(campos.length, 37, 'os 35 graváveis e os 2 só de exibição (status e data de entrada)');
   assert.deepEqual(campos.filter((campo) => /Origem/.test(campo.label)).map((campo) => campo.key), ['origem']);
 });
 
@@ -954,5 +968,6 @@ test('[CATFLD-45] LAYOUT: o aviso único é um bloco no topo do formulário (aci
   const s = await abrirNovo({ permissions: ADMIN, items: [] });
   assert.equal(avisosCompartilhados(s).length, 0);
   assert.equal(formulario(s).children.filter((el) => !el.hidden)[0].localName, 'fieldset', 'sem falha, o formulário começa pelo primeiro bloco');
-  assert.equal(formulario(s).children.filter((el) => el.localName === 'fieldset').length, 6, 'as seis divisões atuais do formulário continuam');
+  assert.equal(formulario(s).children.filter((el) => el.localName === 'fieldset').length, 3, 'o formulário de novo cliente mostra três blocos (quem é, como falar, classificação)');
+  assert.equal(formulario(s).children.filter((el) => el.localName === 'details').length, 1, 'e uma seção expansível com o resto');
 });

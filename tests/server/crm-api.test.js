@@ -51,7 +51,7 @@ const rota = (id, sufixo = '') => `/api/crm/${encodeURIComponent(id)}${sufixo}`;
 // As 7 rotas da API, cada uma com um corpo válido quando tem corpo.
 const rotasCrm = (id) => [
   { method: 'GET', url: '/api/crm' },
-  { method: 'POST', url: '/api/crm', body: { empresa: 'Rota Teste' } },
+  { method: 'POST', url: '/api/crm', body: { tipoPessoa: 'PJ', empresa: 'Rota Teste' } },
   { method: 'GET', url: rota(id) },
   { method: 'PATCH', url: rota(id), body: { cidade: 'Cidade Nova' } },
   { method: 'GET', url: rota(id, '/history') },
@@ -60,9 +60,9 @@ const rotasCrm = (id) => [
 ];
 
 // Registros fictícios, com identidades (site, telefone, nome+cidade) todas diferentes entre si.
-const ALFA = Object.freeze({ empresa: 'Clínica Alfa Teste', site: 'alfa.example.test', telefone: '24 90000-0001', cidade: 'Petrópolis', estado: 'RJ', nicho: 'Psicologia', email: 'contato@alfa.example.test' });
-const BETA = Object.freeze({ empresa: 'Clínica Beta Teste', site: 'beta.example.test', telefone: '21 90000-0002', cidade: 'Niterói', estado: 'RJ', nicho: 'Odontologia' });
-const GAMA = Object.freeze({ empresa: 'Clínica Gama Teste', site: 'gama.example.test', telefone: '11 90000-0003', cidade: 'São Paulo', estado: 'SP', nicho: 'Nutrição' });
+const ALFA = Object.freeze({ tipoPessoa: 'PJ', empresa: 'Clínica Alfa Teste', site: 'alfa.example.test', telefone: '24 90000-0001', cidade: 'Petrópolis', estado: 'RJ', nicho: 'Psicologia', email: 'contato@alfa.example.test' });
+const BETA = Object.freeze({ tipoPessoa: 'PJ', empresa: 'Clínica Beta Teste', site: 'beta.example.test', telefone: '21 90000-0002', cidade: 'Niterói', estado: 'RJ', nicho: 'Odontologia' });
+const GAMA = Object.freeze({ tipoPessoa: 'PJ', empresa: 'Clínica Gama Teste', site: 'gama.example.test', telefone: '11 90000-0003', cidade: 'São Paulo', estado: 'SP', nicho: 'Nutrição' });
 
 const CAMPOS_PUBLICOS = ['id', ...crm.CRM_WRITABLE_FIELDS, 'status', 'dataDeEntrada', 'historico'].sort();
 const ERRO_INTERNO = 'Erro interno. Tente novamente em instantes.';
@@ -398,8 +398,8 @@ test('[CRM-API-15] duplicidade: a mesma identidade (site ou telefone) -> 409 DUP
   const criar = (corpo) => chamar(env, BRENO, { method: 'POST', url: '/api/crm', body: corpo });
 
   for (const corpo of [
-    { empresa: 'Outro Nome', site: ALFA.site },
-    { empresa: 'Outro Nome', telefone: ALFA.telefone },
+    { tipoPessoa: 'PJ', empresa: 'Outro Nome', site: ALFA.site },
+    { tipoPessoa: 'PJ', empresa: 'Outro Nome', telefone: ALFA.telefone },
   ]) {
     const duplicado = await criar(corpo);
     assert.equal(duplicado.status, 409, JSON.stringify(corpo));
@@ -409,7 +409,7 @@ test('[CRM-API-15] duplicidade: a mesma identidade (site ou telefone) -> 409 DUP
   }
   assert.equal(registros(env).length, 1, 'nenhuma duplicata foi gravada');
 
-  const possivel = await criar({ empresa: ALFA.empresa, cidade: ALFA.cidade }); // só nome + cidade
+  const possivel = await criar({ tipoPessoa: 'PJ', empresa: ALFA.empresa, cidade: ALFA.cidade }); // só nome + cidade
   assert.equal(possivel.status, 201, 'um match só por nome+cidade não bloqueia (prefere-se falso negativo)');
   assert.equal(possivel.json().duplicidade.status, 'POSSIVEL_DUPLICADO');
   assert.equal(possivel.json().duplicidade.matchedRecordId, alfa.id);
@@ -424,7 +424,7 @@ test('[CRM-API-16] identidade BLOQUEADA (DO_NOT_CONTACT): criar com ela -> 409 D
   const gama = await semear(env, GAMA);
   const antes = bytes(env);
 
-  for (const corpo of [{ empresa: 'Nome Diferente', site: ALFA.site }, { empresa: 'Nome Diferente', telefone: ALFA.telefone }]) {
+  for (const corpo of [{ tipoPessoa: 'PJ', empresa: 'Nome Diferente', site: ALFA.site }, { tipoPessoa: 'PJ', empresa: 'Nome Diferente', telefone: ALFA.telefone }]) {
     const criar = await chamar(env, BRENO, { method: 'POST', url: '/api/crm', body: corpo });
     assert.equal(criar.status, 409, JSON.stringify(corpo));
     assert.deepEqual(criar.json(), { error: { code: 'DNC_BLOCKED', message: 'Esta identidade está bloqueada como "não contatar".' } });
@@ -453,8 +453,10 @@ test('[CRM-API-17] payload inválido no POST/PATCH -> 400 com mensagem FIXA, sem
   const VALOR = 'Valor inválido em um dos campos.';
 
   const criacao = [
-    [{}, 'Informe a empresa.'],
-    [{ empresa: '   ' }, 'Informe a empresa.'],
+    [{}, 'Informe se o cliente é Pessoa Física ou Pessoa Jurídica.'], // o cadastro humano exige o tipo (Fase D2)
+    [{ empresa: '   ' }, 'Informe se o cliente é Pessoa Física ou Pessoa Jurídica.'],
+    [{ tipoPessoa: 'PJ' }, 'Informe a empresa.'],
+    [{ tipoPessoa: 'PJ', empresa: '   ' }, 'Informe a empresa.'],
     [{ empresa: 'X', campoInventado: 1 }, CAMPOS],
     [{ empresa: 'X', id: 'crm:forjado' }, CAMPOS],
     [{ empresa: 'X', historico: [] }, CAMPOS],
@@ -624,7 +626,7 @@ test('[CRM-API-23] userId, authUserId, role, permissions, reviewedBy e actor env
 
   for (const [chave, valor] of Object.entries(FORJADOS)) {
     const requisicoes = [
-      { method: 'POST', url: '/api/crm', body: { empresa: 'Forjada', [chave]: valor } },
+      { method: 'POST', url: '/api/crm', body: { tipoPessoa: 'PJ', empresa: 'Forjada', [chave]: valor } },
       { method: 'PATCH', url: rota(alfa.id), body: { cidade: 'Forjada', [chave]: valor } },
       { method: 'POST', url: rota(alfa.id, '/status'), body: { to: 'CONTACTED', [chave]: valor } },
       { method: 'POST', url: rota(alfa.id, '/dnc'), body: { [chave]: valor } },
@@ -638,7 +640,7 @@ test('[CRM-API-23] userId, authUserId, role, permissions, reviewedBy e actor env
   assert.equal(bytes(env), antes, 'nenhuma requisição forjada gravou algo');
 
   // As mesmas escritas, sem os campos forjados: a auditoria é a do token, nunca a do corpo.
-  const criada = (await chamar(env, BRENO, { method: 'POST', url: '/api/crm', body: { ...BETA } })).json().item;
+  const criada = (await chamar(env, BRENO, { method: 'POST', url: '/api/crm', body: { tipoPessoa: 'PJ', ...BETA } })).json().item;
   await chamar(env, BRENO, { method: 'POST', url: rota(criada.id, '/status'), body: { to: 'CONTACTED', reason: 'ok' } });
   await chamar(env, BRENO, { method: 'POST', url: rota(criada.id, '/dnc'), body: {} });
   const historico = registro(env, criada.id).historico;
@@ -658,7 +660,7 @@ test('[CRM-API-24] ESCALADA DE PRIVILÉGIO: um COMMERCIAL_CLOSER que envia role 
 
   // No POST/PATCH, o corpo forjado chega ao Service como CAMPOS, e o Service autoriza ANTES de validar: 403.
   for (const requisicao of [
-    { method: 'POST', url: '/api/crm', body: { empresa: 'Escalada', role: 'ADMIN', permissions: ['WRITE:CRM'] } },
+    { method: 'POST', url: '/api/crm', body: { tipoPessoa: 'PJ', empresa: 'Escalada', role: 'ADMIN', permissions: ['WRITE:CRM'] } },
     { method: 'PATCH', url: rota(alfa.id), body: { cidade: 'Escalada', role: 'ADMIN', permissions: ['WRITE:CRM'] } },
     { method: 'POST', url: rota(alfa.id, '/status'), body: { to: 'WON' } },
     { method: 'POST', url: rota(alfa.id, '/dnc'), body: {} },
@@ -871,7 +873,7 @@ test('[CRM-API-28] o access token nunca aparece em nenhuma resposta nem cabeçal
     await chamar(env, BRENO, { method: 'PATCH', url: rota(alfa.id), body: { cidade: 'X' } }),
     await chamar(env, BRENO, { method: 'POST', url: rota(alfa.id, '/status'), body: { to: 'NAO_EXISTE' } }),
     await chamar(env, BRENO, { url: rota('crm:nao-existe') }),
-    await chamar(env, RAFAEL, { method: 'POST', url: '/api/crm', body: { empresa: 'X' } }),
+    await chamar(env, RAFAEL, { method: 'POST', url: '/api/crm', body: { tipoPessoa: 'PJ', empresa: 'X' } }),
     await chamar(env, null, { url: '/api/crm', headers: { Authorization: `Bearer ${tokenForjado}` } }),
     await chamar(env, null, { url: '/api/crm' }),
   ];
@@ -961,9 +963,9 @@ test('[CRM-API-31] uma resposta de ERRO nunca traz mais que { error: { code, mes
   const alfa = await semear(env, ALFA);
   const respostas = [
     await chamar(env, null, { url: '/api/crm' }),
-    await chamar(env, RAFAEL, { method: 'POST', url: '/api/crm', body: { empresa: 'X' } }),
+    await chamar(env, RAFAEL, { method: 'POST', url: '/api/crm', body: { tipoPessoa: 'PJ', empresa: 'X' } }),
     await chamar(env, BRENO, { url: rota('crm:nao-existe') }),
-    await chamar(env, BRENO, { method: 'POST', url: '/api/crm', body: { empresa: 'X', site: ALFA.site } }),
+    await chamar(env, BRENO, { method: 'POST', url: '/api/crm', body: { tipoPessoa: 'PJ', empresa: 'X', site: ALFA.site } }),
     await chamar(env, BRENO, { method: 'PATCH', url: rota(alfa.id), body: { valorTotal: 'x' } }),
     await chamar(env, BRENO, { method: 'POST', url: rota(alfa.id, '/status'), body: { to: 'XYZ' } }),
     await chamar(env, BRENO, { method: 'DELETE', url: rota(alfa.id) }),
@@ -1012,7 +1014,7 @@ test('[CRM-API-32] toda resposta do CRM (sucesso e erro) sai com application/jso
 test('[CRM-API-33] o log de operação registra só método, rota com :id, status e userId — nunca o id do registro, o corpo, o nome de uma empresa nem um campo', async (t) => {
   const env = montarAmbiente(t, { usuarios: [BRENO], crm: true });
   const alfa = await semear(env, ALFA);
-  await chamar(env, BRENO, { method: 'POST', url: '/api/crm', body: { empresa: 'Empresa Que Nao Pode Ir Ao Log', email: 'nao-logar@example.test' } });
+  await chamar(env, BRENO, { method: 'POST', url: '/api/crm', body: { tipoPessoa: 'PJ', empresa: 'Empresa Que Nao Pode Ir Ao Log', email: 'nao-logar@example.test' } });
   await chamar(env, BRENO, { url: rota(alfa.id) });
   await chamar(env, BRENO, { method: 'PATCH', url: rota(alfa.id), body: { observacoes: 'texto-sigiloso-de-teste' } });
   await chamar(env, BRENO, { method: 'POST', url: rota(alfa.id, '/status'), body: { to: 'CONTACTED', reason: 'motivo-sigiloso-de-teste' } });
@@ -1030,7 +1032,7 @@ test('[CRM-API-33] o log de operação registra só método, rota com :id, statu
 test('[CRM-API-34] a API NÃO autoriza: um COMMERCIAL_CLOSER que escreve CHEGA ao Service (que é quem recusa), sempre com o AuthorizationContext EMITIDO a partir do token — e com os argumentos exatos', async (t) => {
   const chamadas = [];
   const env = montarAmbiente(t, { usuarios: [RAFAEL], crmService: criarServicoDuplo(chamadas) });
-  await chamar(env, RAFAEL, { method: 'POST', url: '/api/crm', body: { empresa: 'Delegada', cidade: 'Lugar', status: 'RESEARCH', reason: 'porque sim' } });
+  await chamar(env, RAFAEL, { method: 'POST', url: '/api/crm', body: { tipoPessoa: 'PJ', empresa: 'Delegada', cidade: 'Lugar', status: 'RESEARCH', reason: 'porque sim' } });
   await chamar(env, RAFAEL, { method: 'PATCH', url: rota('crm:1'), body: { cidade: 'Outro Lugar' } });
   await chamar(env, RAFAEL, { method: 'POST', url: rota('crm:1', '/status'), body: { to: 'CONTACTED', reason: 'r1' } });
   await chamar(env, RAFAEL, { method: 'POST', url: rota('crm:1', '/status'), body: { to: 'WON' } });
@@ -1048,8 +1050,8 @@ test('[CRM-API-34] a API NÃO autoriza: um COMMERCIAL_CLOSER que escreve CHEGA a
     assert.equal(contexto.role, RAFAEL.role);
   }
   const [criar, atualizar, mover, moverSemMotivo, dnc, dncSemMotivo, listar, obter, historico] = chamadas.map((chamada) => chamada.args);
-  assert.deepEqual({ ...criar[1] }, { empresa: 'Delegada', cidade: 'Lugar' }, 'os CAMPOS não incluem as opções status/reason');
-  assert.deepEqual(criar[2], { status: 'RESEARCH', reason: 'porque sim' });
+  assert.deepEqual({ ...criar[1] }, { tipoPessoa: 'PJ', empresa: 'Delegada', cidade: 'Lugar' }, 'os CAMPOS não incluem as opções status/reason');
+  assert.deepEqual(criar[2], { status: 'RESEARCH', reason: 'porque sim', exigirTipoPessoa: true }, 'a API liga a opção INTERNA que exige o tipo de pessoa (nunca vem do corpo)');
   assert.deepEqual(atualizar.slice(1), ['crm:1', { cidade: 'Outro Lugar' }]);
   assert.deepEqual(mover.slice(1), ['crm:1', 'CONTACTED', { reason: 'r1' }]);
   assert.deepEqual(moverSemMotivo.slice(1), ['crm:1', 'WON', {}]);
@@ -1178,7 +1180,7 @@ test('[CRM-API-38] persistência: o que uma instância do app grava, OUTRA inst�
   assert.equal(lido.status, 'DO_NOT_CONTACT');
   assert.equal(lido.historico.length, 2);
   assert.equal(lido.historico[1].motivo, 'bloqueio persistente');
-  const tentativa = await chamar(segundo, BRENO, { method: 'POST', url: '/api/crm', body: { empresa: 'Nova', site: ALFA.site } });
+  const tentativa = await chamar(segundo, BRENO, { method: 'POST', url: '/api/crm', body: { tipoPessoa: 'PJ', empresa: 'Nova', site: ALFA.site } });
   assert.equal(tentativa.status, 409, 'a segunda instância também enxerga o bloqueio DNC gravado pela primeira');
   assert.equal(tentativa.json().error.code, 'DNC_BLOCKED');
 });

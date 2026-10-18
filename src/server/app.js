@@ -316,6 +316,18 @@ const KNOWN_MESSAGES = Object.freeze([
   [/^CRM: transição não permitida/, 'INVALID_TRANSITION'],
   [/^CRM: id deve ser um texto não vazio/, 'INVALID_REQUEST', 'Identificador inválido.'],
   [/^CRM: (?:createRecord|updateRecord) (?:não aceita campos gerenciados|tem campos desconhecidos)/, 'INVALID_REQUEST', 'Campos não permitidos na requisição.'],
+  // Cliente PF/PJ (Fase D2) — mensagens específicas, ANTES da genérica de campo inválido logo abaixo (a de tipoPessoa também casaria com ela).
+  [/^CRM: createRecord exige "tipoPessoa"/, 'INVALID_REQUEST', 'Informe se o cliente é Pessoa Física ou Pessoa Jurídica.'],
+  [/^CRM: (?:createRecord|updateRecord) — campo "tipoPessoa" deve ser/, 'INVALID_REQUEST', 'Tipo de pessoa inválido: use Pessoa Física ou Pessoa Jurídica.'],
+  [/^CRM: (?:createRecord|updateRecord) exige "nomeCompleto"/, 'INVALID_REQUEST', 'Informe o nome completo da pessoa.'],
+  [/^CRM: (?:createRecord|updateRecord) — CPF inválido/, 'INVALID_REQUEST', 'CPF inválido. Confira os 11 números.'],
+  [/^CRM: (?:createRecord|updateRecord) — CNPJ inválido/, 'INVALID_REQUEST', 'CNPJ inválido. Confira os 14 caracteres.'],
+  [/^CRM: (?:createRecord|updateRecord) — CPF só se aplica/, 'INVALID_REQUEST', 'O CPF só pode ser informado para Pessoa Física.'],
+  [/^CRM: (?:createRecord|updateRecord) — CNPJ só se aplica/, 'INVALID_REQUEST', 'O CNPJ só pode ser informado para Pessoa Jurídica.'],
+  [/^CRM: (?:createRecord|updateRecord) — nomeCompleto só se aplica/, 'INVALID_REQUEST', 'O nome completo só vale para Pessoa Física; para uma empresa use o campo Empresa.'],
+  [/^CRM: (?:createRecord|updateRecord) — defina o tipo de pessoa/, 'INVALID_REQUEST', 'Defina se o cliente é Pessoa Física ou Pessoa Jurídica antes de informar nome completo, CPF ou CNPJ.'],
+  [/^CRM: updateRecord — o tipo de pessoa, depois de definido/, 'INVALID_REQUEST', 'O tipo de pessoa pode ser trocado entre PF e PJ, mas não removido.'],
+  [/^CRM: exigirTipoPessoa deve ser/, 'INVALID_REQUEST', 'Campos não permitidos na requisição.'],
   [/^CRM: (?:createRecord|updateRecord) — campo "/, 'INVALID_REQUEST', 'Valor inválido em um dos campos.'],
   [/^CRM: createRecord exige "empresa"/, 'INVALID_REQUEST', 'Informe a empresa.'],
   [/^CRM: updateRecord não pode deixar "empresa" vazia/, 'INVALID_REQUEST', 'A empresa não pode ficar vazia.'],
@@ -1013,6 +1025,8 @@ function createApp(dependencies) {
     if (route.name === 'crm-collection') {
       if (req.method === 'GET') return respond(200, { items: await crmService.listRecords(context) });
       const { fields, options } = splitCreateBody(await readJsonBody(req));
+      // Cadastro de CLIENTE feito por uma pessoa: o tipo (PF/PJ) é obrigatório. A opção é montada AQUI — um `exigirTipoPessoa` no corpo cairia em `fields` e seria recusado como campo desconhecido.
+      options.exigirTipoPessoa = true;
       const created = await crmService.createRecord(context, fields, options);
       return respond(201, { item: created.record, duplicidade: created.duplicidade });
     }

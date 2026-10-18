@@ -40,7 +40,7 @@ const STAGE_FIELD_KEYS = Object.freeze(['nome', 'ativo', 'config']);
 const CREATE_CARD_KEYS = Object.freeze(['crmRecordId', 'reason']);
 const MOVE_CARD_KEYS = Object.freeze(['stageId', 'reason']);
 // Só os campos comerciais pedidos pela seção 9 da Etapa "Funis 2" — nunca o registro inteiro do CRM.
-const CARD_CRM_FIELDS = Object.freeze(['empresa', 'contato', 'status', 'responsavel', 'ultimaInteracao', 'proximaAcao', 'valorProposta', 'valorTotal']);
+const CARD_CRM_FIELDS = Object.freeze(['empresa', 'tipoPessoa', 'nomeCompleto', 'contato', 'status', 'responsavel', 'ultimaInteracao', 'proximaAcao', 'valorProposta', 'valorTotal']);
 
 function pickKnown(input, allowedKeys, label) {
   if (!isPlainObject(input)) throw new Error(`Funil: ${label} deve ser um objeto simples`);

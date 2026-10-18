@@ -8,7 +8,8 @@ const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const path = require('node:path');
 
-const { CRM_WRITABLE_FIELDS, CRM_STATUS } = require('../../src/crm/constants');
+// A migration INICIAL só conhece os 31 campos legados; os 4 de identificação PF/PJ vêm da migration da Fase D2 (tests/db/crmClientPersonTypeMigration.test.js).
+const { CRM_LEGACY_WRITABLE_FIELDS: CRM_WRITABLE_FIELDS, CRM_STATUS } = require('../../src/crm/constants');
 
 const REPO_ROOT = path.join(__dirname, '..', '..');
 const MIGRATIONS_DIR = path.join(REPO_ROOT, 'supabase', 'migrations');

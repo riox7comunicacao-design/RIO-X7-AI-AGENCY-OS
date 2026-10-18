@@ -313,13 +313,17 @@ function createCrmService(dependencies) {
   async function createRecord(context, input, options) {
     const operator = authorize(context, 'createRecord');
     const fields = requireFields(input, 'input');
-    const known = readOptions(options, ['status', 'reason']);
+    const known = readOptions(options, ['status', 'reason', 'exigirTipoPessoa']);
+    // Opção INTERNA de quem compõe (a API de cadastro de clientes a liga): o tipo PF/PJ é obrigatório num cadastro novo. Nunca vem do corpo de uma requisição (a API só repassa status e reason).
+    const exigirTipoPessoa = hasOwn(known, 'exigirTipoPessoa') ? known.exigirTipoPessoa : false;
+    if (typeof exigirTipoPessoa !== 'boolean') throw new Error('CRM: exigirTipoPessoa deve ser verdadeiro ou falso');
     const status = hasOwn(known, 'status') ? known.status : undefined;
     if (status !== undefined && status !== null && !isText(status)) {
       throw new Error('CRM: status deve ser um texto');
     }
     const result = await domainCreateRecord(repository, fields, {
       ...(status === undefined || status === null ? {} : { status }),
+      ...(exigirTipoPessoa ? { exigirTipoPessoa: true } : {}),
       actor: ACTOR.HUMAN,
       reviewedBy: operator,
       motivo: readReason(known),

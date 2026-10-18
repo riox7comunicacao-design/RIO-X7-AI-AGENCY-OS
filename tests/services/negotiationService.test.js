@@ -109,7 +109,7 @@ test('[NEG-SVC-4] CRIAR: o responsável e quem alterou vêm do CONTEXTO (o corpo
   const m = await montar();
   const n = await m.service.create(closer(), corpo(m));
   assert.deepEqual([n.responsavelUserId, n.responsavelNome, n.criadoPorNome, n.atualizadoPorNome], ['user-closer-neg', 'Closer Negociação', 'Closer Negociação', 'Closer Negociação']);
-  assert.deepEqual([n.servicoNome, n.cliente], ['Gestão de redes', { empresa: 'Clínica Teste' }]);
+  assert.deepEqual([n.servicoNome, n.cliente], ['Gestão de redes', { empresa: 'Clínica Teste', tipoPessoa: null, nomeCompleto: null }]);
   assert.deepEqual(Object.keys(n).sort(), ['atualizadoEm', 'atualizadoPorNome', 'cardId', 'cliente', 'criadoEm', 'criadoPorNome', 'crmRecordId', 'eventos', 'fechadoEm', 'financeiro', 'formaPagamento', 'funnelId', 'funnelNome', 'id', 'motivoPerda', 'periodicidade', 'prazoMeses', 'previsaoFechamento', 'responsavelNome', 'responsavelUserId', 'serviceId', 'servicoNome', 'situacao', 'stageId', 'stageNome', 'valorNegociado']);
   assert.deepEqual(n.financeiro, { tcv: 18000, mrr: 1500, equivalenteMensal: 1500, cronograma: { cobrancas: 12, valorPorCobranca: 1500, mesesEntreCobrancas: 1 } });
   assert.equal(JSON.stringify(n).includes('Centavos'), false, 'nada de campo interno em centavos');
@@ -192,7 +192,7 @@ test('[NEG-SVC-8] O QUADRO: funis (só id/nome/situação), as etapas do funil e
   assert.deepEqual(quadro.stages.map((e) => e.nome), ['Contato', 'Proposta', 'Fechamento']);
   assert.equal(quadro.cards.length, 4);
   const doA = quadro.cards.find((card) => card.negotiationId === a.id);
-  assert.deepEqual([doA.negociacao.valorNegociado, doA.negociacao.cliente, doA.crm.empresa], [1500, { empresa: 'Clínica Teste' }, 'Clínica Teste']);
+  assert.deepEqual([doA.negociacao.valorNegociado, doA.negociacao.cliente, doA.crm.empresa], [1500, { empresa: 'Clínica Teste', tipoPessoa: null, nomeCompleto: null }, 'Clínica Teste']);
   const avulso = quadro.cards.find((card) => card.negotiationId === null);
   assert.deepEqual([avulso.negociacao, avulso.crm.empresa], [null, 'Outra Clínica']);
   const totais = Object.fromEntries(quadro.totais.map((t) => [t.stageId, t]));

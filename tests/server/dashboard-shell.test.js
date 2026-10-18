@@ -479,7 +479,7 @@ test('[DASH-SHELL-15] COMMERCIAL_CLOSER no painel: vê o menu, a lista e a ficha
   for (const botao of ['Editar', 'Mudar status', 'Marcar como Não Contatar']) assert.equal(t.browser.by.button(t.browser.root, botao), null, botao);
   t.browser.window.location.hash = '#/crm/novo';
   await t.browser.flush();
-  assert.match(textoDaTela(t.browser), /Sua conta não pode criar registros no CRM\./);
+  assert.match(textoDaTela(t.browser), /Sua conta não pode cadastrar clientes no CRM\./);
   assert.equal(t.browser.by.tag(t.browser.root, 'form').length, 0);
   const escritas = chamadasDeApi(t.fetchImpl).filter((chamada) => chamada.method !== 'GET');
   assert.deepEqual(escritas, [], 'nenhuma escrita foi tentada');

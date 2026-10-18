@@ -32,27 +32,35 @@ import { createUi, createRoutedDrawer, createTabs, statusBadge as uiStatusBadge,
 import { createCatalogField, createCatalogNotice } from '../ui/catalogField.mjs';
 import { CATALOG_FIELDS, createCatalogLookup } from '../crm-catalog-lookup.mjs';
 import {
+  CLIENT_FORM_SECTIONS,
   CRM_STATUSES,
   DEFAULT_INITIAL_STATUS,
   FIELD_GROUPS,
   LIST_COLUMNS,
   LOCKED_STATUS,
   RECORD_TABS,
+  SEM_TIPO,
   SORT_OPTIONS,
   SUGGESTION_KEYS,
+  TIPOS_PESSOA,
   buildCreateRequest,
   buildPatch,
+  clientName,
   describeHistory,
   displayValue,
   distinctValues,
   filterRecords,
+  formatCnpj,
+  formatCpf,
   isLocked,
   listCells,
   messageForCrmError,
   normalizeText,
+  relevantIdentityKeys,
   sortRecordsBy,
   statusLabel,
   statusTone,
+  tipoLabel,
   validateForm,
   valuesFromRecord,
 } from '../crm-model.mjs';
@@ -73,6 +81,8 @@ export function createCrmView({ document, root, api, permissions, navigate = () 
   // Deliberadamente independente de canWrite: excluir é uma ação diferente de criar/editar/mudar status, e continua disponível mesmo num registro bloqueado
   // como DNC (ver paintActions).
   const canDelete = Boolean(permissions && permissions.canDeleteCrm);
+  // PROPOSE_CRM (ADMIN e Closer): só MOSTRA o botão "Nova negociação" da ficha — o servidor decide de verdade (403).
+  const canPropose = Boolean(permissions && permissions.canProposeCrm);
   // Fase 2B-3.1 (decisão 0026): Nicho, Origem e Serviço potencial passam a ser escolhidos nos catálogos oficiais, mas o registro continua guardando o NOME como TEXTO. A consulta é só de leitura
   // (READ:CRM) e preguiçosa: nada é pedido até um formulário abrir. Só quem administra os catálogos (MANAGE:CRM_CATALOGS) vê "Informar outro valor" e o atalho para o cadastro; o servidor
   // continua a autoridade. Sem permissão de leitura ou sem a chamada na API, os campos ficam como sempre foram (texto livre).
@@ -85,7 +95,7 @@ export function createCrmView({ document, root, api, permissions, navigate = () 
     loadedAt: null,
     stale: false,
     query: '',
-    filters: { status: '', nicho: '', responsavel: '' },
+    filters: { status: '', nicho: '', responsavel: '', tipo: '' },
     sort: 'recentes',
     page: 1,
     scrollTop: 0,
@@ -135,7 +145,7 @@ export function createCrmView({ document, root, api, permissions, navigate = () 
   const search = searchField(document, {
     id: 'crm-search',
     label: 'Buscar',
-    placeholder: 'Empresa, contato, telefone, WhatsApp, e-mail ou Instagram',
+    placeholder: 'Cliente, contato, telefone, WhatsApp, e-mail, Instagram, CPF ou CNPJ',
     onInput: (value) => {
       state.query = value;
       state.page = 1;
@@ -148,6 +158,13 @@ export function createCrmView({ document, root, api, permissions, navigate = () 
     options: [{ value: '', label: 'Todos os status' }, ...CRM_STATUSES.map((status) => ({ value: status.value, label: status.label }))],
     value: '',
     onChange: (value) => onFilter('status', value),
+  });
+  const tipoSelect = selectField(document, {
+    id: 'crm-filter-tipo',
+    label: 'Tipo',
+    options: [{ value: '', label: 'Todos os tipos' }, ...TIPOS_PESSOA.map((tipo) => ({ value: tipo.value, label: tipo.label })), { value: SEM_TIPO, label: 'Sem tipo definido' }],
+    value: '',
+    onChange: (value) => onFilter('tipo', value),
   });
   const nichoSelect = selectField(document, { id: 'crm-filter-nicho', label: 'Nicho', options: [{ value: '', label: 'Todos os nichos' }], value: '', onChange: (value) => onFilter('nicho', value) });
   const responsavelSelect = selectField(document, { id: 'crm-filter-responsavel', label: 'Responsável', options: [{ value: '', label: 'Todos os responsáveis' }], value: '', onChange: (value) => onFilter('responsavel', value) });
@@ -170,13 +187,13 @@ export function createCrmView({ document, root, api, permissions, navigate = () 
     pageHeader(document, {
       title: 'Clientes',
       titleId: 'crm-title',
-      subtitle: 'Os registros comerciais. Clique em uma linha para abrir a ficha sem sair da lista.',
-      actions: [refreshButton, canWrite ? anchor(buildHash({ name: 'crm-new' }), 'Novo registro', 'btn primary') : null].filter(Boolean),
+      subtitle: 'Pessoas físicas e jurídicas do CRM. Clique em uma linha para abrir a ficha sem sair da lista.',
+      actions: [refreshButton, canWrite ? anchor(buildHash({ name: 'crm-new' }), 'Novo cliente', 'btn primary') : null].filter(Boolean),
     }),
     el(
       'form',
       { className: 'toolbar toolbar-stacked', role: 'search', onsubmit: (event) => event.preventDefault() },
-      el('div', { className: 'toolbar-row toolbar-tools' }, search.element, statusSelect.element, nichoSelect.element, responsavelSelect.element, sorter.element, el('div', { className: 'field filters-clear' }, clearButton), counterEl)
+      el('div', { className: 'toolbar-row toolbar-tools' }, search.element, statusSelect.element, tipoSelect.element, nichoSelect.element, responsavelSelect.element, sorter.element, el('div', { className: 'field filters-clear' }, clearButton), counterEl)
     ),
     messageRegion,
     el('div', { className: 'list-card' }, listRegion, pagerRegion)
@@ -268,14 +285,14 @@ export function createCrmView({ document, root, api, permissions, navigate = () 
 
   function clearFilters() {
     state.query = '';
-    state.filters = { status: '', nicho: '', responsavel: '' };
+    state.filters = { status: '', nicho: '', responsavel: '', tipo: '' };
     state.page = 1;
     search.setValue('');
     paintFilterOptions();
     paintResults();
   }
 
-  const hasCriteria = () => state.query.trim() !== '' || state.filters.status !== '' || state.filters.nicho !== '' || state.filters.responsavel !== '';
+  const hasCriteria = () => state.query.trim() !== '' || state.filters.status !== '' || state.filters.tipo !== '' || state.filters.nicho !== '' || state.filters.responsavel !== '';
 
   function optionElements(allLabel, values) {
     return [el('option', { value: '', text: allLabel }), ...values.map((entry) => el('option', { value: entry.value, text: entry.label }))];
@@ -293,6 +310,7 @@ export function createCrmView({ document, root, api, permissions, navigate = () 
     fill(nichoSelect.select, ...optionElements('Todos os nichos', nichos.map((value) => ({ value, label: value }))));
     fill(responsavelSelect.select, ...optionElements('Todos os responsáveis', responsaveis.map((value) => ({ value, label: value }))));
     statusSelect.select.value = state.filters.status;
+    tipoSelect.select.value = state.filters.tipo;
     nichoSelect.select.value = state.filters.nicho;
     responsavelSelect.select.value = state.filters.responsavel;
   }
@@ -503,7 +521,7 @@ export function createCrmView({ document, root, api, permissions, navigate = () 
     const element = el('div', { className: 'crm-ficha' }, refs.head, refs.message, refs.notice, refs.panel, refs.tabs);
     const handle = overlays.openDrawer({
       key: `crm-record:${id}`,
-      title: cached ? textOf(cached.empresa) || 'Sem nome' : 'Carregando registro…',
+      title: cached ? clientName(cached) || 'Sem nome' : 'Carregando registro…',
       content: element,
       getReturnFocus: hooks.getReturnFocus,
       isDirty: () => editDirty(),
@@ -620,8 +638,8 @@ export function createCrmView({ document, root, api, permissions, navigate = () 
       return;
     }
     const item = record.item;
-    current.handle.setTitle(textOf(item.empresa) || 'Sem nome');
-    fill(current.refs.head, statusBadge(item.status));
+    current.handle.setTitle(clientName(item) || 'Sem nome');
+    fill(current.refs.head, statusBadge(item.status), el('span', { className: 'badge neutral crm-person-badge', text: tipoLabel(item.tipoPessoa) }));
   }
 
   // ---- ações (os botões ficam no rodapé fixo da gaveta; os avisos, no corpo) ---------------------------------
@@ -661,6 +679,8 @@ export function createCrmView({ document, root, api, permissions, navigate = () 
       handle.setFooter(current.panelApi.footer);
       return;
     }
+    // Fase D2: abrir uma negociação deste cliente — a tela de Funis abre o formulário já com o cliente escolhido. Não existe com o registro bloqueado (DNC).
+    if (canPropose && !isLocked(item)) buttons = [anchor(buildHash({ name: 'funnels', newFor: item.id }), 'Nova negociação', 'btn primary'), ...buttons];
     buttons = buttons.filter(Boolean);
     fill(refs.footer, ...buttons);
     handle.setFooter(buttons.length > 0 ? refs.footer : null);
@@ -771,7 +791,9 @@ export function createCrmView({ document, root, api, permissions, navigate = () 
     const submit = el('button', { type: 'button', className: 'btn primary', id: 'crm-edit-save', text: 'Salvar alterações', onclick: () => submitEdit(panel) });
     const cancel = el('button', { type: 'button', className: 'btn secondary', id: 'crm-edit-cancel', text: 'Cancelar', onclick: () => cancelEdit(panel) });
     const intro = el('p', { className: 'muted edit-intro', text: 'Os campos marcados como "(obrigatório)" precisam ser preenchidos. Ao salvar, só o que você alterou é enviado; nada é salvo automaticamente.' });
-    const shell = panelShell('Editar registro', [intro, form.element], []);
+    // Registro ANTIGO (sem tipo de pessoa): nada é inferido — a pessoa revisa e escolhe; o que já existe é mantido.
+    const legacyNote = el('p', { className: 'notice info', role: 'note', id: 'crm-edit-legacy-note', text: 'Este é um registro antigo, ainda sem tipo de pessoa. Escolha Pessoa Física ou Pessoa Jurídica para completar o cadastro: os dados atuais são mantidos.' });
+    const shell = panelShell('Editar registro', [intro, ...(item.tipoPessoa ? [] : [legacyNote]), form.element], []);
     const footer = el('div', { className: 'drawer-actions edit-footer' }, statusEl, submit, cancel);
     // Há algo a perder? (fechar a gaveta, voltar ou sair do módulo pergunta antes de descartar o que foi digitado.)
     const isDirty = () => {
@@ -1044,6 +1066,7 @@ export function createCrmView({ document, root, api, permissions, navigate = () 
   // ---- abas (somente leitura) e histórico ---------------------------------------
   function valueNode(entry, record) {
     const text = displayValue(entry, record);
+    if (entry.kind === 'tipo' && text === '') return el('span', { className: 'muted', text: 'Sem tipo definido' });
     if (text === '') return el('span', { className: 'muted', text: '—' });
     if (entry.kind === 'status') return statusBadge(record.status);
     if (entry.kind === 'url') {
@@ -1059,6 +1082,8 @@ export function createCrmView({ document, root, api, permissions, navigate = () 
       spec.title,
       el('dl', { className: 'fields' }, ...spec.keys.flatMap((key) => {
         const entry = FIELD_BY_KEY.get(key);
+        // identificação: só o que existe (um CPF vazio num registro de empresa seria só ruído)
+        if (entry && ['nomeCompleto', 'cpf', 'cnpj'].includes(key) && textOf(item[key]) === '') return [];
         return entry ? [el('dt', { text: entry.label }), el('dd', {}, valueNode(entry, item))] : [];
       }))
     );
@@ -1159,6 +1184,10 @@ export function createCrmView({ document, root, api, permissions, navigate = () 
   // { element, read(), showErrors(errors), focusFirst(), focusError(errors) }.
   function buildFieldForm({ values, record, layout = 'groups', onChange = () => {} }) {
     const controls = new Map();
+    const wrappers = new Map(); // campo -> o <div class="field"> (esconder/mostrar conforme o tipo de pessoa)
+    const labels = new Map(); // campo -> o <label> (o "(obrigatório)" muda conforme o tipo)
+    const moreKeys = new Set(CLIENT_FORM_SECTIONS.mais.flatMap((spec) => spec.keys));
+    let moreDetails = null;
     const errorSlots = new Map();
     const datalists = new Map();
     const catalogFields = []; // os campos de seleção assistida deste formulário (cada um assina o seu catálogo até ser descartado)
@@ -1175,11 +1204,85 @@ export function createCrmView({ document, root, api, permissions, navigate = () 
     let tabsApi = null;
     const tabOfKey = new Map(RECORD_TABS.flatMap((tab) => tab.sections.flatMap((spec) => spec.keys.map((key) => [key, tab.key]))));
 
+    // ---- Fase D2: tipo de pessoa e campos de identificação --------------------------------------------------------------------------------------
+    // Rótulos do formulário de NOVO CLIENTE (os outros formulários mantêm os da ficha). A "(obrigatório)" é decidida pelo tipo escolhido (applyType), não por campo.
+    const CLIENT_LABELS = { empresa: 'Nome da empresa', cpf: 'CPF (opcional)', cnpj: 'CNPJ (opcional)' };
+    const labelBase = (key) => (layout === 'client' && CLIENT_LABELS[key]) || FIELD_BY_KEY.get(key).label;
+    const IDENTITY_KEYS = layout === 'client' ? ['nomeCompleto', 'empresa', 'cpf', 'cnpj', 'contato'] : ['nomeCompleto', 'empresa', 'cpf', 'cnpj'];
+    const typeHint = el('p', { className: 'hint', id: 'crm-field-tipoPessoa-hint', text: '' });
+    const currentTipo = () => {
+      const chosen = controls.get('tipoPessoa');
+      return chosen ? String(chosen.value || '') : String(values.tipoPessoa || '');
+    };
+
+    // Mostra só o que faz sentido para o tipo (um campo JÁ PREENCHIDO nunca some), e marca "(obrigatório)": nome completo na PF; empresa na PJ e no registro antigo sem tipo.
+    function applyType() {
+      const tipo = currentTipo();
+      const visible = layout === 'client' && tipo === '' ? [] : relevantIdentityKeys(tipo);
+      for (const key of IDENTITY_KEYS) {
+        const wrapper = wrappers.get(key);
+        const input = controls.get(key);
+        if (!wrapper || !input) continue;
+        const filled = String(input.value === undefined || input.value === null ? '' : input.value).trim() !== '';
+        wrapper.hidden = !(visible.includes(key) || filled);
+      }
+      const needed = { nomeCompleto: tipo === 'PF', empresa: tipo === 'PJ' || (tipo === '' && layout !== 'client') };
+      for (const key of Object.keys(needed)) {
+        const label = labels.get(key);
+        const input = controls.get(key);
+        if (!label || !input) continue;
+        label.textContent = needed[key] ? labelBase(key) + ' (obrigatório)' : labelBase(key);
+        if (needed[key]) input.setAttribute('aria-required', 'true');
+        else input.removeAttribute('aria-required');
+      }
+      if (layout === 'client') typeHint.textContent = tipo === '' ? 'Escolha primeiro: os campos mudam conforme o tipo.' : '';
+      else typeHint.textContent = tipo === '' && record ? 'Sem tipo definido ainda.' : '';
+    }
+
+    // O tipo de pessoa: dois botões de rádio (nunca um campo de texto). Uma vez escolhido, só se TROCA (o servidor não aceita remover).
+    function typeControl(entry) {
+      const id = 'crm-field-' + entry.key;
+      const chosen = String(values[entry.key] || '');
+      const rows = TIPOS_PESSOA.map((tipo) => {
+        const input = el('input', { id: id + '-' + tipo.value.toLowerCase(), type: 'radio', name: entry.key, value: tipo.value });
+        input.checked = tipo.value === chosen;
+        const refresh = () => {
+          applyType();
+          onChange();
+        };
+        input.addEventListener('change', refresh);
+        input.addEventListener('input', refresh);
+        return { tipo, input, node: el('div', { className: 'modality-option' }, input, el('label', { for: id + '-' + tipo.value.toLowerCase(), text: tipo.label })) };
+      });
+      const group = el(
+        'fieldset',
+        { className: 'modality-group crm-person-type', id, 'aria-describedby': id + '-hint ' + id + '-error' },
+        el('legend', { text: layout === 'client' ? 'Tipo de pessoa (obrigatório)' : 'Tipo de pessoa' }),
+        ...rows.map((row) => row.node)
+      );
+      controls.set(entry.key, {
+        get value() {
+          const hit = rows.find((row) => row.input.checked);
+          return hit ? hit.tipo.value : '';
+        },
+        setAttribute: (name, value) => group.setAttribute(name, value),
+        removeAttribute: (name) => group.removeAttribute(name),
+        focus: () => (rows.find((row) => row.input.checked) || rows[0]).input.focus(),
+      });
+      const slot = el('p', { className: 'field-error', id: id + '-error', role: 'alert' });
+      errorSlots.set(entry.key, slot);
+      const wrapper = el('div', { className: 'field wide' }, group, typeHint, slot);
+      wrappers.set(entry.key, wrapper);
+      return wrapper;
+    }
+
     function control(entry) {
+      if (entry.kind === 'tipo') return typeControl(entry);
       const id = `crm-field-${entry.key}`;
       const value = values[entry.key] || '';
       const suggest = SUGGESTION_KEYS.includes(entry.key);
-      const label = el('label', { for: id, text: entry.required ? `${entry.label} (obrigatório)` : entry.label });
+      const label = el('label', { for: id, text: entry.required ? `${entry.label} (obrigatório)` : labelBase(entry.key) });
+      labels.set(entry.key, label);
       const catalog = Object.prototype.hasOwnProperty.call(CATALOG_FIELDS, entry.key) ? CATALOG_FIELDS[entry.key] : null;
       let input;
       let catalogField = null;
@@ -1215,7 +1318,8 @@ export function createCrmView({ document, root, api, permissions, navigate = () 
           maxlength: MAX_LINE,
           autocomplete: 'off',
           list: suggest ? `crm-suggest-${entry.key}` : null,
-          value,
+          // CPF/CNPJ aparecem com a máscara, mas só os caracteres do documento são enviados e comparados (formValue)
+          value: entry.kind === 'cpf' ? formatCpf(value) : entry.kind === 'cnpj' ? formatCnpj(value) : value,
         });
       }
       const slot = el('p', { className: 'field-error', id: `${id}-error`, role: 'alert' });
@@ -1227,7 +1331,9 @@ export function createCrmView({ document, root, api, permissions, navigate = () 
       const wide = entry.kind === 'textarea';
       const datalist = suggest ? el('datalist', { id: `crm-suggest-${entry.key}` }) : null;
       if (datalist) datalists.set(entry.key, datalist);
-      return el('div', { className: wide ? 'field wide' : 'field' }, label, catalogField ? catalogField.element : input, slot, datalist);
+      const wrapper = el('div', { className: wide ? 'field wide' : 'field' }, label, catalogField ? catalogField.element : input, slot, datalist);
+      wrappers.set(entry.key, wrapper);
+      return wrapper;
     }
 
     function managed(entry) {
@@ -1253,6 +1359,20 @@ export function createCrmView({ document, root, api, permissions, navigate = () 
         tabs: RECORD_TABS.filter((tab) => tab.sections.length > 0).map((tab) => ({ key: tab.key, label: tab.label, content: el('div', { className: 'edit-tab-body' }, ...tab.sections.map(sectionNode)) })),
       });
       element = el('div', { className: 'field-form field-form-tabs' }, catalogNotice ? catalogNotice.element : null, tabsApi.element);
+    } else if (layout === 'client') {
+      // O NOVO CLIENTE: o essencial à vista (quem é, como falar, classificação) e o resto numa seção expansível — nenhum campo é eliminado.
+      const block = (spec) =>
+        el('fieldset', { className: 'form-block', id: 'crm-block-' + spec.id }, el('legend', { text: spec.title }), el('div', { className: 'form-grid' }, ...spec.keys.map((key) => control(FIELD_BY_KEY.get(key)))));
+      // os blocos principais primeiro: os campos de catálogo consultam a API na ORDEM em que são criados (nicho, origem, serviço)
+      const principalBlocks = CLIENT_FORM_SECTIONS.principal.map(block);
+      moreDetails = el(
+        'details',
+        { className: 'form-more', id: 'crm-new-more' },
+        el('summary', { text: 'Mais informações (opcional)' }),
+        el('p', { className: 'muted', text: 'Redes sociais, informações adicionais, diagnóstico e histórico comercial. Nada aqui é obrigatório: pode ser preenchido agora ou depois, na ficha do cliente.' }),
+        ...CLIENT_FORM_SECTIONS.mais.map(block)
+      );
+      element = el('div', { className: 'field-form field-form-client' }, catalogNotice ? catalogNotice.element : null, ...principalBlocks, moreDetails);
     } else {
       element = el(
         'div',
@@ -1269,8 +1389,14 @@ export function createCrmView({ document, root, api, permissions, navigate = () 
       );
     }
 
+    applyType();
+
     return {
       element,
+      // o formulário de novo cliente guarda aqui blocos extras (ex.: a entrada no CRM) dentro da seção expansível
+      addMore(node) {
+        if (moreDetails) moreDetails.append(node);
+      },
       read() {
         const read = {};
         for (const [key, input] of controls) read[key] = String(input.value === undefined || input.value === null ? '' : input.value);
@@ -1292,13 +1418,16 @@ export function createCrmView({ document, root, api, permissions, navigate = () 
         }
       },
       focusFirst() {
-        const first = controls.get('empresa');
-        if (first) first.focus();
+        // novo cliente: o tipo (nada foi escolhido ainda); edição: o primeiro campo de identificação visível (a empresa, num registro antigo)
+        const keys = layout === 'client' ? ['tipoPessoa'] : ['empresa', 'nomeCompleto', 'tipoPessoa'];
+        const key = keys.find((name) => controls.has(name) && !(wrappers.get(name) && wrappers.get(name).hidden));
+        if (key) controls.get(key).focus();
       },
       focusError(errors) {
         const key = [...controls.keys()].find((name) => Object.prototype.hasOwnProperty.call(errors, name));
         if (!key) return;
         if (tabsApi) tabsApi.select(tabOfKey.get(key), { notify: false }); // abre a aba do primeiro erro, para o foco poder chegar nele
+        if (moreDetails && moreKeys.has(key)) moreDetails.open = true; // um erro na seção recolhida a abre
         controls.get(key).focus();
       },
       // As sugestões vêm dos dados já carregados (a lista pode chegar depois de o formulário abrir).
@@ -1325,17 +1454,17 @@ export function createCrmView({ document, root, api, permissions, navigate = () 
     const back = el('p', { className: 'back' }, anchor(listHash, '← Voltar à lista'));
     if (!canWrite) {
       return {
-        element: el('section', { className: 'crm crm-new' }, back, el('h2', { id: 'crm-title', text: 'Novo registro' }), el('p', { className: 'notice warn', role: 'note', text: 'Sua conta não pode criar registros no CRM.' })),
+        element: el('section', { className: 'crm crm-new' }, back, el('h2', { id: 'crm-title', text: 'Novo cliente' }), el('p', { className: 'notice warn', role: 'note', text: 'Sua conta não pode cadastrar clientes no CRM.' })),
         focus() {},
       };
     }
 
-    const form = buildFieldForm({ values: {}, record: null });
+    const form = buildFieldForm({ values: {}, record: null, layout: 'client' });
     // Como em "Mudar status": um registro nunca nasce "Não contatar" sem o painel de confirmação (crie e depois bloqueie).
     const statusSelectNew = el('select', { id: 'crm-initial-status', name: 'status' }, ...CRM_STATUSES.filter((status) => status.value !== LOCKED_STATUS).map((status) => el('option', { value: status.value, text: status.label })));
     statusSelectNew.value = DEFAULT_INITIAL_STATUS;
     const reason = el('input', { id: 'crm-initial-reason', name: 'reason', type: 'text', maxlength: MAX_LINE, autocomplete: 'off' });
-    const submit = el('button', { type: 'submit', className: 'btn primary', text: 'Criar registro' });
+    const submit = el('button', { type: 'submit', className: 'btn primary', text: 'Cadastrar cliente' });
     const cancel = anchor(listHash, 'Cancelar', 'btn secondary');
     const panelMessage = el('div', { className: 'panel-message' });
 
@@ -1343,7 +1472,7 @@ export function createCrmView({ document, root, api, permissions, navigate = () 
       event.preventDefault();
       if (state.busy) return;
       const values = form.read();
-      const errors = validateForm(values);
+      const errors = validateForm(values, { creating: true });
       form.showErrors(errors);
       if (Object.keys(errors).length > 0) {
         paintMessageInto(panelMessage, { kind: 'error', text: 'Corrija os campos destacados.' });
@@ -1368,11 +1497,11 @@ export function createCrmView({ document, root, api, permissions, navigate = () 
         if (duplicate && typeof duplicate.matchedRecordId === 'string' && duplicate.matchedRecordId !== '') {
           state.flash = {
             kind: 'warn',
-            text: 'Registro criado. Atenção: já existe um registro com o mesmo nome e cidade — pode ser uma duplicidade.',
+            text: 'Cliente cadastrado. Atenção: já existe um registro com o mesmo nome e cidade — pode ser uma duplicidade.',
             link: { href: buildHash({ name: 'crm-record', id: duplicate.matchedRecordId }), text: 'Ver o registro semelhante' },
           };
         } else {
-          state.flash = { kind: 'success', text: 'Registro criado.' };
+          state.flash = { kind: 'success', text: canPropose ? 'Cliente cadastrado. Para abrir uma negociação, use "Nova negociação" aqui na ficha.' : 'Cliente cadastrado.' };
         }
         navigate(buildHash({ name: 'crm-record', id: created.id }));
       } catch (error) {
@@ -1387,30 +1516,20 @@ export function createCrmView({ document, root, api, permissions, navigate = () 
     // há algo digitado? (qualquer campo, o motivo ou um status inicial diferente do padrão)
     newDraft = { isDirty: () => Object.values(form.read()).some((value) => value.trim() !== '') || String(reason.value || '').trim() !== '' || String(statusSelectNew.value || '') !== DEFAULT_INITIAL_STATUS };
     form.paintSuggestions(state.list.items);
+    // A entrada no CRM (status inicial e motivo) fica na seção expansível: o padrão (Prospect) serve para quase todo cadastro.
+    form.addMore(
+      el('fieldset', { className: 'form-block' }, el('legend', { text: 'Entrada no CRM' }), el('div', { className: 'form-grid' },
+        el('div', { className: 'field' }, el('label', { for: 'crm-initial-status', text: 'Status inicial' }), statusSelectNew),
+        el('div', { className: 'field' }, el('label', { for: 'crm-initial-reason', text: 'Motivo da entrada (opcional)' }), reason)
+      ))
+    );
     const element = el(
       'section',
       { className: 'crm crm-new' },
       back,
-      el('h2', { id: 'crm-title', text: 'Novo registro' }),
-      el('p', { className: 'muted', text: 'Só o nome da empresa é obrigatório. O sistema confere duplicidade e bloqueios ao salvar.' }),
-      el(
-        'form',
-        { className: 'panel', novalidate: 'novalidate', 'aria-labelledby': 'crm-title', onsubmit: onSubmit },
-        form.element,
-        el(
-          'fieldset',
-          { className: 'form-block' },
-          el('legend', { text: 'Entrada no CRM' }),
-          el(
-            'div',
-            { className: 'form-grid' },
-            el('div', { className: 'field' }, el('label', { for: 'crm-initial-status', text: 'Status inicial' }), statusSelectNew),
-            el('div', { className: 'field' }, el('label', { for: 'crm-initial-reason', text: 'Motivo da entrada (opcional)' }), reason)
-          )
-        ),
-        panelMessage,
-        el('div', { className: 'form-actions' }, submit, cancel)
-      )
+      el('h2', { id: 'crm-title', text: 'Novo cliente' }),
+      el('p', { className: 'muted', text: 'Escolha se é Pessoa Física ou Jurídica e informe o nome. O resto é opcional e pode ser completado depois. O sistema confere duplicidade e bloqueios ao salvar.' }),
+      el('form', { className: 'panel', novalidate: 'novalidate', 'aria-labelledby': 'crm-title', onsubmit: onSubmit }, form.element, panelMessage, el('div', { className: 'form-actions' }, submit, cancel))
     );
     return { element, focus: form.focusFirst };
   }

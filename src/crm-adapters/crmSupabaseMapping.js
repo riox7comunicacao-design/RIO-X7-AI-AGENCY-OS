@@ -29,6 +29,8 @@ const CRM_WRITABLE_FIELDS = Object.freeze([
   'cidade', 'estado', 'nicho', 'origem', 'temperatura', 'servicoPotencial', 'problemaIdentificado', 'raioXDeNicho',
   'raioXPersonalizado', 'statusDoDiagnostico', 'linkDoRaioX', 'dataDaAnalise', 'dataDaReuniao', 'linkDoMeet',
   'proximaAcao', 'dataDaProximaAcao', 'responsavel', 'ultimaInteracao', 'valorProposta', 'valorTotal', 'observacoes',
+  // Fase D2 — identificação PF/PJ (aditivos, depois dos 31 legados): migration 20261020090000_crm_client_person_type.sql
+  'tipoPessoa', 'nomeCompleto', 'cpf', 'cnpj',
 ]);
 
 const camelToSnake = (name) => name.replace(/[A-Z]/g, (letter) => `_${letter.toLowerCase()}`);

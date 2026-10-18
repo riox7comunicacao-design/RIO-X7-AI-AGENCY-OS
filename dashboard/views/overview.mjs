@@ -13,7 +13,7 @@ import { h, fill } from '../dom.mjs';
 import { textOf, formatDateTime } from '../format.mjs';
 import { buildHash } from '../router.mjs';
 import { STATUS_LABELS } from '../i18n/pt-BR.mjs';
-import { countByStatus, messageForCrmError, statusLabel, statusTone } from '../crm-model.mjs';
+import { clientName, countByStatus, messageForCrmError, statusLabel, statusTone } from '../crm-model.mjs';
 
 const MAX_ACTIVITY = 8;
 
@@ -180,7 +180,7 @@ export function createOverviewView({ document, root, api, me, permissions, now =
             'ol',
             { className: 'plain activity' },
             ...events.map(({ record, entry }) => {
-              const company = textOf(record.empresa) || 'Sem nome';
+              const company = clientName(record) || 'Sem nome';
               const to = overviewStatusLabel(entry.to);
               const change = entry.from ? `${overviewStatusLabel(entry.from)} → ${to}` : `Registro criado como ${to}`;
               const who = entry.actor === 'HUMAN' && entry.reviewedBy && typeof entry.reviewedBy === 'object' ? textOf(entry.reviewedBy.name) || 'Equipe' : 'Sistema';

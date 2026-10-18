@@ -31,7 +31,7 @@ async function ambiente(t) {
   const funil = (await chamar(env, BRENO, { method: 'POST', url: '/api/funnels', body: { nome: 'Vendas' } })).json().item;
   const etapas = [];
   for (const nome of ['Contato', 'Proposta', 'Fechamento']) etapas.push((await chamar(env, BRENO, { method: 'POST', url: `/api/funnels/${encodeURIComponent(funil.id)}/stages`, body: { nome } })).json().item);
-  const cliente = (await chamar(env, BRENO, { method: 'POST', url: '/api/crm', body: { empresa: 'Clínica Teste' } })).json().item;
+  const cliente = (await chamar(env, BRENO, { method: 'POST', url: '/api/crm', body: { tipoPessoa: 'PJ', empresa: 'Clínica Teste' } })).json().item;
   const servico = (await chamar(env, BRENO, { method: 'POST', url: '/api/crm-catalogs/servicos', body: { nome: 'Gestão de redes', precoReferencia: 1500, permitePagamentoUnico: true, permitePagamentoRecorrente: true, periodicidades: ['MENSAL', 'TRIMESTRAL'] } })).json().item;
   const corpo = (extras = {}) => ({ crmRecordId: cliente.id, funnelId: funil.id, serviceId: servico.id, prazoMeses: 12, formaPagamento: 'RECORRENTE', periodicidade: 'MENSAL', valorNegociado: 1500, ...extras });
   return { env, funil, etapas, cliente, servico, corpo };
@@ -58,7 +58,7 @@ test('[NEG-API-2] FLUXO COMPLETO como ADMIN: criar (201, com o card no funil), l
   assert.equal(criada.status, 201);
   const n = criada.json().item;
   assert.match(n.id, /^negotiation:/);
-  assert.deepEqual([n.situacao, n.stageNome, n.servicoNome, n.responsavelNome, n.cliente], ['ABERTA', 'Contato', 'Gestão de redes', 'Breno Bento', { empresa: 'Clínica Teste' }]);
+  assert.deepEqual([n.situacao, n.stageNome, n.servicoNome, n.responsavelNome, n.cliente], ['ABERTA', 'Contato', 'Gestão de redes', 'Breno Bento', { empresa: 'Clínica Teste', tipoPessoa: 'PJ', nomeCompleto: null }]);
   assert.deepEqual(n.financeiro.tcv, 18000);
   assert.equal((await chamar(a.env, BRENO, { url: '/api/negotiations' })).json().items.length, 1);
   assert.equal((await chamar(a.env, BRENO, { url: rota(n.id) })).json().item.id, n.id);

@@ -27,6 +27,7 @@ const { checkDuplicate } = require('../research-prospector/duplicateCheck');
 const { checkDoNotContact } = require('../research-prospector/doNotContact');
 const { DUPLICATE_STATUS } = require('../research-prospector/constants');
 const { CRM_STATUS, ALLOWED_TRANSITIONS, ACTOR, CRM_WRITABLE_FIELDS, CRM_MANAGED_FIELDS } = require('./constants');
+const { TIPO_PESSOA, normalizeDocument, resolvePersonFields } = require('./clientIdentity');
 
 const isNonEmptyString = (value) => typeof value === 'string' && value.trim().length > 0;
 const isPlainObject = (value) => typeof value === 'object' && value !== null && !Array.isArray(value);
@@ -134,9 +135,21 @@ function trimmedOrNull(value) {
   return trimmed.length === 0 ? null : trimmed;
 }
 
+// CPF e CNPJ são guardados só com os caracteres do documento (sem pontos, barras nem hífen, letras em maiúsculas): é a forma que a comparação de duplicidade e a
+// restrição do banco conhecem. Um valor INVÁLIDO segue (normalizado) e é recusado por resolvePersonFields — nunca "corrigido" em silêncio.
+function normalizeDocumentFields(fields) {
+  for (const field of ['cpf', 'cnpj']) {
+    if (Object.prototype.hasOwnProperty.call(fields, field) && typeof fields[field] === 'string') fields[field] = normalizeDocument(fields[field]);
+  }
+}
+
 // Os campos que entram nas chaves de identidade (research-prospector/normalize.js, identityKeys): mudar qualquer
 // um deles muda QUEM o registro é, para efeito de duplicidade e de DO NOT CONTACT.
-const IDENTITY_FIELDS = Object.freeze(['empresa', 'site', 'telefone', 'whatsapp', 'instagram', 'cidade']);
+const IDENTITY_FIELDS = Object.freeze(['empresa', 'nomeCompleto', 'cpf', 'cnpj', 'site', 'telefone', 'whatsapp', 'instagram', 'cidade']);
+
+// Os documentos (CPF, CNPJ) são identidade FORTE: o mesmo documento é a mesma pessoa/empresa. Guardados já normalizados (só os caracteres do
+// documento), então a comparação é exata. Um registro DO_NOT_CONTACT com o mesmo documento bloqueia a criação/edição, como acontece com site e telefone.
+const DOCUMENT_FIELDS = Object.freeze(['cpf', 'cnpj']);
 
 // Um registro pode ter DOIS números (telefone e whatsapp), mas identityKeys() considera só um deles
 // (`telefone || whatsapp`): o mesmo número guardado no campo "errado" passaria despercebido — inclusive num DO NOT
@@ -144,10 +157,13 @@ const IDENTITY_FIELDS = Object.freeze(['empresa', 'site', 'telefone', 'whatsapp'
 // registro, e as funções compartilhadas (checkDuplicate/checkDoNotContact) comparam cada visão. A lógica de
 // COMPARAÇÃO continua sendo a delas, sem cópia: este módulo só decide o que apresentar a elas.
 function identityViews(record) {
-  const base = { empresa: record.empresa, site: record.site, instagram: record.instagram, cidade: record.cidade };
+  const base = { site: record.site, instagram: record.instagram, cidade: record.cidade };
+  // O nome pelo qual o cliente é conhecido pode estar em `empresa` (PJ e registros antigos) ou em `nomeCompleto` (PF): cada um é comparado, nunca só o primeiro.
+  const nomes = [...new Set([record.empresa, record.nomeCompleto].filter((nome) => typeof nome === 'string' && nome.trim() !== ''))];
   const numeros = [...new Set([record.telefone, record.whatsapp].filter((numero) => typeof numero === 'string' && numero.trim() !== ''))];
-  if (numeros.length === 0) return [{ ...base, telefone: null, whatsapp: null }];
-  return numeros.map((numero) => ({ ...base, telefone: numero, whatsapp: null }));
+  const nomesOuNulo = nomes.length === 0 ? [null] : nomes;
+  const numerosOuNulo = numeros.length === 0 ? [null] : numeros;
+  return nomesOuNulo.flatMap((nome) => numerosOuNulo.map((numero) => ({ ...base, empresa: nome, telefone: numero, whatsapp: null })));
 }
 
 // Compara a identidade de `candidate` com a de cada registro de `others`. Devolve
@@ -155,6 +171,33 @@ function identityViews(record) {
 // onde `duplicidade` é DUPLICADO (identidade forte idêntica), POSSIVEL_DUPLICADO (só nome+cidade) ou null.
 // matchedRecord é sempre o registro ORIGINAL de `others`, nunca uma visão.
 function checkIdentity(candidate, others) {
+  const byDocument = checkDocumentIdentity(candidate, others);
+  if (byDocument.dnc) return { dnc: byDocument.dnc, duplicidade: null };
+  const byViews = checkViewsIdentity(candidate, others);
+  if (byViews.dnc) return byViews;
+  // um documento idêntico é duplicidade FORTE, mesmo quando o resto (nome, site, telefone) não casa
+  if (byDocument.duplicidade && !(byViews.duplicidade && byViews.duplicidade.status === DUPLICATE_STATUS.DUPLICADO)) {
+    return { dnc: null, duplicidade: byDocument.duplicidade };
+  }
+  return byViews;
+}
+
+// Compara os documentos do candidato (CPF, CNPJ) com os de cada registro. Devolve { dnc, duplicidade } como checkIdentity: DNC primeiro (bloqueia), depois DUPLICADO.
+function checkDocumentIdentity(candidate, others) {
+  let duplicidade = null;
+  for (const field of DOCUMENT_FIELDS) {
+    const wanted = normalizeDocument(candidate[field]);
+    if (wanted === null) continue;
+    for (const other of others) {
+      if (normalizeDocument(other[field]) !== wanted) continue;
+      if (other.status === CRM_STATUS.DO_NOT_CONTACT) return { dnc: other, duplicidade: null };
+      if (duplicidade === null) duplicidade = { status: DUPLICATE_STATUS.DUPLICADO, matchedOn: [field], matchedRecord: other };
+    }
+  }
+  return { dnc: null, duplicidade };
+}
+
+function checkViewsIdentity(candidate, others) {
   const views = others.flatMap((record) =>
     identityViews(record).map((view) => ({ ...view, id: record.id, doNotContact: record.status === CRM_STATUS.DO_NOT_CONTACT }))
   );
@@ -196,7 +239,14 @@ function buildRecordId() {
 // positivo, como pedido explicitamente para este domínio.
 async function createRecordUnlocked(repository, input, options = {}) {
   const fields = sanitizeWritableInput(input, { context: 'createRecord' });
-  if (!isNonEmptyString(fields.empresa)) {
+  normalizeDocumentFields(fields);
+  // A API de cadastro de clientes pede o tipo (opção interna, nunca vinda do corpo da requisição); a promoção da Prospecção e os registros antigos seguem sem tipo.
+  if (ownOption(options, 'exigirTipoPessoa') === true && (fields.tipoPessoa === undefined || fields.tipoPessoa === null)) {
+    throw new Error('CRM: createRecord exige "tipoPessoa" (PF ou PJ)');
+  }
+  const person = resolvePersonFields(fields, 'createRecord');
+  // `empresa` identifica a PJ e o registro sem tipo (mensagem do contrato legado); a Pessoa Física se identifica por `nomeCompleto`
+  if (person.tipoPessoa !== TIPO_PESSOA.PF && !isNonEmptyString(fields.empresa)) {
     throw new Error('CRM: createRecord exige "empresa" (texto não vazio)');
   }
 
@@ -254,8 +304,14 @@ async function updateRecordUnlocked(repository, id, patch) {
     throw new Error(`CRM: registro bloqueado (DO_NOT_CONTACT) não pode ser atualizado: ${id}`);
   }
   const fields = sanitizeWritableInput(patch, { context: 'updateRecord' });
+  normalizeDocumentFields(fields);
   const updated = { ...record, ...fields };
-  if (!isNonEmptyString(updated.empresa)) {
+  // O tipo, uma vez definido, só pode ser TROCADO (PF <-> PJ), nunca removido: voltar a "sem tipo" reabriria a ambiguidade que o tipo resolveu.
+  if (isNonEmptyString(record.tipoPessoa) && !isNonEmptyString(updated.tipoPessoa)) {
+    throw new Error('CRM: updateRecord — o tipo de pessoa, depois de definido, só pode ser trocado (PF ou PJ), não removido');
+  }
+  const person = resolvePersonFields(updated, 'updateRecord');
+  if (person.tipoPessoa !== TIPO_PESSOA.PF && !isNonEmptyString(updated.empresa)) {
     throw new Error('CRM: updateRecord não pode deixar "empresa" vazia');
   }
   const identityChanged = IDENTITY_FIELDS.some((field) => Object.prototype.hasOwnProperty.call(fields, field) && fields[field] !== record[field]);

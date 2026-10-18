@@ -111,7 +111,7 @@ async function registros() {
 // ===========================================================================
 // LISTA — carregamento, conteúdo, vazio, erro
 // ===========================================================================
-test('[DASH-CRM-1] a lista mostra "Carregando…" enquanto a API não responde e depois a tabela com as 9 colunas pedidas, do mais recente para o mais antigo', async () => {
+test('[DASH-CRM-1] a lista mostra "Carregando…" enquanto a API não responde e depois a tabela com as 10 colunas (Cliente e Tipo no lugar da antiga Empresa), do mais recente para o mais antigo', async () => {
   const { createFakeApi } = await loadFixtures();
   const t = await montar({ api: createFakeApi({ items: await registros() }) });
   const pendente = t.api.hold('listCrm');
@@ -124,7 +124,7 @@ test('[DASH-CRM-1] a lista mostra "Carregando…" enquanto a API não responde e
 
   assert.doesNotMatch(textoDaTela(t.browser), /Carregando registros/);
   const cabecalho = t.browser.by.tag(t.root, 'th').map((th) => th.textContent.trim());
-  assert.deepEqual(cabecalho, ['Empresa', 'Contato', 'Nicho', 'Cidade', 'Status', 'Serviço potencial', 'Responsável', 'Próxima ação', 'Valor da proposta']);
+  assert.deepEqual(cabecalho, ['Cliente', 'Tipo', 'Contato', 'Nicho', 'Cidade', 'Status', 'Serviço potencial', 'Responsável', 'Próxima ação', 'Valor da proposta']);
   assert.deepEqual(linhasDaTabela(t.root).map((linha) => linha[0]), ['Odonto Beta', 'Ótica Gama', 'Clínica Alfa'], 'mais recente primeiro');
   assert.equal(t.browser.by.cls(t.root, 'crm-count')[0].textContent, '3 registros');
   assert.equal(t.api.callsOf('listCrm').length, 1);
@@ -148,17 +148,18 @@ test('[DASH-CRM-2] cada linha traz os dados do registro (cidade com UF, próxima
   const t = await montar({ items: await registros() });
   await t.mostrar(LISTA);
   const linha = linhasDaTabela(t.root).find((celulas) => celulas[0] === 'Clínica Alfa');
-  assert.equal(linha[1], 'Maria Souza');
-  assert.equal(linha[2], 'Psicologia');
-  assert.equal(linha[3], 'Petrópolis/RJ');
-  assert.equal(linha[4], 'Contatado');
-  assert.equal(linha[5], 'Gestão de tráfego');
-  assert.equal(linha[6], 'Rafael');
-  assert.equal(linha[7], 'Ligar na segunda · 05/10/2026');
-  assert.equal(nbsp(linha[8]), 'R$ 1.500,00');
+  assert.equal(linha[1], 'Sem tipo', 'um registro antigo aparece como "Sem tipo" (nunca é inferido)');
+  assert.equal(linha[2], 'Maria Souza');
+  assert.equal(linha[3], 'Psicologia');
+  assert.equal(linha[4], 'Petrópolis/RJ');
+  assert.equal(linha[5], 'Contatado');
+  assert.equal(linha[6], 'Gestão de tráfego');
+  assert.equal(linha[7], 'Rafael');
+  assert.equal(linha[8], 'Ligar na segunda · 05/10/2026');
+  assert.equal(nbsp(linha[9]), 'R$ 1.500,00');
   const beta = linhasDaTabela(t.root).find((celulas) => celulas[0] === 'Odonto Beta');
-  assert.equal(beta[5], '—');
-  assert.equal(beta[8], '—');
+  assert.equal(beta[6], '—');
+  assert.equal(beta[9], '—');
 
   const abrir = t.browser.by.button(t.root, 'Clínica Alfa');
   assert.equal(abrir.getAttribute('data-item'), 'crm:a', 'o nome da empresa é o botão que abre a ficha (a linha inteira também)');
@@ -167,7 +168,7 @@ test('[DASH-CRM-2] cada linha traz os dados do registro (cidade com UF, próxima
   assert.ok(selo.className.includes('info'));
   // cada célula tem o rótulo da coluna (a tabela vira cartões em telas menores)
   const celulasRotuladas = t.browser.by.tag(t.root, 'td').filter((td) => td.getAttribute('data-label'));
-  assert.equal(celulasRotuladas.length, 27);
+  assert.equal(celulasRotuladas.length, 30);
 });
 
 test('[DASH-CRM-3] sem registros: a lista diz que está vazia; o ADMIN vê o atalho para criar o primeiro, o closer não vê nenhum botão de criação', async () => {
@@ -175,13 +176,13 @@ test('[DASH-CRM-3] sem registros: a lista diz que está vazia; o ADMIN vê o ata
   await admin.mostrar(LISTA);
   assert.match(textoDaTela(admin.browser), /Nenhum registro no CRM ainda\./);
   assert.equal(admin.browser.by.link(admin.root, 'Criar o primeiro registro').href, '#/crm/novo');
-  assert.equal(admin.browser.by.link(admin.root, 'Novo registro').href, '#/crm/novo');
+  assert.equal(admin.browser.by.link(admin.root, 'Novo cliente').href, '#/crm/novo');
 
   const closer = await montar({ items: [], permissions: CLOSER });
   await closer.mostrar(LISTA);
   assert.match(textoDaTela(closer.browser), /Nenhum registro no CRM ainda\./);
   assert.equal(closer.browser.by.link(closer.root, 'Criar o primeiro registro'), null);
-  assert.equal(closer.browser.by.link(closer.root, 'Novo registro'), null);
+  assert.equal(closer.browser.by.link(closer.root, 'Novo cliente'), null);
 });
 
 test('[DASH-CRM-4] erro ao carregar: 500 mostra uma frase genérica (nunca o detalhe do servidor) com "Tentar novamente"; 403 diz que falta permissão; depois de tentar de novo a lista aparece', async () => {
@@ -320,7 +321,8 @@ test('[DASH-CRM-9] a ficha mostra os campos em blocos (Identificação, Contato,
   assert.deepEqual(t.browser.by.tag(gavetaDe(t), 'button').filter((b) => b.getAttribute('role') === 'tab').map((b) => b.textContent.trim()), ['Resumo', 'Contato e presença', 'Comercial', 'Histórico']);
   assert.equal(tituloFicha(t), 'Clínica Alfa');
   const { FIELD_GROUPS } = await import('../../dashboard/crm-model.mjs');
-  assert.equal(t.browser.by.tag(gavetaDe(t), 'dt').length, FIELD_GROUPS.flatMap((grupo) => grupo.fields).length, 'todos os campos existentes aparecem, e só eles');
+  assert.equal(t.browser.by.tag(gavetaDe(t), 'dt').length, FIELD_GROUPS.flatMap((grupo) => grupo.fields).length - 3, 'todos os campos existentes aparecem, e só eles (nome completo, CPF e CNPJ só aparecem quando existem)');
+  assert.equal(valorDe(t.browser, 'Identificação', 'Tipo de pessoa').textContent, 'Sem tipo definido', 'registro antigo: o tipo não é inferido');
 
   assert.equal(valorDe(t.browser, 'Identificação', 'Empresa').textContent, 'Clínica Alfa');
   assert.equal(valorDe(t.browser, 'Identificação', 'Cidade').textContent, 'Petrópolis');
@@ -448,7 +450,7 @@ test('[DASH-CRM-14] COMMERCIAL_CLOSER: vê a lista, busca, filtra e abre a ficha
   assert.equal(linhasDaTabela(t.root).length, 3);
   t.browser.type(t.browser.by.label(escopo(t), 'Buscar'), 'alfa');
   assert.equal(linhasDaTabela(t.root).length, 1);
-  assert.equal(t.browser.by.link(t.root, 'Novo registro'), null);
+  assert.equal(t.browser.by.link(t.root, 'Novo cliente'), null);
 
   await t.mostrar(REGISTRO('crm:a'));
   assert.equal(tituloFicha(t), 'Clínica Alfa');
@@ -456,7 +458,7 @@ test('[DASH-CRM-14] COMMERCIAL_CLOSER: vê a lista, busca, filtra e abre a ficha
   assert.match(textoDaTela(t.browser), /Seu perfil pode consultar o CRM, mas não pode criar nem alterar registros\./);
 
   await t.mostrar(NOVO);
-  assert.match(textoDaTela(t.browser), /Sua conta não pode criar registros no CRM\./);
+  assert.match(textoDaTela(t.browser), /Sua conta não pode cadastrar clientes no CRM\./);
   assert.equal(t.browser.by.tag(escopo(t), 'form').length, 0, 'sem formulário de criação');
   for (const escrita of ['createCrm', 'updateCrm', 'moveCrmStatus', 'markCrmDnc']) assert.equal(t.api.callsOf(escrita).length, 0, `${escrita} nunca foi chamado`);
 });
@@ -478,16 +480,18 @@ test('[DASH-CRM-15] se a API recusar uma escrita com 403 (uma conta que passou p
 // ===========================================================================
 // CRIAÇÃO (ADMIN)
 // ===========================================================================
-test('[DASH-CRM-16] criar: o formulário traz todos os campos gravaveis em blocos e só a empresa é obrigatória; ao salvar, envia SÓ campos preenchidos + status inicial e motivo, e leva à ficha do registro criado com a mensagem de sucesso', async () => {
+test('[DASH-CRM-16] criar: o formulário de novo cliente traz todos os campos gravaveis (o essencial à vista, o resto na seção expansível); o tipo de pessoa é obrigatório; ao salvar, envia SÓ campos preenchidos + status inicial e motivo, e leva à ficha do registro criado com a mensagem de sucesso', async () => {
   const { WRITABLE_KEYS } = await import('../../dashboard/crm-model.mjs');
   const { parseRoute } = await import('../../dashboard/router.mjs');
   const t = await montar();
   await t.mostrar(NOVO);
-  assert.equal(t.browser.document.activeElement, t.browser.by.label(escopo(t), 'Empresa (obrigatório)'), 'o foco já começa no campo da empresa');
+  assert.equal(t.browser.document.activeElement, t.browser.by.label(escopo(t), 'Pessoa Física'), 'o foco já começa no tipo de pessoa (nada escolhido ainda)');
+  assert.equal(t.browser.by.label(escopo(t), 'Pessoa Física').checked, false);
+  assert.equal(t.browser.by.label(escopo(t), 'Pessoa Jurídica').checked, false, 'o tipo nunca vem escolhido sozinho');
   const controles = t.browser.findAll(t.root, (el) => ['input', 'textarea'].includes(el.localName) && el.getAttribute('name'));
   const nomes = controles.map((el) => el.getAttribute('name'));
   for (const chave of WRITABLE_KEYS) assert.ok(nomes.includes(chave), `falta o campo ${chave}`);
-  assert.deepEqual(nomes.filter((nome) => !WRITABLE_KEYS.includes(nome)).sort(), ['reason'], 'o único controle extra é o motivo da entrada');
+  assert.deepEqual([...new Set(nomes.filter((nome) => !WRITABLE_KEYS.includes(nome)))].sort(), ['reason'], 'o único controle extra é o motivo da entrada');
   for (const proibido of ['userId', 'authUserId', 'role', 'permissions', 'actor', 'reviewedBy', 'id', 'historico']) assert.ok(!nomes.includes(proibido), `nenhum campo ${proibido}`);
   for (const rotulo of ['Valor da proposta', 'Valor total']) {
     const dinheiro = t.browser.by.label(escopo(t), rotulo);
@@ -498,42 +502,49 @@ test('[DASH-CRM-16] criar: o formulário traz todos os campos gravaveis em bloco
   const iniciais = t.browser.by.tag(t.browser.by.label(escopo(t), 'Status inicial'), 'option').map((o) => o.textContent);
   assert.equal(iniciais.length, 12, 'os 13 status, menos "Não Contatar": um registro nunca nasce bloqueado sem o painel de confirmação');
   assert.ok(!iniciais.includes('Não Contatar') && iniciais.includes('Fechada') && iniciais.includes('Lead em Prospecção'));
-  assert.equal(t.browser.by.tag(t.root, 'legend').map((el) => el.textContent).join('|'), 'Identificação|Contato|Presença digital|Comercial|Funil de Vendas|Próxima ação|Entrada no CRM');
+  assert.equal(t.browser.by.tag(t.root, 'legend').map((el) => el.textContent).join('|'), 'Quem é o cliente|Tipo de pessoa (obrigatório)|Como falar com ele|Classificação|Redes sociais e presença digital|Informações adicionais|Diagnóstico e histórico comercial|Reunião e próxima ação|Entrada no CRM');
 
-  t.browser.type(t.browser.by.label(escopo(t), 'Empresa (obrigatório)'), '  Clínica Nova  ');
+  t.browser.click(t.browser.by.label(escopo(t), 'Pessoa Jurídica'));
+  t.browser.type(t.browser.by.label(escopo(t), 'Nome da empresa (obrigatório)'), '  Clínica Nova  ');
   t.browser.type(t.browser.by.label(escopo(t), 'Cidade'), 'Niterói');
   t.browser.type(t.browser.by.label(escopo(t), 'Valor da proposta'), '1500,50');
   t.browser.choose(t.browser.by.label(escopo(t), 'Status inicial'), 'QUALIFIED_PROSPECT');
   t.browser.type(t.browser.by.label(escopo(t), 'Motivo da entrada (opcional)'), 'Indicação de cliente');
-  t.browser.click(t.browser.by.button(escopo(t), 'Criar registro'));
+  t.browser.click(t.browser.by.button(escopo(t), 'Cadastrar cliente'));
   await t.browser.flush();
 
   const chamada = t.api.callsOf('createCrm');
   assert.equal(chamada.length, 1);
-  assert.deepEqual(chamada[0].args, [{ empresa: 'Clínica Nova', cidade: 'Niterói', valorProposta: 1500.5 }, { status: 'QUALIFIED_PROSPECT', reason: 'Indicação de cliente' }]);
+  assert.deepEqual(chamada[0].args, [{ tipoPessoa: 'PJ', empresa: 'Clínica Nova', cidade: 'Niterói', valorProposta: 1500.5 }, { status: 'QUALIFIED_PROSPECT', reason: 'Indicação de cliente' }]);
   assert.deepEqual(t.navegacoes, ['#/crm/registro/crm%3Acreated-1'], 'depois de criar, vai para a ficha do registro criado');
 
   await t.mostrar(parseRoute(t.navegacoes[0]));
   assert.equal(tituloFicha(t), 'Clínica Nova');
-  assert.match(textoDaTela(t.browser), /Registro criado\./);
+  assert.match(textoDaTela(t.browser), /Cliente cadastrado\./);
   assert.equal(valorDe(t.browser, 'Funil de Vendas', 'Status').textContent, 'Lead Qualificado');
 });
 
-test('[DASH-CRM-17] criar sem empresa (ou com valor em dinheiro inválido): a tela aponta o campo, foca nele e NÃO chama a API', async () => {
+test('[DASH-CRM-17] criar sem tipo, sem nome (ou com valor em dinheiro inválido): a tela aponta o campo, foca nele e NÃO chama a API', async () => {
   const t = await montar();
   await t.mostrar(NOVO);
-  t.browser.click(t.browser.by.button(escopo(t), 'Criar registro'));
+  t.browser.click(t.browser.by.button(escopo(t), 'Cadastrar cliente'));
+  await t.browser.flush();
+  assert.equal(t.api.callsOf('createCrm').length, 0);
+  assert.match(textoDaTela(t.browser), /Escolha se o cliente é Pessoa Física ou Pessoa Jurídica\./);
+  assert.match(textoDaTela(t.browser), /Corrija os campos destacados\./);
+  assert.equal(t.browser.document.activeElement, t.browser.by.label(escopo(t), 'Pessoa Física'), 'o foco vai para o tipo');
+  t.browser.click(t.browser.by.label(escopo(t), 'Pessoa Jurídica'));
+  t.browser.click(t.browser.by.button(escopo(t), 'Cadastrar cliente'));
   await t.browser.flush();
   assert.equal(t.api.callsOf('createCrm').length, 0);
   assert.match(textoDaTela(t.browser), /Informe o nome da empresa\./);
-  assert.match(textoDaTela(t.browser), /Corrija os campos destacados\./);
-  const empresa = t.browser.by.label(escopo(t), 'Empresa (obrigatório)');
+  const empresa = t.browser.by.label(escopo(t), 'Nome da empresa (obrigatório)');
   assert.equal(empresa.getAttribute('aria-invalid'), 'true');
   assert.equal(t.browser.document.activeElement, empresa);
 
   t.browser.type(empresa, 'Ok Ltda');
   t.browser.type(t.browser.by.label(escopo(t), 'Valor total'), 'muito dinheiro');
-  t.browser.click(t.browser.by.button(escopo(t), 'Criar registro'));
+  t.browser.click(t.browser.by.button(escopo(t), 'Cadastrar cliente'));
   await t.browser.flush();
   assert.equal(t.api.callsOf('createCrm').length, 0);
   assert.match(textoDaTela(t.browser), /Informe um valor numérico maior ou igual a zero\./);
@@ -544,19 +555,20 @@ test('[DASH-CRM-18] criar com identidade já existente (409): mostra a frase de 
   const { ApiError } = await loadFixtures();
   const t = await montar();
   await t.mostrar(NOVO);
-  t.browser.type(t.browser.by.label(escopo(t), 'Empresa (obrigatório)'), 'Repetida Ltda');
+  t.browser.click(t.browser.by.label(escopo(t), 'Pessoa Jurídica'));
+  t.browser.type(t.browser.by.label(escopo(t), 'Nome da empresa (obrigatório)'), 'Repetida Ltda');
   t.browser.type(t.browser.by.label(escopo(t), 'Site'), 'repetida.example.test');
   t.api.failNext('createCrm', new ApiError(409, 'DUPLICATE_RECORD', 'Já existe um registro com esta identidade.'));
-  t.browser.click(t.browser.by.button(escopo(t), 'Criar registro'));
+  t.browser.click(t.browser.by.button(escopo(t), 'Cadastrar cliente'));
   await t.browser.flush();
   assert.match(textoDaTela(t.browser), /Já existe um registro com esta identidade \(mesmo site, telefone ou Instagram\)/);
-  assert.equal(t.browser.by.label(escopo(t), 'Empresa (obrigatório)').value, 'Repetida Ltda');
+  assert.equal(t.browser.by.label(escopo(t), 'Nome da empresa (obrigatório)').value, 'Repetida Ltda');
   assert.equal(t.browser.by.label(escopo(t), 'Site').value, 'repetida.example.test');
-  assert.equal(t.browser.by.button(escopo(t), 'Criar registro').disabled, false);
+  assert.equal(t.browser.by.button(escopo(t), 'Cadastrar cliente').disabled, false);
   assert.deepEqual(t.navegacoes, []);
 
   t.browser.type(t.browser.by.label(escopo(t), 'Site'), 'outra.example.test');
-  t.browser.click(t.browser.by.button(escopo(t), 'Criar registro'));
+  t.browser.click(t.browser.by.button(escopo(t), 'Cadastrar cliente'));
   await t.browser.flush();
   assert.equal(t.api.callsOf('createCrm').length, 2);
   assert.equal(t.navegacoes.length, 1, 'na segunda tentativa deu certo');
@@ -573,11 +585,12 @@ test('[DASH-CRM-19] criar com "possível duplicidade" (mesmo nome e cidade): o r
     return { ...resposta, duplicidade: { status: 'POSSIVEL_DUPLICADO', matchedOn: ['nome+cidade'], matchedRecordId: 'crm:existente' } };
   };
   await t.mostrar(NOVO);
-  t.browser.type(t.browser.by.label(escopo(t), 'Empresa (obrigatório)'), 'Clínica Alfa');
-  t.browser.click(t.browser.by.button(escopo(t), 'Criar registro'));
+  t.browser.click(t.browser.by.label(escopo(t), 'Pessoa Jurídica'));
+  t.browser.type(t.browser.by.label(escopo(t), 'Nome da empresa (obrigatório)'), 'Clínica Alfa');
+  t.browser.click(t.browser.by.button(escopo(t), 'Cadastrar cliente'));
   await t.browser.flush();
   await t.mostrar(parseRoute(t.navegacoes[0]));
-  assert.match(textoDaTela(t.browser), /Registro criado\. Atenção: já existe um registro com o mesmo nome e cidade/);
+  assert.match(textoDaTela(t.browser), /Cliente cadastrado\. Atenção: já existe um registro com o mesmo nome e cidade/);
   assert.equal(t.browser.by.link(t.root, 'Ver o registro semelhante').href, '#/crm/registro/crm%3Aexistente');
 });
 
@@ -755,7 +768,7 @@ test('[DASH-CRM-26] mudar status: oferece os outros status (menos "Não Contatar
   assert.deepEqual(t.api.callsOf('moveCrmStatus')[0].args, ['crm:a', 'PROPOSAL', 'Enviamos a proposta']);
   assert.match(textoDaTela(t.browser), /Status alterado para Proposta Enviada\./);
   assert.equal(valorDe(t.browser, 'Funil de Vendas', 'Status').textContent, 'Proposta Enviada');
-  assert.equal(t.browser.by.cls(t.root, 'ficha-head')[0].textContent, 'Proposta Enviada', 'o selo do cabeçalho mudou');
+  assert.equal(t.browser.by.cls(t.root, 'ficha-head')[0].children[0].textContent, 'Proposta Enviada', 'o selo do cabeçalho mudou');
   assert.equal(t.api.callsOf('getCrmHistory').length, 2, 'o histórico foi buscado de novo');
   const itens = t.browser.by.tag(t.browser.by.cls(t.root, 'timeline')[0], 'li').map((li) => li.textContent);
   assert.match(itens[0], /^Contatado → Proposta Enviada/);
@@ -844,8 +857,9 @@ test('[DASH-CRM-29] um registro que JÁ é "Não Contatar" abre bloqueado: nem o
 test('[DASH-CRM-30] a tela nunca envia identidade de autorização: nas quatro escritas, nada além de campos do registro, status, motivo e id (userId, authUserId, role, permissions, actor e reviewedBy nunca aparecem)', async () => {
   const t = await montar({ items: await registros() });
   await t.mostrar(NOVO);
-  t.browser.type(t.browser.by.label(escopo(t), 'Empresa (obrigatório)'), 'Nova Ltda');
-  t.browser.click(t.browser.by.button(escopo(t), 'Criar registro'));
+  t.browser.click(t.browser.by.label(escopo(t), 'Pessoa Jurídica'));
+  t.browser.type(t.browser.by.label(escopo(t), 'Nome da empresa (obrigatório)'), 'Nova Ltda');
+  t.browser.click(t.browser.by.button(escopo(t), 'Cadastrar cliente'));
   await t.browser.flush();
 
   await t.mostrar(REGISTRO('crm:a'));
@@ -1033,9 +1047,10 @@ test('[DASH-CRM-33b] uma lista que chega depois do destroy() (logout com a carga
 test('[DASH-CRM-33c] um registro criado depois do destroy() (logout durante o envio) não volta para a memória nem para a tela, e a tela não navega', async () => {
   const t = await montar();
   await t.mostrar(NOVO);
-  t.browser.type(t.browser.by.label(escopo(t), 'Empresa (obrigatório)'), 'Criada Tarde Ltda');
+  t.browser.click(t.browser.by.label(escopo(t), 'Pessoa Jurídica'));
+  t.browser.type(t.browser.by.label(escopo(t), 'Nome da empresa (obrigatório)'), 'Criada Tarde Ltda');
   const pendente = t.api.hold('createCrm');
-  t.browser.click(t.browser.by.button(escopo(t), 'Criar registro'));
+  t.browser.click(t.browser.by.button(escopo(t), 'Cadastrar cliente'));
   await pendente.arrived;
   t.view.destroy();
   pendente.release();
@@ -1069,7 +1084,8 @@ test('[DASH-CRM-35] as sugestões dos campos nunca reescrevem o que a pessoa dig
   const lista = t.api.hold('listCrm');
   t.view.show(NOVO); // a lista ainda não chegou: nenhuma sugestão
   await lista.arrived;
-  t.browser.type(t.browser.by.label(escopo(t), 'Empresa (obrigatório)'), 'TESTE CRM Rio X7');
+  t.browser.click(t.browser.by.label(escopo(t), 'Pessoa Jurídica'));
+  t.browser.type(t.browser.by.label(escopo(t), 'Nome da empresa (obrigatório)'), 'TESTE CRM Rio X7');
   t.browser.type(t.browser.by.label(escopo(t), 'Nicho'), 'Clínica');
   t.browser.type(t.browser.by.label(escopo(t), 'Cidade'), 'Petrópolis');
   t.browser.type(t.browser.by.label(escopo(t), 'Estado (UF)'), 'RJ');
@@ -1083,7 +1099,7 @@ test('[DASH-CRM-35] as sugestões dos campos nunca reescrevem o que a pessoa dig
   assert.equal(t.browser.by.label(escopo(t), 'Cidade').value, 'Petrópolis');
   assert.equal(t.browser.by.label(escopo(t), 'Estado (UF)').value, 'RJ');
 
-  t.browser.click(t.browser.by.button(escopo(t), 'Criar registro'));
+  t.browser.click(t.browser.by.button(escopo(t), 'Cadastrar cliente'));
   await t.browser.flush();
-  assert.deepEqual(t.api.callsOf('createCrm')[0].args[0], { empresa: 'TESTE CRM Rio X7', contato: 'João Teste', nicho: 'Clínica', cidade: 'Petrópolis', estado: 'RJ' });
+  assert.deepEqual(t.api.callsOf('createCrm')[0].args[0], { tipoPessoa: 'PJ', empresa: 'TESTE CRM Rio X7', contato: 'João Teste', nicho: 'Clínica', cidade: 'Petrópolis', estado: 'RJ' });
 });

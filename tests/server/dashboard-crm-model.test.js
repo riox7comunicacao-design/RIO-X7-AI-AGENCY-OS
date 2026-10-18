@@ -38,11 +38,13 @@ test('[DASH-MODEL-1] os 13 status do Dashboard são exatamente os do domínio, n
   assert.equal(statusTone('ALGO_NOVO'), 'neutral');
 });
 
-test('[DASH-MODEL-2] os campos do Dashboard são exatamente os 31 graváveis do domínio (CRM_WRITABLE_FIELDS), cada um em UM bloco, e os gerenciados são só exibidos', async () => {
+test('[DASH-MODEL-2] os campos do Dashboard são exatamente os 35 graváveis do domínio (CRM_WRITABLE_FIELDS: os 31 legados + os 4 de identificação PF/PJ), cada um em UM bloco, e os gerenciados são só exibidos', async () => {
   const { FIELD_GROUPS, EDITABLE_FIELDS, WRITABLE_KEYS, LIST_COLUMNS } = await loadModel();
   assert.equal(WRITABLE_KEYS.length, new Set(WRITABLE_KEYS).size, 'nenhum campo repetido');
   assert.deepEqual([...WRITABLE_KEYS].sort(), [...domain.CRM_WRITABLE_FIELDS].sort());
-  assert.equal(WRITABLE_KEYS.length, 31);
+  assert.equal(WRITABLE_KEYS.length, 35);
+  assert.deepEqual([...WRITABLE_KEYS].filter((key) => domain.CRM_LEGACY_WRITABLE_FIELDS.includes(key)).sort(), [...domain.CRM_LEGACY_WRITABLE_FIELDS].sort(), 'os 31 legados continuam todos lá');
+  assert.deepEqual([...domain.CRM_PERSON_FIELDS].sort(), ['cnpj', 'cpf', 'nomeCompleto', 'tipoPessoa']);
   assert.deepEqual(FIELD_GROUPS.map((group) => group.title), ['Identificação', 'Contato', 'Presença digital', 'Comercial', 'Funil de Vendas', 'Próxima ação']);
   const managed = FIELD_GROUPS.flatMap((group) => group.fields).filter((entry) => entry.managed === true).map((entry) => entry.key);
   assert.deepEqual(managed.sort(), ['dataDeEntrada', 'status']);
@@ -52,14 +54,22 @@ test('[DASH-MODEL-2] os campos do Dashboard são exatamente os 31 graváveis do 
   // As colunas da lista só usam campos que existem na API.
   const existentes = new Set([...domain.CRM_WRITABLE_FIELDS, ...domain.CRM_MANAGED_FIELDS]);
   for (const column of LIST_COLUMNS) assert.ok(existentes.has(column.key), `coluna inventada: ${column.key}`);
-  assert.deepEqual(LIST_COLUMNS.map((column) => column.label), ['Empresa', 'Contato', 'Nicho', 'Cidade', 'Status', 'Serviço potencial', 'Responsável', 'Próxima ação', 'Valor da proposta']);
+  assert.deepEqual(LIST_COLUMNS.map((column) => column.label), ['Cliente', 'Tipo', 'Contato', 'Nicho', 'Cidade', 'Status', 'Serviço potencial', 'Responsável', 'Próxima ação', 'Valor da proposta']);
 });
 
 test('[DASH-MODEL-3] o tipo de cada campo bate com o do domínio: só os campos "number" aceitam número (>= 0) e todos os outros recusam', async () => {
   const { EDITABLE_FIELDS } = await loadModel();
-  const aceita = async (key, value) => {
+  // Os campos de IDENTIFICAÇÃO PF/PJ têm regras de coerência (o tipo, o nome completo e o documento andam juntos): o texto válido de cada um vem com o que ele exige.
+  const COERENTE = {
+    tipoPessoa: { tipoPessoa: 'PJ' },
+    nomeCompleto: { tipoPessoa: 'PF', nomeCompleto: 'Maria Teste' },
+    cpf: { tipoPessoa: 'PF', nomeCompleto: 'Maria Teste', cpf: '529.982.247-25' },
+    cnpj: { tipoPessoa: 'PJ', cnpj: '11.222.333/0001-81' },
+  };
+  const aceita = async (key, value, texto = false) => {
     try {
-      await domain.createRecord(domain.createInMemoryCrmRepository(), { empresa: 'Base Teste', [key]: value });
+      const extra = texto && Object.prototype.hasOwnProperty.call(COERENTE, key) ? COERENTE[key] : { [key]: value };
+      await domain.createRecord(domain.createInMemoryCrmRepository(), { empresa: 'Base Teste', ...extra });
       return true;
     } catch {
       return false;
@@ -67,7 +77,7 @@ test('[DASH-MODEL-3] o tipo de cada campo bate com o do domínio: só os campos 
   };
   for (const entry of EDITABLE_FIELDS) {
     assert.equal(await aceita(entry.key, 5), entry.kind === 'number', `${entry.key}: número 5`);
-    assert.equal(await aceita(entry.key, 'texto'), entry.kind !== 'number', `${entry.key}: texto`);
+    assert.equal(await aceita(entry.key, 'texto', true), entry.kind !== 'number', `${entry.key}: texto`);
     if (entry.kind === 'number') assert.equal(await aceita(entry.key, -1), false, `${entry.key}: negativo`);
   }
 });

@@ -382,8 +382,11 @@ export function startDashboard({ document, root, fetchImpl, sdk, navigation, pre
           }
           const target = container();
           main.replaceChildren(target);
-          transient = createFunnelsView({ document, root: target, api, permissions, navigate, ui });
-          transient.load();
+          const funnelsView = createFunnelsView({ document, root: target, api, permissions, navigate, navigation, ui });
+          transient = funnelsView;
+          const loading = funnelsView.load();
+          // Fase D2: "Nova negociação" vinda da ficha de um cliente — abre o formulário com o cliente escolhido, depois de o quadro carregar
+          if (typeof route.newFor === 'string' && route.newFor !== '') loading.then(() => funnelsView.openNewFor(route.newFor));
         } else if (section === 'prospecting') {
           if (!permissions.canProposeLead) {
             main.replaceChildren(h(document, 'p', { className: 'message error', role: 'alert', text: NO_ACCESS }));

@@ -69,9 +69,18 @@ const BETA = Object.freeze({ empresa: 'Clínica Beta Teste', site: 'beta.example
 async function preencher(t, valores) {
   const { FIELD_GROUPS } = await import('../../dashboard/crm-model.mjs');
   const campos = FIELD_GROUPS.flatMap((grupo) => grupo.fields);
+  // Fase D2: num cadastro NOVO o tipo de pessoa é obrigatório. Sem outro pedido, o cliente é Pessoa Jurídica (como os que sempre tiveram só empresa); se a pessoa já escolheu, nada muda.
+  const tipo = Object.prototype.hasOwnProperty.call(valores, 'tipoPessoa') ? valores.tipoPessoa : null;
+  const rotuloDoTipo = { PF: 'Pessoa Física', PJ: 'Pessoa Jurídica' };
+  const radioPF = t.browser.by.label(escopo(t), 'Pessoa Física');
+  const radioPJ = t.browser.by.label(escopo(t), 'Pessoa Jurídica');
+  if (tipo !== null) t.browser.click(t.browser.by.label(escopo(t), rotuloDoTipo[tipo]));
+  else if (radioPF && radioPJ && !radioPF.checked && !radioPJ.checked) t.browser.click(radioPJ);
+  const ROTULOS_DO_NOVO_CLIENTE = { empresa: 'Nome da empresa (obrigatório)', nomeCompleto: 'Nome completo (obrigatório)', cpf: 'CPF (opcional)', cnpj: 'CNPJ (opcional)' };
   for (const [chave, valor] of Object.entries(valores)) {
+    if (chave === 'tipoPessoa') continue;
     const campo = campos.find((entry) => entry.key === chave);
-    const rotulo = campo.required ? `${campo.label} (obrigatório)` : campo.label;
+    const rotulo = ROTULOS_DO_NOVO_CLIENTE[chave] || campo.label;
     const controle = t.browser.by.label(escopo(t), rotulo);
     assert.ok(controle, `campo "${rotulo}" não encontrado`);
     t.browser.type(controle, valor);
@@ -97,7 +106,7 @@ test('[DASH-FULL-1] ADMIN pela interface, contra a API REAL: criar -> editar -> 
   await preencher(s, { empresa: 'Clínica Nova Teste', site: 'nova.example.test', telefone: '24 90000-0003', cidade: 'Petrópolis', valorProposta: '1500,50', responsavel: 'Rafael' });
   s.browser.choose(s.browser.by.label(escopo(s), 'Status inicial'), 'QUALIFIED_PROSPECT');
   s.browser.type(s.browser.by.label(escopo(s), 'Motivo da entrada (opcional)'), 'Indicação de cliente');
-  await clicar(s, 'Criar registro');
+  await clicar(s, 'Cadastrar cliente');
 
   // criou, gravou e abriu a ficha do registro
   const [criado] = gravados(s);
@@ -110,7 +119,7 @@ test('[DASH-FULL-1] ADMIN pela interface, contra a API REAL: criar -> editar -> 
   assert.equal(criado.historico[0].motivo, 'Indicação de cliente');
   assert.equal(s.browser.window.location.hash, `#/crm/registro/${encodeURIComponent(criado.id)}`);
   assert.equal(tituloDaFicha(s), 'Clínica Nova Teste');
-  assert.match(textoDaTela(s.browser), /Registro criado\./);
+  assert.match(textoDaTela(s.browser), /Cliente cadastrado\./);
 
   // editar
   await clicar(s, 'Editar');
@@ -172,13 +181,13 @@ test('[DASH-FULL-2] as regras do domínio chegam à tela pela API real: transiç
   s.browser.window.location.hash = '#/crm/novo';
   await s.browser.flush();
   await preencher(s, { empresa: 'Outra Empresa', site: ALFA.site });
-  await clicar(s, 'Criar registro');
+  await clicar(s, 'Cadastrar cliente');
   assert.match(textoDaTela(s.browser), /Já existe um registro com esta identidade \(mesmo site, telefone ou Instagram\)/);
   await preencher(s, { site: BETA.site });
-  await clicar(s, 'Criar registro');
+  await clicar(s, 'Cadastrar cliente');
   assert.match(textoDaTela(s.browser), /Esta identidade está bloqueada como "Não Contatar"/);
   assert.equal(gravados(s).length, antes, 'nada foi gravado');
-  assert.equal(s.browser.by.label(escopo(s), 'Empresa (obrigatório)').value, 'Outra Empresa', 'o formulário continua preenchido');
+  assert.equal(s.browser.by.label(escopo(s), 'Nome da empresa (obrigatório)').value, 'Outra Empresa', 'o formulário continua preenchido');
 
   // editar um registro bloqueado por baixo: a API recusa com RECORD_LOCKED e a ficha recarrega mostrando o bloqueio
   s.browser.window.location.hash = `#/crm/registro/${encodeURIComponent(alfa.id)}`;
@@ -194,22 +203,25 @@ test('[DASH-FULL-2] as regras do domínio chegam à tela pela API real: transiç
   assert.equal(s.browser.by.button(s.browser.root, 'Editar'), null);
 });
 
-test('[DASH-FULL-3] CONTRATO: os 31 campos do formulário, todos preenchidos, são aceitos pela API real e voltam iguais na ficha — o modelo do Dashboard e o domínio não divergem', async (t) => {
+test('[DASH-FULL-3] CONTRATO: os campos do formulário de uma Pessoa Jurídica (os 31 legados + tipo e CNPJ), todos preenchidos, são aceitos pela API real e voltam iguais na ficha — o modelo do Dashboard e o domínio não divergem', async (t) => {
   const { FIELD_GROUPS, EDITABLE_FIELDS } = await import('../../dashboard/crm-model.mjs');
   const s = await subir(t, { hash: '#/crm/novo' });
   const valores = {};
-  for (const campo of EDITABLE_FIELDS) {
+  // Pessoa Jurídica: nome completo e CPF são só da Pessoa Física (o domínio recusa), o CNPJ é um número válido
+  const SO_PF = ['nomeCompleto', 'cpf'];
+  for (const campo of EDITABLE_FIELDS.filter((entry) => !SO_PF.includes(entry.key))) {
     valores[campo.key] =
+      campo.kind === 'tipo' ? 'PJ' : campo.kind === 'cnpj' ? '11.222.333/0001-81' :
       campo.kind === 'number' ? '1500.5' : campo.kind === 'date' ? '2026-10-05' : campo.kind === 'email' ? 'contato@completo.example.test' : campo.kind === 'tel' ? '24 90000-0009' : campo.kind === 'url' ? `https://completo.example.test/${campo.key}` : `valor de ${campo.key}`;
   }
   valores.whatsapp = '24 90000-0010'; // outro número: o domínio compara cada número
   await preencher(s, valores);
-  await clicar(s, 'Criar registro');
+  await clicar(s, 'Cadastrar cliente');
 
-  assert.equal(gravados(s).length, 1, 'a API real aceitou os 31 campos');
+  assert.equal(gravados(s).length, 1, 'a API real aceitou todos os campos de uma Pessoa Jurídica');
   const [gravado] = gravados(s);
   for (const campo of EDITABLE_FIELDS) {
-    const esperado = campo.kind === 'number' ? 1500.5 : valores[campo.key];
+    const esperado = SO_PF.includes(campo.key) ? null : campo.kind === 'number' ? 1500.5 : campo.kind === 'cnpj' ? '11222333000181' : valores[campo.key];
     assert.equal(gravado[campo.key], esperado, `${campo.key} gravado`);
   }
   // e a ficha mostra os 31 (todos os blocos, cada campo com o valor que o servidor devolveu)
@@ -222,7 +234,7 @@ test('[DASH-FULL-3] CONTRATO: os 31 campos do formulário, todos preenchidos, s�
 test('[DASH-FULL-4] tudo o que a interface enviou ao servidor tem só campos do registro, status, motivo e id; nunca userId, authUserId, role, permissions, actor ou reviewedBy — e o servidor nunca devolveu authUserId, e-mail de login nem token', async (t) => {
   const s = await subir(t, { hash: '#/crm/novo', sementes: [ALFA] });
   await preencher(s, { empresa: 'Auditada Ltda', cidade: 'Niterói' });
-  await clicar(s, 'Criar registro');
+  await clicar(s, 'Cadastrar cliente');
   await clicar(s, 'Editar');
   s.browser.type(s.browser.by.label(escopo(s), 'Nicho'), 'Psicologia');
   await clicar(s, 'Salvar alterações');
@@ -257,7 +269,7 @@ test('[DASH-FULL-5] COMMERCIAL_CLOSER pela interface: lista, busca, filtra e abr
   const s = await subir(t, { usuario: RAFAEL, sementes: [ALFA, BETA], hash: '#/crm' });
   assert.match(textoDaTela(s.browser), /Clínica Alfa Teste/);
   assert.match(textoDaTela(s.browser), /Clínica Beta Teste/);
-  assert.equal(s.browser.by.link(s.browser.root, 'Novo registro'), null);
+  assert.equal(s.browser.by.link(s.browser.root, 'Novo cliente'), null);
   s.browser.type(s.browser.by.label(escopo(s), 'Buscar'), 'beta');
   assert.deepEqual(s.browser.by.tag(s.browser.by.tag(s.browser.root, 'tbody')[0], 'tr').map((tr) => tr.children[0].textContent), ['Clínica Beta Teste']);
   s.browser.type(s.browser.by.label(escopo(s), 'Buscar'), '');
@@ -345,6 +357,8 @@ test('[DASH-FULL-8] logout depois de usar o CRM: a página do login não guarda 
 // mesmos valores e um CRM VAZIO (sem nenhuma sugestão): o corpo enviado, a resposta, o arquivo lido CRU do disco, a leitura
 // GET e a ficha. Nenhuma camada muda caixa nem acento, e nenhuma perde a cidade.
 const CASO_RELATADO = Object.freeze({ empresa: 'TESTE CRM Rio X7', contato: 'João Teste', nicho: 'Clínica', cidade: 'Petrópolis', estado: 'RJ' });
+// o cadastro novo exige o tipo de pessoa: o caso relatado é uma Pessoa Jurídica (tem empresa)
+const CASO_RELATADO_PJ = Object.freeze({ tipoPessoa: 'PJ', ...CASO_RELATADO });
 
 const doDisco = (t) => Object.values(JSON.parse(fs.readFileSync(t.env.crmFilePath, 'utf8')));
 
@@ -361,13 +375,13 @@ const soOsDoCaso = (registro) => Object.fromEntries(CAMPOS_DO_CASO.map((campo) =
 test('[DASH-FULL-9] o caso relatado, pela interface: Nicho "Clínica", Cidade "Petrópolis" e Estado "RJ" num CRM vazio chegam iguais ao corpo enviado, à resposta, ao ARQUIVO em disco, à leitura GET e à ficha — sem virar minúsculas, sem perder acento e sem perder a cidade', async (t) => {
   const s = await subir(t, { hash: '#/crm/novo' }); // CRM vazio: nenhuma sugestão nos campos
   assert.equal(gravados(s).length, 0);
-  await preencher(s, CASO_RELATADO);
-  await clicar(s, 'Criar registro');
+  await preencher(s, CASO_RELATADO_PJ);
+  await clicar(s, 'Cadastrar cliente');
 
   // 1) o corpo que o navegador enviou
   const envio = s.fetchImpl.calls.find((chamada) => chamada.method === 'POST' && chamada.path === '/api/crm');
   assert.ok(envio, 'o navegador fez o POST');
-  assert.deepEqual(envio.body, { ...CASO_RELATADO, status: 'PROSPECT' }, 'corpo do POST: exatamente o que foi digitado (mais o status inicial)');
+  assert.deepEqual(envio.body, { ...CASO_RELATADO_PJ, status: 'PROSPECT' }, 'corpo do POST: exatamente o que foi digitado (mais o status inicial)');
 
   // 2) a resposta da API (201)
   const resposta = s.fetchImpl.responses.find((r) => r.method === 'POST' && r.path === '/api/crm');
@@ -398,7 +412,7 @@ test('[DASH-FULL-10] as camadas de baixo, SEM o Dashboard: o mesmo caso relatado
   const resposta = await s.fetchImpl('/api/crm', {
     method: 'POST',
     headers: { authorization: `Bearer ${s.accessToken}`, 'content-type': 'application/json', accept: 'application/json' },
-    body: JSON.stringify(CASO_RELATADO),
+    body: JSON.stringify(CASO_RELATADO_PJ),
   });
   assert.equal(resposta.status, 201);
   const { item } = await resposta.json();

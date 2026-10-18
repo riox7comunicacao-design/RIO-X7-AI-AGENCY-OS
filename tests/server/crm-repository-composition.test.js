@@ -82,7 +82,7 @@ test('[COMPOSE-1] REPOSITORY_MODE ausente (o padrão, "file") funciona exatament
   const { app, usersCount } = createServer(a.env);
   assert.equal(usersCount, 2);
   const chamar = chamador(app, a.tokenFor);
-  const criado = await chamar(BRENO, 'POST', '/api/crm', { empresa: 'Clínica Modo Arquivo Teste', site: 'modo-arquivo.example.test' });
+  const criado = await chamar(BRENO, 'POST', '/api/crm', { tipoPessoa: 'PJ', empresa: 'Clínica Modo Arquivo Teste', site: 'modo-arquivo.example.test' });
   assert.equal(criado.status, 201);
   assert.equal(fs.existsSync(a.crmArquivo), true, 'o arquivo local foi usado, como sempre');
   const lida = await chamar(BRENO, 'GET', `/api/crm/${enc(criado.json.item.id)}`);
@@ -269,7 +269,7 @@ test('[COMPOSE-4] as três composições diferentes (rota direta do CRM, promoç
   // introduz variação de tempo suficiente para que a janela de corrida nem sempre seja alcançada neste nível.
   const [promocao, direto] = await Promise.all([
     chamar(BRENO, 'POST', `/api/approvals/${enc(fila.ids.alfa)}/promote`, {}),
-    chamar(BRENO, 'POST', '/api/crm', { empresa: 'Corrida Direta Teste', site: 'consultorio-alfa.example.test' }),
+    chamar(BRENO, 'POST', '/api/crm', { tipoPessoa: 'PJ', empresa: 'Corrida Direta Teste', site: 'consultorio-alfa.example.test' }),
   ]);
 
   const resultados = [promocao, direto];
@@ -301,7 +301,7 @@ test('[COMPOSE-5] a leitura da PROSPECÇÃO (DNC/duplicidade na submissão) tamb
   const a = ambienteDeProducao(t);
   const { app } = createServer(a.env);
   const chamar = chamador(app, a.tokenFor);
-  const criado = await chamar(BRENO, 'POST', '/api/crm', { empresa: 'Já No CRM Teste', site: 'ja-no-crm.example.test' });
+  const criado = await chamar(BRENO, 'POST', '/api/crm', { tipoPessoa: 'PJ', empresa: 'Já No CRM Teste', site: 'ja-no-crm.example.test' });
   assert.equal(criado.status, 201);
 
   const admin = createAuthorizationContext(defineUser({ userId: 'user-compose', authUserId: 'auth-compose', name: 'Composição', email: 'composicao-teste@example.test', role: ROLE.ADMIN, status: USER_STATUS.ACTIVE }));

@@ -137,7 +137,7 @@ test('[PROMO-API-8] pendente, rejeitado e bloqueado (DNC) nunca são promovidos:
 
 test('[PROMO-API-9] duplicidade no CRM: 409 claro, sem criar nada e sem vazar o outro registro', async (t) => {
   const env = ambiente(t);
-  const existente = await chamar(env, BRENO, { method: 'POST', url: '/api/crm', body: { empresa: 'Outra Empresa', site: 'consultorio-alfa.example.test' } });
+  const existente = await chamar(env, BRENO, { method: 'POST', url: '/api/crm', body: { tipoPessoa: 'PJ', empresa: 'Outra Empresa', site: 'consultorio-alfa.example.test' } });
   assert.equal(existente.status, 201);
   await aprovar(env, RAFAEL, env.ids.alfa);
   const resposta = await promover(env, BRENO, env.ids.alfa);
@@ -150,7 +150,7 @@ test('[PROMO-API-9] duplicidade no CRM: 409 claro, sem criar nada e sem vazar o 
 
 test('[PROMO-API-10] DNC no CRM: 409 dizendo que a promoção foi bloqueada por restrição de contato; nada é criado', async (t) => {
   const env = ambiente(t);
-  const existente = await chamar(env, BRENO, { method: 'POST', url: '/api/crm', body: { empresa: 'Bloqueada', site: 'consultorio-alfa.example.test' } });
+  const existente = await chamar(env, BRENO, { method: 'POST', url: '/api/crm', body: { tipoPessoa: 'PJ', empresa: 'Bloqueada', site: 'consultorio-alfa.example.test' } });
   const idExistente = existente.json().item.id;
   assert.equal((await chamar(env, BRENO, { method: 'POST', url: `/api/crm/${encodeURIComponent(idExistente)}/dnc`, body: {} })).status, 200);
   await aprovar(env, RAFAEL, env.ids.alfa);

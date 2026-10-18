@@ -33,7 +33,7 @@ async function chamar(env, usuario, { method = 'GET', url, body, headers = {}, c
 const rota = (id) => `/api/crm/${encodeURIComponent(id)}`;
 
 async function criarRegistro(env, usuario, empresa = 'Clínica Teste') {
-  return (await chamar(env, usuario, { method: 'POST', url: '/api/crm', body: { empresa } })).json().item;
+  return (await chamar(env, usuario, { method: 'POST', url: '/api/crm', body: { tipoPessoa: 'PJ', empresa } })).json().item;
 }
 
 async function criarFunilComEtapa(env, usuario, nome = 'Outbound') {

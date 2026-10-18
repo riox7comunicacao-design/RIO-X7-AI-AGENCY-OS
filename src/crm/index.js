@@ -6,7 +6,8 @@
 // src/crm-adapters/ diretamente (hoje, ninguém em produção/dev — ver decisão 0024, etapa 2.1).
 const { createRecord, getRecord, listRecords, updateRecord, moveStatus, markDoNotContact } = require('./crmDomain');
 const { assertValidRepository, createInMemoryCrmRepository, createJsonFileCrmRepository, REQUIRED_REPOSITORY_METHODS } = require('./crmRepository');
-const { CRM_STATUS, CRM_STATUS_LABEL, PIPELINE_STATUSES, ALLOWED_TRANSITIONS, ACTOR, CRM_WRITABLE_FIELDS, CRM_MANAGED_FIELDS } = require('./constants');
+const { CRM_STATUS, CRM_STATUS_LABEL, PIPELINE_STATUSES, ALLOWED_TRANSITIONS, ACTOR, CRM_LEGACY_WRITABLE_FIELDS, CRM_PERSON_FIELDS, CRM_WRITABLE_FIELDS, CRM_MANAGED_FIELDS } = require('./constants');
+const { TIPO_PESSOA, clientDisplayName, isValidCpf, isValidCnpj, normalizeDocument } = require('./clientIdentity');
 
 module.exports = {
   createRecord,
@@ -24,6 +25,13 @@ module.exports = {
   PIPELINE_STATUSES,
   ALLOWED_TRANSITIONS,
   ACTOR,
+  CRM_LEGACY_WRITABLE_FIELDS,
+  CRM_PERSON_FIELDS,
   CRM_WRITABLE_FIELDS,
   CRM_MANAGED_FIELDS,
+  TIPO_PESSOA,
+  clientDisplayName,
+  isValidCpf,
+  isValidCnpj,
+  normalizeDocument,
 };

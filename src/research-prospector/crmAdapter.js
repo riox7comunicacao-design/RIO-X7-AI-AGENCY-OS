@@ -37,14 +37,17 @@ const textOrNull = (value) => (typeof value === 'string' && value.trim() !== '' 
 // sem número). Só os campos de identidade entram: nada mais do registro chega às checagens.
 function identityViews(record) {
   const base = {
-    empresa: textOrNull(hasOwn(record, 'empresa') ? record.empresa : null),
     site: textOrNull(hasOwn(record, 'site') ? record.site : null),
     instagram: textOrNull(hasOwn(record, 'instagram') ? record.instagram : null),
     cidade: textOrNull(hasOwn(record, 'cidade') ? record.cidade : null),
   };
   const numeros = [...new Set([hasOwn(record, 'telefone') ? record.telefone : null, hasOwn(record, 'whatsapp') ? record.whatsapp : null].map(textOrNull).filter(Boolean))];
-  if (numeros.length === 0) return [{ ...base, telefone: null, whatsapp: null }];
-  return numeros.map((numero) => ({ ...base, telefone: numero, whatsapp: null }));
+  // O NOME pelo qual o registro é conhecido: a empresa e, num cliente Pessoa Física (CRM 5.0, Fase D2), o nome completo — cada um é uma visão própria, como os números (um bloqueio por nome
+  // não pode ser contornado só porque o nome está no campo da pessoa e não no da empresa). Um candidato da prospecção só tem `empresa`: para ele nada muda.
+  const nomes = [...new Set([hasOwn(record, 'empresa') ? record.empresa : null, hasOwn(record, 'nomeCompleto') ? record.nomeCompleto : null].map(textOrNull).filter(Boolean))];
+  const nomesOuNulo = nomes.length === 0 ? [null] : nomes;
+  const numerosOuNulo = numeros.length === 0 ? [null] : numeros;
+  return nomesOuNulo.flatMap((empresa) => numerosOuNulo.map((numero) => ({ empresa, ...base, telefone: numero, whatsapp: null })));
 }
 
 // O registro está bloqueado para contato? Só o status do CRM ou o booleano estrito `true` — nada de "truthy" ('false', 1...).

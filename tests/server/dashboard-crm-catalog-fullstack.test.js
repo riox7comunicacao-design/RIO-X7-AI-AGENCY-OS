@@ -108,12 +108,14 @@ test('[CATFULLCRM-1] COM CATÁLOGOS REAIS: o formulário "Novo registro" lê os 
   assert.deepEqual(opcoes(seletor(s, 'servicoPotencial')), ['Nenhum (deixar em branco)', 'Gestão de redes sociais', 'Criação de site', 'Informar outro valor']);
   assert.ok(!texto(s).includes('1800') && !texto(s).includes('4800') && !/1\.800|4\.800/.test(texto(s)), 'o preço de referência nunca chega ao formulário do CRM');
 
-  s.browser.type(s.browser.by.label(s.browser.root, 'Empresa (obrigatório)'), 'Clínica Real Teste');
+  s.browser.click(s.browser.by.label(s.browser.root, 'Pessoa Jurídica'));
+
+  s.browser.type(s.browser.by.label(s.browser.root, 'Nome da empresa (obrigatório)'), 'Clínica Real Teste');
   s.browser.type(s.browser.by.label(s.browser.root, 'Site'), 'real.example.test');
   await escolher(s, 'nicho', 'Estética');
   await escolher(s, 'origem', 'Indicação');
   await escolher(s, 'servicoPotencial', 'Gestão de redes sociais');
-  await clicar(s, botao(s, 'Criar registro'));
+  await clicar(s, botao(s, 'Cadastrar cliente'));
 
   const [criado] = gravados(s);
   assert.equal(gravados(s).length, 1);
@@ -188,7 +190,8 @@ test('[CATFULLCRM-3] ESTRUTURA DE DADOS AUSENTE (migration NÃO aplicada): com o
   assert.doesNotMatch(texto(s), /PGRST|crm_niches|schema cache/, 'o detalhe técnico do banco nunca chega à tela');
 
   // o CRM continua funcionando de ponta a ponta
-  s.browser.type(s.browser.by.label(s.browser.root, 'Empresa (obrigatório)'), 'Clínica Sem Cadastros');
+  s.browser.click(s.browser.by.label(s.browser.root, 'Pessoa Jurídica'));
+  s.browser.type(s.browser.by.label(s.browser.root, 'Nome da empresa (obrigatório)'), 'Clínica Sem Cadastros');
   s.browser.type(s.browser.by.label(s.browser.root, 'Site'), 'semcadastros.example.test');
   s.browser.type(campoTexto(s, 'nicho'), 'Fisioterapia');
   s.browser.type(campoTexto(s, 'origem'), 'Indicação de colega');
@@ -199,11 +202,11 @@ test('[CATFULLCRM-3] ESTRUTURA DE DADOS AUSENTE (migration NÃO aplicada): com o
   assert.equal(s.browser.findAll(s.browser.root, (el) => el.className.split(/\s+/).includes('catalog-notice') && !el.hidden).length, 1, 'continua um aviso só');
   assert.equal(gravados(s).length, 0, '"Verificar novamente" só relê os cadastros: não cria o registro');
   assert.equal(campoTexto(s, 'nicho').value, 'Fisioterapia', 'e o digitado continua');
-  await clicar(s, botao(s, 'Criar registro'));
+  await clicar(s, botao(s, 'Cadastrar cliente'));
   const [criado] = gravados(s);
   assert.equal(gravados(s).length, 1);
   assert.deepEqual([criado.nicho, criado.origem, criado.servicoPotencial], ['Fisioterapia', 'Indicação de colega', 'Consultoria']);
-  assert.match(texto(s), /Registro criado\./);
+  assert.match(texto(s), /Cliente cadastrado\./);
 
   assert.deepEqual(doCatalogo(s).filter((c) => c.method !== 'GET'), [], 'nenhuma gravação saiu para os catálogos');
   assert.ok(chamadasAoPostgrest.every((c) => c.startsWith('GET ')), 'e nenhuma gravação chegou ao PostgREST');
@@ -216,7 +219,7 @@ test('[CATFULLCRM-4] QUEM SÓ LÊ O CRM (COMMERCIAL_CLOSER): sem formulário, ne
   await ir(s, `#/crm/registro/${encodeURIComponent(registro.id)}`);
   assert.equal(botao(s, 'Editar'), null, 'sem a permissão comercial de escrita não há edição');
   await ir(s, '#/crm/novo');
-  assert.match(texto(s), /Sua conta não pode criar registros no CRM/);
+  assert.match(texto(s), /Sua conta não pode cadastrar clientes no CRM/);
   assert.deepEqual(doCatalogo(s), [], 'nenhuma consulta a catálogos');
   assert.equal((await chamar(s, 'GET', '/api/crm-catalogs/nichos')).status, 200, 'consultar os ativos é permitido (READ:CRM)');
   assert.equal((await chamar(s, 'GET', '/api/crm-catalogs/nichos?todos=1')).status, 403, 'os desativados são da administração');

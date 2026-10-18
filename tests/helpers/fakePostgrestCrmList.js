@@ -20,6 +20,7 @@ const registro = (overrides = {}) => ({
   googlePerfil: null, cidade: null, estado: null, nicho: null, origem: null, temperatura: null, servicoPotencial: null, problemaIdentificado: null,
   raioXDeNicho: null, raioXPersonalizado: null, statusDoDiagnostico: null, linkDoRaioX: null, dataDaAnalise: null, dataDaReuniao: null, linkDoMeet: null,
   proximaAcao: null, dataDaProximaAcao: null, responsavel: null, ultimaInteracao: null, valorProposta: null, valorTotal: null, observacoes: null,
+  tipoPessoa: null, nomeCompleto: null, cpf: null, cnpj: null,
   ...overrides,
 });
 

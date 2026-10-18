@@ -1064,3 +1064,17 @@ a.settings-card:focus-visible { outline: 3px solid var(--brand-strong); outline-
   .catalog-detail-actions .btn { flex: 1 1 100%; }
   .catalog-form-actions .btn { flex: 1 1 100%; }
 }
+
+/* ---- Clientes PF/PJ (Fase D2): tipo de pessoa, seção expansível do novo cliente, busca de cliente na negociação ---- */
+.field[hidden], .form-block[hidden] { display: none; }
+.crm-person-type { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px; margin: 0; padding: 0; border: 0; min-width: 0; }
+.crm-person-type > legend { grid-column: 1 / -1; padding: 0; margin-bottom: 4px; font-weight: 600; }
+.crm-person-type .modality-option { display: flex; align-items: center; gap: 8px; padding: 10px 12px; border: 1px solid var(--line); border-radius: 10px; background: var(--surface); }
+.crm-person-type .modality-option:has(input:checked) { border-color: var(--brand-ink); background: var(--brand-soft); }
+.crm-person-type .modality-option label { flex: 1; cursor: pointer; font-weight: 600; }
+.form-more { margin: 4px 0 12px; padding: 6px 12px; border: 1px dashed var(--line-strong); border-radius: 10px; }
+.form-more > summary { cursor: pointer; padding: 6px 0; font-weight: 700; }
+.form-more[open] > summary { margin-bottom: 8px; }
+.crm-person-badge { margin-left: 8px; }
+.client-search { margin-bottom: 4px; }
+@media (max-width: 640px) { .crm-person-type { grid-template-columns: 1fr; } }

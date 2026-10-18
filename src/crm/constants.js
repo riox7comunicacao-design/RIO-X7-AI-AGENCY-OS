@@ -87,7 +87,7 @@ const ACTOR = Object.freeze({ HUMAN: 'HUMAN', SYSTEM: 'SYSTEM' });
 // `id`, `status` e `historico` NUNCA entram por aqui: `id` é gerado pelo domínio, `status` só
 // muda por moveStatus()/markDoNotContact() (para sempre gerar histórico e respeitar a máquina de
 // estados), e `historico` é só de leitura (o domínio o gerencia inteiramente).
-const CRM_WRITABLE_FIELDS = Object.freeze([
+const CRM_LEGACY_WRITABLE_FIELDS = Object.freeze([
   'empresa',
   'contato',
   'cargo',
@@ -121,6 +121,15 @@ const CRM_WRITABLE_FIELDS = Object.freeze([
   'observacoes',
 ]);
 
+// Fase D2 — identificação do cliente como Pessoa Física/Jurídica: QUATRO campos ADITIVOS, depois dos 31 legados (que seguem exatamente como eram, na mesma ordem).
+//   tipoPessoa    'PF' | 'PJ' | null (null = registro antigo, ainda sem tipo definido: nunca é inferido)
+//   nomeCompleto  o nome da Pessoa Física (a PJ usa `empresa`; o nome de uma pessoa nunca vai em `empresa`)
+//   cpf, cnpj     opcionais; guardados só com os caracteres do documento (sem pontos, barras nem hífen), validados em clientIdentity.js
+const CRM_PERSON_FIELDS = Object.freeze(['tipoPessoa', 'nomeCompleto', 'cpf', 'cnpj']);
+
+// TODOS os campos graváveis: os 31 legados + os 4 de identificação (35).
+const CRM_WRITABLE_FIELDS = Object.freeze([...CRM_LEGACY_WRITABLE_FIELDS, ...CRM_PERSON_FIELDS]);
+
 // Campos só de leitura, gerenciados pelo próprio domínio (nunca aceitos como entrada de escrita).
 const CRM_MANAGED_FIELDS = Object.freeze(['id', 'status', 'dataDeEntrada', 'historico']);
 
@@ -130,6 +139,8 @@ module.exports = {
   PIPELINE_STATUSES,
   ALLOWED_TRANSITIONS,
   ACTOR,
+  CRM_LEGACY_WRITABLE_FIELDS,
+  CRM_PERSON_FIELDS,
   CRM_WRITABLE_FIELDS,
   CRM_MANAGED_FIELDS,
 };

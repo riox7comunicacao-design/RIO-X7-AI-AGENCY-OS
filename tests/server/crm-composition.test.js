@@ -58,13 +58,13 @@ test('[CRM-COMP-1] createServer liga o CRM de ponta a ponta: rotas existentes e 
   assert.equal((await chamar(app, { url: '/api/crm', token: tokens.rafael })).status, 200);
   assert.equal(fs.existsSync(arquivo), false, 'ler não cria o arquivo');
 
-  const criada = await chamar(app, { method: 'POST', url: '/api/crm', token: tokens.breno, body: { empresa: 'Clínica Composta', site: 'composta.example.test' } });
+  const criada = await chamar(app, { method: 'POST', url: '/api/crm', token: tokens.breno, body: { tipoPessoa: 'PJ', empresa: 'Clínica Composta', site: 'composta.example.test' } });
   assert.equal(criada.status, 201);
   const id = criada.json().item.id;
   assert.deepEqual(Object.keys(JSON.parse(fs.readFileSync(arquivo, 'utf8'))), [id], 'gravou no arquivo indicado por RIO_X7_CRM_PATH');
   assert.deepEqual(JSON.parse(fs.readFileSync(arquivo, 'utf8'))[id].historico[0].reviewedBy, { userId: BRENO.userId, name: BRENO.name, role: BRENO.role });
 
-  const doCloser = await chamar(app, { method: 'POST', url: '/api/crm', token: tokens.rafael, body: { empresa: 'Outra' } });
+  const doCloser = await chamar(app, { method: 'POST', url: '/api/crm', token: tokens.rafael, body: { tipoPessoa: 'PJ', empresa: 'Outra' } });
   assert.equal(doCloser.status, 403, 'a ponte real de src/auth nega WRITE:CRM ao closer');
   assert.deepEqual(Object.keys(JSON.parse(fs.readFileSync(arquivo, 'utf8'))), [id]);
 
@@ -113,7 +113,7 @@ test('[CRM-COMP-3] um RIO_X7_CRM_PATH relativo é resolvido a partir do diretór
 
 test('[CRM-COMP-4] a composição não expõe o CRM a quem não é USER: um token válido de quem não está no arquivo de usuários -> 403 NO_ACCESS, em leitura e em escrita', async (t) => {
   const { app, tokens } = comporServidor(t, (d) => ({ RIO_X7_CRM_PATH: path.join(d, 'crm.json') }));
-  for (const requisicaoOrfa of [{ url: '/api/crm' }, { method: 'POST', url: '/api/crm', body: { empresa: 'X' } }]) {
+  for (const requisicaoOrfa of [{ url: '/api/crm' }, { method: 'POST', url: '/api/crm', body: { tipoPessoa: 'PJ', empresa: 'X' } }]) {
     const resposta = await chamar(app, { ...requisicaoOrfa, token: tokens.orfao });
     assert.equal(resposta.status, 403);
     assert.equal(resposta.json().error.code, 'NO_ACCESS');

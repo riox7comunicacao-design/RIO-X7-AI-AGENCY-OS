@@ -7,7 +7,7 @@ const assert = require('node:assert/strict');
 
 const constants = require('../../src/crm/catalogConstants');
 const { CATALOG, CATALOG_KEYS, CATALOG_DEFINITIONS, COMMON_ITEM_FIELDS, LIMITS, BILLING_TYPES, RECURRENCES, PAYMENT_MODALITY_FIELDS, LEAD_CHANNELS, NICHE_COLORS, NICHE_COLOR_KEYS, CATALOG_ERROR } = constants;
-const { CRM_WRITABLE_FIELDS, CRM_MANAGED_FIELDS } = require('../../src/crm/constants');
+const { CRM_WRITABLE_FIELDS, CRM_LEGACY_WRITABLE_FIELDS, CRM_PERSON_FIELDS, CRM_MANAGED_FIELDS } = require('../../src/crm/constants');
 
 // ---- as contas de cor (WCAG 2.x e CIELAB), independentes do código de produção ----------------------------------------------------
 const rgb = (hex) => [1, 3, 5].map((i) => parseInt(hex.slice(i, i + 2), 16));
@@ -62,14 +62,18 @@ test('[CATCONST-1] os três catálogos: chaves, prefixos de id, tabelas e o camp
 
 test('[CATCONST-2] COMPATIBILIDADE COM O CRM LEGADO (decisão D3): os 31 campos do registro seguem EXATAMENTE como eram, e os campos legados dos catálogos continuam TEXTO LIVRE entre eles', () => {
   assert.deepEqual(
-    [...CRM_WRITABLE_FIELDS],
+    [...CRM_LEGACY_WRITABLE_FIELDS],
     [
       'empresa', 'contato', 'cargo', 'telefone', 'whatsapp', 'email', 'site', 'instagram', 'facebook', 'googlePerfil', 'cidade', 'estado', 'nicho', 'origem', 'temperatura',
       'servicoPotencial', 'problemaIdentificado', 'raioXDeNicho', 'raioXPersonalizado', 'statusDoDiagnostico', 'linkDoRaioX', 'dataDaAnalise', 'dataDaReuniao', 'linkDoMeet',
       'proximaAcao', 'dataDaProximaAcao', 'responsavel', 'ultimaInteracao', 'valorProposta', 'valorTotal', 'observacoes',
     ]
   );
-  assert.equal(CRM_WRITABLE_FIELDS.length, 31);
+  assert.equal(CRM_LEGACY_WRITABLE_FIELDS.length, 31);
+  // Fase D2: quatro campos ADITIVOS de identificação PF/PJ, depois dos 31 (nunca no meio, nunca no lugar de um deles)
+  assert.deepEqual([...CRM_PERSON_FIELDS], ['tipoPessoa', 'nomeCompleto', 'cpf', 'cnpj']);
+  assert.deepEqual([...CRM_WRITABLE_FIELDS], [...CRM_LEGACY_WRITABLE_FIELDS, ...CRM_PERSON_FIELDS]);
+  assert.equal(CRM_WRITABLE_FIELDS.length, 35);
   assert.deepEqual([...CRM_MANAGED_FIELDS], ['id', 'status', 'dataDeEntrada', 'historico']);
   for (const key of CATALOG_KEYS) assert.ok(CRM_WRITABLE_FIELDS.includes(CATALOG_DEFINITIONS[key].legacyField), `${key}: o campo legado existe no registro`);
   // nenhum campo novo de catálogo entrou no registro (nada de nicheId, serviceId, originId)

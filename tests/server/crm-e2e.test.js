@@ -92,10 +92,10 @@ test('[E2E-1] submit -> fila -> aprovação -> promoção -> CRM -> status -> hi
   assert.deepEqual([r.status, r.json.items], [200, []], 'fila vazia');
 
   // --- 1. sementes no CRM (só pela API): um registro ativo e um bloqueado (DNC) ---------------------------------------------------
-  r = await chamar(BRENO, 'POST', '/api/crm', { empresa: 'Clínica Existente Teste', site: 'existente.example.test', telefone: '24 98765-2001', cidade: 'Petrópolis', estado: 'RJ', nicho: 'Psicologia' });
+  r = await chamar(BRENO, 'POST', '/api/crm', { tipoPessoa: 'PJ', empresa: 'Clínica Existente Teste', site: 'existente.example.test', telefone: '24 98765-2001', cidade: 'Petrópolis', estado: 'RJ', nicho: 'Psicologia' });
   assert.equal(r.status, 201);
   const existenteId = r.json.item.id;
-  r = await chamar(BRENO, 'POST', '/api/crm', { empresa: 'Clínica Bloqueada Teste', site: 'bloqueada.example.test', telefone: '24 98765-2002', cidade: 'Petrópolis', estado: 'RJ', nicho: 'Psicologia' });
+  r = await chamar(BRENO, 'POST', '/api/crm', { tipoPessoa: 'PJ', empresa: 'Clínica Bloqueada Teste', site: 'bloqueada.example.test', telefone: '24 98765-2002', cidade: 'Petrópolis', estado: 'RJ', nicho: 'Psicologia' });
   assert.equal(r.status, 201);
   r = await chamar(BRENO, 'POST', `/api/crm/${enc(r.json.item.id)}/dnc`, { reason: 'Pediu para não ser contatado (teste)' });
   assert.deepEqual([r.status, r.json.item.status], [200, 'DO_NOT_CONTACT']);
@@ -188,10 +188,10 @@ test('[E2E-1] submit -> fila -> aprovação -> promoção -> CRM -> status -> hi
   assert.equal(naFila()[alfa].promocao.crmRecordId, alfaCrmId, 'a fila guarda a ligação com o registro');
 
   // --- 6. proteção contra duplicação ---------------------------------------------------------------------------------------------------
-  r = await chamar(BRENO, 'POST', '/api/crm', { empresa: 'Outro Nome Teste', site: 'alfa-teste.example.test' });
+  r = await chamar(BRENO, 'POST', '/api/crm', { tipoPessoa: 'PJ', empresa: 'Outro Nome Teste', site: 'alfa-teste.example.test' });
   assert.deepEqual([r.status, r.json.error.code], [409, 'DUPLICATE_RECORD'], 'criar com a identidade de um registro existente');
   assert.equal((await chamar(BRENO, 'POST', `/api/approvals/${enc(gama)}/approve`, {})).status, 200);
-  r = await chamar(BRENO, 'POST', '/api/crm', { empresa: 'Registro Manual Gama', site: 'gama-teste.example.test' });
+  r = await chamar(BRENO, 'POST', '/api/crm', { tipoPessoa: 'PJ', empresa: 'Registro Manual Gama', site: 'gama-teste.example.test' });
   assert.equal(r.status, 201);
   const total = registrosNoDisco().length;
   r = await promover(BRENO, gama);
@@ -202,7 +202,7 @@ test('[E2E-1] submit -> fila -> aprovação -> promoção -> CRM -> status -> hi
   const antesCloser = fs.readFileSync(crmArquivo, 'utf8');
   for (const url of ['/api/crm', `/api/crm/${enc(alfaCrmId)}`, `/api/crm/${enc(alfaCrmId)}/history`]) assert.equal((await chamar(RAFAEL, 'GET', url)).status, 200, url);
   for (const [method, url, body] of [
-    ['POST', '/api/crm', { empresa: 'Closer Não Cria Teste' }],
+    ['POST', '/api/crm', { tipoPessoa: 'PJ', empresa: 'Closer Não Cria Teste' }],
     ['PATCH', `/api/crm/${enc(alfaCrmId)}`, { nicho: 'Outro' }],
     ['POST', `/api/crm/${enc(alfaCrmId)}/status`, { to: 'CONTACTED' }],
     ['POST', `/api/crm/${enc(alfaCrmId)}/dnc`, {}],
@@ -249,7 +249,7 @@ test('[E2E-1] submit -> fila -> aprovação -> promoção -> CRM -> status -> hi
 // ===========================================================================
 test('[E2E-2] sem token, token inválido e usuário inativo: nenhuma rota do fluxo responde com dado nem grava', async (t) => {
   const { env, chamar } = ambienteVazio(t);
-  const seed = await chamar(BRENO, 'POST', '/api/crm', { empresa: 'Semente Teste', site: 'semente.example.test' });
+  const seed = await chamar(BRENO, 'POST', '/api/crm', { tipoPessoa: 'PJ', empresa: 'Semente Teste', site: 'semente.example.test' });
   const id = seed.json.item.id;
   const antes = fs.readFileSync(env.crmFilePath, 'utf8');
   const rotas = [
@@ -259,7 +259,7 @@ test('[E2E-2] sem token, token inválido e usuário inativo: nenhuma rota do flu
     ['POST', `/api/approvals/${enc('id:x.example.test')}/approve`, {}],
     ['POST', `/api/approvals/${enc('id:x.example.test')}/promote`, {}],
     ['GET', '/api/crm'],
-    ['POST', '/api/crm', { empresa: 'Sem Token Teste' }],
+    ['POST', '/api/crm', { tipoPessoa: 'PJ', empresa: 'Sem Token Teste' }],
     ['GET', `/api/crm/${enc(id)}`],
     ['GET', `/api/crm/${enc(id)}/history`],
     ['POST', `/api/crm/${enc(id)}/status`, { to: 'CONTACTED' }],
@@ -352,7 +352,7 @@ test('[E2E-4] Dashboard (ADMIN e closer) sobre o estado real: Visão Geral, CRM 
   const promo = await chamar(BRENO, 'POST', `/api/approvals/${enc(alfaFila)}/promote`, {});
   const alfaId = promo.json.crmRecordId;
   await chamar(BRENO, 'POST', `/api/crm/${enc(alfaId)}/status`, { to: 'CONTACTED', reason: 'Primeiro contato (teste)' });
-  const bloq = await chamar(BRENO, 'POST', '/api/crm', { empresa: 'Clínica Bloqueada Teste', site: 'bloqueada.example.test', cidade: 'Niterói', estado: 'RJ', nicho: 'Odontologia' });
+  const bloq = await chamar(BRENO, 'POST', '/api/crm', { tipoPessoa: 'PJ', empresa: 'Clínica Bloqueada Teste', site: 'bloqueada.example.test', cidade: 'Niterói', estado: 'RJ', nicho: 'Odontologia' });
   await chamar(BRENO, 'POST', `/api/crm/${enc(bloq.json.item.id)}/dnc`, { reason: 'Pediu para não ser contatado (teste)' });
 
   // ---- ADMIN ----

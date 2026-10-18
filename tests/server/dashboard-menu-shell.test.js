@@ -239,18 +239,19 @@ test('[MENU-9] PROTEÇÃO DE RASCUNHO ao trocar de item do menu: com texto digit
   assert.deepEqual(marcados(t), ['Clientes']);
 
   await ir(t, '#/crm/novo');
-  t.browser.type(t.browser.by.label(t.browser.root, 'Empresa (obrigatório)'), 'Rascunho Ltda');
+  t.browser.click(t.browser.by.label(t.browser.root, 'Pessoa Jurídica'));
+  t.browser.type(t.browser.by.label(t.browser.root, 'Nome da empresa (obrigatório)'), 'Rascunho Ltda');
   const entradas = t.win.history.length;
   await clicar(t, t.browser.by.link(nav(t), 'Dashboard Comercial'));
   assert.ok(pergunta(t), 'perguntou');
   assert.deepEqual(marcados(t), ['Clientes'], 'o menu e a tela continuam onde estavam');
-  assert.equal(t.browser.by.label(t.browser.root, 'Empresa (obrigatório)').value, 'Rascunho Ltda');
+  assert.equal(t.browser.by.label(t.browser.root, 'Nome da empresa (obrigatório)').value, 'Rascunho Ltda');
   assert.equal(t.win.fireBeforeUnload().prevented, true, 'atualizar a página também avisa');
 
   await clicar(t, t.browser.by.button(pergunta(t), 'Continuar editando'));
   assert.equal(t.win.location.hash, '#/crm/novo', 'o endereço voltou');
   assert.equal(t.win.history.length, entradas + 1, 'só a entrada que a própria pessoa criou ao clicar; nenhuma a mais');
-  assert.equal(t.browser.by.label(t.browser.root, 'Empresa (obrigatório)').value, 'Rascunho Ltda', 'o rascunho continua');
+  assert.equal(t.browser.by.label(t.browser.root, 'Nome da empresa (obrigatório)').value, 'Rascunho Ltda', 'o rascunho continua');
 
   await clicar(t, t.browser.by.button(nav(t), 'Prospecção')); // abre o grupo
   await clicar(t, t.browser.by.link(nav(t), 'Fila de Aprovação'));

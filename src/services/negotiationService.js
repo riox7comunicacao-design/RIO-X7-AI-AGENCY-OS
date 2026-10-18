@@ -29,7 +29,7 @@ const DOMAIN_FUNCTIONS = Object.freeze(['getNegotiation', 'listNegotiations', 'c
 const LIST_FILTERS = Object.freeze(['funnelId', 'situacao', 'crmRecordId']);
 const MOVE_KEYS = Object.freeze(['stageId', 'reason']);
 const LOSE_KEYS = Object.freeze(['motivo']);
-const CARD_CRM_FIELDS = Object.freeze(['empresa', 'contato', 'status', 'responsavel', 'ultimaInteracao', 'proximaAcao']);
+const CARD_CRM_FIELDS = Object.freeze(['empresa', 'tipoPessoa', 'nomeCompleto', 'contato', 'status', 'responsavel', 'ultimaInteracao', 'proximaAcao']);
 
 function onlyKnown(input, allowed, label) {
   if (!isPlainObject(input)) throw new Error(`Negociação: ${label} deve ser um objeto simples`);
@@ -49,7 +49,7 @@ function toPublicNegotiation(view, cliente) {
   return {
     id: view.id,
     crmRecordId: view.crmRecordId,
-    cliente: cliente ? { empresa: cliente.empresa ?? null } : null,
+    cliente: cliente ? { empresa: cliente.empresa ?? null, tipoPessoa: cliente.tipoPessoa ?? null, nomeCompleto: cliente.nomeCompleto ?? null } : null,
     funnelId: view.funnelId,
     funnelNome: view.funnelNome ?? null,
     cardId: view.cardId,

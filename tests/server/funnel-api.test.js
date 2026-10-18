@@ -174,7 +174,7 @@ test('[FUNNEL-API-10] query string -> 400 (a API não tem filtro nem busca)', as
 // CARD (Etapa "Funis 2")
 // ===========================================================================
 async function criarRegistro(env, usuario, empresa = 'Clínica Teste') {
-  const resposta = await chamar(env, usuario, { method: 'POST', url: '/api/crm', body: { empresa } });
+  const resposta = await chamar(env, usuario, { method: 'POST', url: '/api/crm', body: { tipoPessoa: 'PJ', empresa } });
   return resposta.json().item;
 }
 async function criarFunilComEtapas(env, usuario, nomes = ['Sem contato', 'Contatado']) {

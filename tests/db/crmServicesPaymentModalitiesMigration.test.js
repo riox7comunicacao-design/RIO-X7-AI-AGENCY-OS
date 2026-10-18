@@ -27,10 +27,11 @@ const lista = (texto) => [...texto.matchAll(/'([^']+)'/g)].map((m) => m[1]);
 test('[MIGMOD-1] o arquivo existe, segue a convenção de nome do CLI do Supabase, é a ÚLTIMA migration e se declara expressamente NÃO APLICADA', () => {
   assert.match(FILE_NAME, /^\d{14}_[a-z0-9_]+\.sql$/);
   const todas = fs.readdirSync(MIGRATIONS_DIR).filter((nome) => nome.endsWith('.sql')).sort();
-  // Era a mais nova até a Fase D1.1, que acrescentou a migration das Negociações DEPOIS dela (só referencia crm_services; esta não foi editada — o hash dos testes dela continua valendo).
-  assert.equal(todas.at(-2), FILE_NAME, 'é a penúltima: só a das Negociações (D1.1) vem depois');
-  assert.equal(todas.at(-1), '20261019090000_crm_negotiations.sql');
-  assert.equal(todas.at(-3), '20261017090000_prospecting_permanent_exclusions_created_by_text.sql', 'vem logo depois da corretiva das Exclusões');
+  // Era a mais nova até a Fase D1.1, que acrescentou a migration das Negociações DEPOIS dela (só referencia crm_services; esta não foi editada — o hash dos testes dela continua valendo); a D2 (Clientes PF/PJ) veio depois.
+  assert.equal(todas.at(-3), FILE_NAME, 'é a antepenúltima: só a das Negociações (D1.1) e a dos Clientes PF/PJ (D2) vêm depois');
+  assert.equal(todas.at(-2), '20261019090000_crm_negotiations.sql');
+  assert.equal(todas.at(-1), '20261020090000_crm_client_person_type.sql');
+  assert.equal(todas.at(-4), '20261017090000_prospecting_permanent_exclusions_created_by_text.sql', 'vem logo depois da corretiva das Exclusões');
   assert.ok(todas.includes('20261012090000_crm_catalogs.sql'), 'a dos catálogos continua lá, sem ser editada');
   assert.match(SQL.split('\n').slice(0, 8).join('\n'), /NÃO APLICADA/, 'o cabeçalho diz que NÃO foi aplicada');
   assert.match(SQL, /decisão 0027/);

@@ -319,22 +319,24 @@ test('[CRM-ED-7] "NOVO REGISTRO" também é protegido: texto digitado + Voltar/o
 
   s.win.history.forward();
   await s.browser.flush(10);
-  s.browser.type(s.browser.by.label(s.root, 'Empresa (obrigatório)'), 'Nova Ltda');
+  s.browser.click(s.browser.by.label(s.root, 'Pessoa Jurídica'));
+  s.browser.type(s.browser.by.label(s.root, 'Nome da empresa (obrigatório)'), 'Nova Ltda');
   assert.equal(s.win.fireBeforeUnload().prevented, true);
   s.win.history.back();
   await s.browser.flush(10);
   assert.ok(confirmacao(s), 'com texto digitado, o Voltar pergunta');
-  assert.equal(s.browser.by.label(s.root, 'Empresa (obrigatório)').value, 'Nova Ltda');
+  assert.equal(s.browser.by.label(s.root, 'Nome da empresa (obrigatório)').value, 'Nova Ltda');
   await clicar(s, noModal(s, 'Continuar editando'));
   assert.equal(s.win.location.hash, '#/crm/novo');
-  assert.equal(s.browser.by.label(s.root, 'Empresa (obrigatório)').value, 'Nova Ltda', 'o rascunho continua');
+  assert.equal(s.browser.by.label(s.root, 'Nome da empresa (obrigatório)').value, 'Nova Ltda', 'o rascunho continua');
 
-  await clicar(s, s.browser.by.button(s.root, 'Criar registro'));
+  await clicar(s, s.browser.by.button(s.root, 'Cadastrar cliente'));
   assert.equal(conta(s, 'createCrm'), 1);
   assert.equal(s.win.fireBeforeUnload().prevented, false, 'criado: nada mais a perder');
 
   const outro = await abrir({ comNavegacao: true, hash: '#/crm/novo' });
-  outro.browser.type(outro.browser.by.label(outro.root, 'Empresa (obrigatório)'), 'Descartável');
+  outro.browser.click(outro.browser.by.label(outro.root, 'Pessoa Jurídica'));
+  outro.browser.type(outro.browser.by.label(outro.root, 'Nome da empresa (obrigatório)'), 'Descartável');
   outro.win.location.hash = '#/crm';
   await outro.browser.flush(10);
   assert.ok(confirmacao(outro));
@@ -423,24 +425,25 @@ test('[CRM-ED-8] restore(hash) leva o endereço de volta SEM criar entradas: usa
 // PRIORIDADE 2 — a edição no drawer
 // ---------------------------------------------------------------------------------------------------------------------------------------------
 
-test('[CRM-ED-9] os 31 campos na edição, em abas (Resumo, Contato e presença, Comercial), cada um uma vez, com o valor do registro; obrigatório claro; status e data de entrada só para ler; trocar de aba não perde o digitado', async () => {
+test('[CRM-ED-9] os 35 campos na edição (31 legados + 4 de identificação PF/PJ), em abas (Resumo, Contato e presença, Comercial), cada um uma vez, com o valor do registro; obrigatório claro; status e data de entrada só para ler; trocar de aba não perde o digitado', async () => {
   const { WRITABLE_KEYS, FIELD_GROUPS } = await loadModel();
   const s = await abrir();
   await abrirEdicao(s);
   const g = gaveta(s);
   const controles = s.browser.findAll(g, (el) => ['input', 'textarea'].includes(el.localName) && el.getAttribute('name'));
-  assert.deepEqual(controles.map((el) => el.getAttribute('name')).sort(), [...WRITABLE_KEYS].sort(), 'exatamente os 31 campos gravaveis, cada um uma vez');
-  assert.equal(WRITABLE_KEYS.length, 31);
+  assert.deepEqual([...new Set(controles.map((el) => el.getAttribute('name')))].sort(), [...WRITABLE_KEYS].sort(), 'exatamente os 35 campos gravaveis, cada um uma vez (o tipo de pessoa são dois botões de rádio com o mesmo nome)');
+  assert.equal(controles.filter((el) => el.getAttribute('name') === 'tipoPessoa').length, 2, 'Pessoa Física e Pessoa Jurídica');
+  assert.equal(WRITABLE_KEYS.length, 35);
   const abas = s.browser.findAll(g, (el) => el.getAttribute('role') === 'tab' && /^crm-edit-tab-/.test(el.id));
   assert.deepEqual(abas.map((b) => b.textContent.trim()), ['Resumo', 'Contato e presença', 'Comercial']);
   const painelDe = (chave) => s.browser.by.id(g, `crm-edit-panel-${chave}`);
   const nomesDe = (chave) => s.browser.findAll(painelDe(chave), (el) => ['input', 'textarea'].includes(el.localName) && el.getAttribute('name')).map((el) => el.getAttribute('name'));
-  assert.deepEqual(nomesDe('resumo'), ['empresa', 'nicho', 'cidade', 'estado', 'origem', 'responsavel', 'ultimaInteracao', 'proximaAcao', 'dataDaProximaAcao']);
+  assert.deepEqual([...new Set(nomesDe('resumo'))], ['tipoPessoa', 'nomeCompleto', 'empresa', 'cpf', 'cnpj', 'nicho', 'cidade', 'estado', 'origem', 'responsavel', 'ultimaInteracao', 'proximaAcao', 'dataDaProximaAcao']);
   assert.deepEqual(nomesDe('contato'), ['contato', 'cargo', 'telefone', 'whatsapp', 'email', 'site', 'instagram', 'facebook', 'googlePerfil']);
   assert.equal(nomesDe('comercial').length, 13);
 
   assert.equal(rotulo(s, 'Empresa (obrigatório)').getAttribute('aria-required'), 'true', 'o obrigatório é dito no rótulo e para o leitor de tela');
-  assert.equal(s.browser.findAll(g, (el) => el.localName === 'label' && /obrigatório/.test(el.textContent)).length, 1, 'só a empresa é obrigatória');
+  assert.equal(s.browser.findAll(g, (el) => el.localName === 'label' && /obrigatório/.test(el.textContent)).length, 1, 'num registro antigo (sem tipo) só a empresa é obrigatória');
   assert.match(textoDaTela(s), /Os campos marcados como "\(obrigatório\)" precisam ser preenchidos\./);
   assert.match(textoDaTela(s), /nada é salvo automaticamente/);
   assert.equal(rotulo(s, 'Empresa (obrigatório)').value, 'Clínica Alfa');
@@ -463,7 +466,7 @@ test('[CRM-ED-9] os 31 campos na edição, em abas (Resumo, Contato e presença,
   await clicar(s, botao(s, 'Salvar alterações'));
   assert.deepEqual(s.api.callsOf('updateCrm')[0].args, ['crm:a', { contato: 'Contato digitado', observacoes: 'Texto longo\ncom duas linhas' }], 'só os campos alterados, de abas diferentes');
   const todos = FIELD_GROUPS.flatMap((grupo) => grupo.fields).length;
-  assert.equal(todos, 33, 'sanidade: 31 gravaveis + 2 gerenciados');
+  assert.equal(todos, 37, 'sanidade: 35 gravaveis + 2 gerenciados');
 });
 
 test('[CRM-ED-10] VALIDAÇÃO antes de enviar: o erro aparece no campo, a aba com erro mostra quantos, o foco vai ao primeiro erro (abrindo a aba), NADA vai ao servidor e tudo o que foi digitado fica', async () => {
@@ -683,6 +686,11 @@ test('[CRM-ED-17] COMPATIBILIDADE com registros existentes: um registro com TODO
     cheio[campo.key] = campo.kind === 'number' ? 1234.5 : campo.kind === 'date' ? '2026-10-05' : campo.kind === 'email' ? 'cheio@example.test' : campo.kind === 'tel' ? '24 90000-1234' : campo.kind === 'url' ? `https://cheio.example.test/${campo.key}` : campo.kind === 'textarea' ? 'linha 1\nlinha 2' : `valor ${campo.key}`;
   }
   cheio.empresa = 'Registro Completo';
+  // identificação coerente (uma PF não tem CNPJ): o registro "cheio" é uma Pessoa Física com empresa legada, nome completo e CPF válido
+  cheio.tipoPessoa = 'PF';
+  cheio.nomeCompleto = 'Registro Completo'; // o nome de exibição da PF é o nome completo
+  cheio.cpf = '52998224725';
+  cheio.cnpj = null;
   cheio.campoDesconhecido = 'vindo de uma versão futura';
   cheio.authUserId = 'nao-deve-aparecer';
   const vazio = crmRecord({ id: 'crm:vazio', empresa: 'Registro Mínimo' });

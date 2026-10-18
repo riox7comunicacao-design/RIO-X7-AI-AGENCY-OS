@@ -182,7 +182,7 @@ test('[CATAPI-7] SEM CONFLITO com /api/crm: /api/crm/catalogs continua sendo a r
   const lista = await chamar(env, BRENO, { url: '/api/crm' });
   assert.equal(lista.status, 200);
   assert.deepEqual(lista.json(), { items: [] });
-  const criado = await chamar(env, BRENO, { method: 'POST', url: '/api/crm', body: { empresa: 'Empresa Teste' } });
+  const criado = await chamar(env, BRENO, { method: 'POST', url: '/api/crm', body: { tipoPessoa: 'PJ', empresa: 'Empresa Teste' } });
   assert.equal(criado.status, 201);
   assert.equal((await chamar(env, BRENO, { url: `/api/crm/${encodeURIComponent(criado.json().item.id)}` })).json().item.empresa, 'Empresa Teste');
 });
@@ -292,7 +292,7 @@ test('[CATAPI-12] TRAVA DE RENOMEAÇÃO de ponta a ponta (decisão D3): um nicho
   const nicho = (await chamar(env, BRENO, { method: 'POST', url: base('nichos'), body: { nome: 'Estética' } })).json().item;
   const url = `${base('nichos')}/${encodeURIComponent(nicho.id)}`;
   assert.equal((await chamar(env, BRENO, { url })).json().item.emUso, 0);
-  const registro = (await chamar(env, BRENO, { method: 'POST', url: '/api/crm', body: { empresa: 'Clínica Bella', nicho: 'ESTÉTICA' } })).json().item;
+  const registro = (await chamar(env, BRENO, { method: 'POST', url: '/api/crm', body: { tipoPessoa: 'PJ', empresa: 'Clínica Bella', nicho: 'ESTÉTICA' } })).json().item;
   assert.equal((await chamar(env, BRENO, { url })).json().item.emUso, 1, 'o uso conta com a mesma normalização do nome');
 
   const bloqueado = await chamar(env, BRENO, { method: 'PATCH', url, body: { nome: 'Beleza' } });
@@ -318,7 +318,7 @@ test('[CATAPI-12] TRAVA DE RENOMEAÇÃO de ponta a ponta (decisão D3): um nicho
 test('[CATAPI-13] COMPATIBILIDADE COM O CRM LEGADO: os campos nicho, origem e servicoPotencial seguem TEXTO LIVRE — o CRM aceita e devolve exatamente o digitado, existam ou não itens nos catálogos — e operar os catálogos nunca altera o arquivo do CRM', async (t) => {
   const env = ambiente(t, { crm: true });
   for (const catalogo of CATALOG_KEYS) await chamar(env, BRENO, { method: 'POST', url: base(catalogo), body: CASOS[catalogo] });
-  const livre = { empresa: 'Empresa Livre', nicho: 'Clinica de EStética', origem: 'Boca a boca', servicoPotencial: 'Qualquer coisa que não está em catálogo' };
+  const livre = { tipoPessoa: 'PJ', empresa: 'Empresa Livre', nicho: 'Clinica de EStética', origem: 'Boca a boca', servicoPotencial: 'Qualquer coisa que não está em catálogo' };
   const criado = await chamar(env, BRENO, { method: 'POST', url: '/api/crm', body: livre });
   assert.equal(criado.status, 201, 'o CRM não valida contra os catálogos');
   const lido = (await chamar(env, BRENO, { url: `/api/crm/${encodeURIComponent(criado.json().item.id)}` })).json().item;
@@ -350,7 +350,7 @@ test('[CATAPI-14] NÃO INTERFERE em Prospecção, Fila de Aprovação, Funis nem
   assert.equal(fila.json().items.length, 2, 'a Fila de Aprovação continua mostrando os itens aguardando revisão');
   assert.equal((await chamar(env, BRENO, { url: '/api/me' })).status, 200);
   assert.equal((await chamar(env, BRENO, { url: '/api/crm' })).status, 200);
-  assert.equal((await chamar(env, BRENO, { method: 'POST', url: '/api/crm', body: { empresa: 'Empresa Qualquer', nicho: 'Texto livre' } })).status, 201);
+  assert.equal((await chamar(env, BRENO, { method: 'POST', url: '/api/crm', body: { tipoPessoa: 'PJ', empresa: 'Empresa Qualquer', nicho: 'Texto livre' } })).status, 201);
   assert.equal((await chamar(env, BRENO, { url: '/api/funnels' })).status, 200);
   assert.equal((await chamar(env, BRENO, { method: 'POST', url: '/api/funnels', body: { nome: 'Outbound' } })).status, 201);
   const promocao = await chamar(env, BRENO, { method: 'POST', url: `/api/approvals/${encodeURIComponent(env.ids.alfa)}/approve`, body: {} });

@@ -54,6 +54,7 @@ const registro = (overrides = {}) => ({
   problemaIdentificado: null, raioXDeNicho: null, raioXPersonalizado: null, statusDoDiagnostico: null, linkDoRaioX: null,
   dataDaAnalise: null, dataDaReuniao: null, linkDoMeet: null, proximaAcao: null, dataDaProximaAcao: null, responsavel: null,
   ultimaInteracao: null, valorProposta: null, valorTotal: null, observacoes: null,
+  tipoPessoa: null, nomeCompleto: null, cpf: null, cnpj: null,
   ...overrides,
 });
 

@@ -310,7 +310,7 @@ function resumoDe(negociacoes) {
 }
 
 // Monta a tela do quadro sobre o DOM de teste, com a camada de modais e avisos REAL do Dashboard.
-async function abrirQuadro({ api, permissions = ADMIN, carregar = true } = {}) {
+async function abrirQuadro({ api, permissions = ADMIN, carregar = true, navigation = null } = {}) {
   const { createFunnelsView } = await loadFunnels();
   const { createUi } = await loadUi();
   const browser = createBrowser({ hash: '#/funis' });
@@ -321,7 +321,7 @@ async function abrirQuadro({ api, permissions = ADMIN, carregar = true } = {}) {
   browser.root.append(screen, host);
   const ui = createUi({ document: browser.document, host, getInertTargets: () => [screen] });
   const navegacoes = [];
-  const view = createFunnelsView({ document: browser.document, root: screen, api, permissions, navigate: (hash) => navegacoes.push(hash), ui });
+  const view = createFunnelsView({ document: browser.document, root: screen, api, permissions, navigate: (hash) => navegacoes.push(hash), navigation, ui });
   const s = { browser, view, api, ui, screen, navegacoes };
   if (carregar) {
     await view.load();

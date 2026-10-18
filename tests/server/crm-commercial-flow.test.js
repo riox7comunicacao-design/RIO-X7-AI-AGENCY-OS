@@ -48,7 +48,7 @@ function ambiente(t) {
 }
 
 async function novoLead(a, campos = {}) {
-  const r = await a.chamar(BRENO, 'POST', '/api/crm', { empresa: 'Clínica Funil Teste', site: 'funil.example.test', telefone: '24 90000-7001', cidade: 'Petrópolis', estado: 'RJ', nicho: 'Psicologia', ...campos });
+  const r = await a.chamar(BRENO, 'POST', '/api/crm', { tipoPessoa: 'PJ', empresa: 'Clínica Funil Teste', site: 'funil.example.test', telefone: '24 90000-7001', cidade: 'Petrópolis', estado: 'RJ', nicho: 'Psicologia', ...campos });
   assert.equal(r.status, 201, JSON.stringify(r.json));
   return r.json.item.id;
 }
@@ -115,7 +115,7 @@ test('[FLUXO-3] DNC no meio do funil: de qualquer etapa o lead pode ser bloquead
     assert.deepEqual([dnc.status, dnc.json.item.status], [200, 'DO_NOT_CONTACT'], `DNC a partir de ${etapa}`);
     const historico = (await a.chamar(BRENO, 'GET', `/api/crm/${enc(id)}/history`)).json.historico;
     assert.deepEqual([historico.at(-1).from, historico.at(-1).to, historico.at(-1).motivo], [etapa, 'DO_NOT_CONTACT', 'Pediu para sair (teste)']);
-    const recadastro = await a.chamar(BRENO, 'POST', '/api/crm', { empresa: 'Outro Nome Teste', site: `etapa${i}.example.test` });
+    const recadastro = await a.chamar(BRENO, 'POST', '/api/crm', { tipoPessoa: 'PJ', empresa: 'Outro Nome Teste', site: `etapa${i}.example.test` });
     assert.deepEqual([recadastro.status, recadastro.json.error.code], [409, 'DNC_BLOCKED'], `o site de ${etapa} continua bloqueado`);
   }
 });
@@ -239,9 +239,12 @@ const CAMPOS = Object.freeze({
 async function preencher(s, valores) {
   const { FIELD_GROUPS } = await import('../../dashboard/crm-model.mjs');
   const campos = FIELD_GROUPS.flatMap((grupo) => grupo.fields);
+  const radioPJ = s.browser.by.label(escopo(s), 'Pessoa Jurídica'); // o tipo de pessoa é obrigatório num cadastro novo: o cliente deste fluxo é uma empresa
+  if (radioPJ && !radioPJ.checked) s.browser.click(radioPJ);
   for (const [chave, valor] of Object.entries(valores)) {
     const campo = campos.find((entry) => entry.key === chave);
-    const controle = s.browser.by.label(escopo(s), campo.required ? `${campo.label} (obrigatório)` : campo.label);
+    const ROTULOS = { empresa: 'Nome da empresa (obrigatório)' }; // o formulário de novo cliente (Fase D2)
+    const controle = s.browser.by.label(escopo(s), ROTULOS[chave] || campo.label);
     assert.ok(controle, `campo "${campo.label}" não encontrado`);
     s.browser.type(controle, valor);
   }
@@ -251,8 +254,8 @@ test('[FLUXO-7] campos de acompanhamento: criados pela interface, gravados, exib
   const a = ambiente(t);
   const s = await subirPainel(a.env, BRENO, '#/crm/novo');
   await preencher(s, { empresa: 'Clínica Acompanhamento Teste', site: 'acomp.example.test', telefone: '24 90000-7010', ...CAMPOS });
-  await clicar(s, 'Criar registro');
-  assert.match(tela(s), /Registro criado\./);
+  await clicar(s, 'Cadastrar cliente');
+  assert.match(tela(s), /Cliente cadastrado\./);
   const [gravado] = a.lidos();
   for (const [campo, valor] of Object.entries(CAMPOS)) assert.equal(gravado[campo], valor, `${campo} gravado`);
 

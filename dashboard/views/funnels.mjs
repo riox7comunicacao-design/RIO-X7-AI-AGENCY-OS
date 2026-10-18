@@ -16,7 +16,7 @@
 import { h, fill } from '../dom.mjs';
 import { textOf, formatDateTime, formatDate } from '../format.mjs';
 import { buildHash } from '../router.mjs';
-import { formatMoney, normalizeText } from '../crm-model.mjs';
+import { clientName, formatMoney, normalizeText } from '../crm-model.mjs';
 import { statusBadge, emptyState, kvList } from '../ui/index.mjs';
 import { createNegotiationForm } from './negotiationForm.mjs';
 import { conditionsText, eventText, negotiationErrorInfo, paymentText, scheduleText, situationLabel, situationTone, termText, MESSAGES } from '../negotiation-model.mjs';
@@ -24,7 +24,7 @@ import { conditionsText, eventText, negotiationErrorInfo, paymentText, scheduleT
 const MONEY_NOTE = Object.freeze({ UNICO: 'Valor total do contrato (uma cobrança só)', RECORRENTE: 'Valor de cada cobrança' });
 
 // document/root: onde desenhar. api: o cliente de api.mjs. permissions: de permissionsOf(me). navigate(hash): muda a rota. ui: { overlays, toasts } da sessão.
-export function createFunnelsView({ document, root, api, permissions, navigate = () => {}, ui }) {
+export function createFunnelsView({ document, root, api, permissions, navigate = () => {}, navigation = null, ui }) {
   const canPropose = Boolean(permissions && permissions.canProposeCrm);
   const canReopen = Boolean(permissions && permissions.canWriteCrm);
   const canManageFunnels = Boolean(permissions && permissions.canManageFunnels);
@@ -52,7 +52,8 @@ export function createFunnelsView({ document, root, api, permissions, navigate =
   const el = (tag, props, ...children) => h(document, tag, props, ...children);
   const cardById = (id) => state.board.cards.find((card) => card.id === id) || null;
   const stageName = (id) => (state.board.stages.find((stage) => stage.id === id) || { nome: '' }).nome;
-  const empresaOf = (card) => textOf(card.negociacao && card.negociacao.cliente ? card.negociacao.cliente.empresa : card.crm && card.crm.empresa) || 'Cliente sem nome';
+  // o nome do cliente: PF -> nome completo, PJ e registro antigo -> empresa (a mesma regra do CRM; ver clientName)
+  const empresaOf = (card) => clientName(card.negociacao && card.negociacao.cliente ? card.negociacao.cliente : card.crm) || 'Cliente sem nome';
 
   function setMessage(kind, text) {
     state.message = text ? { kind, text } : null;
@@ -219,7 +220,7 @@ export function createFunnelsView({ document, root, api, permissions, navigate =
     handles.add(handle);
   }
 
-  async function openForm(card = null) {
+  async function openForm(card = null, { clientId = '' } = {}) {
     if (!canPropose || state.busyKey !== null) return;
     const editing = card !== null;
     if (!editing && state.board.funnelId === null) {
@@ -233,7 +234,7 @@ export function createFunnelsView({ document, root, api, permissions, navigate =
     let services;
     try {
       const [crm, catalog] = await Promise.all([api.listCrm(), api.listCatalog('servicos')]);
-      clients = (Array.isArray(crm && crm.items) ? crm.items : []).filter((item) => item && typeof item.id === 'string' && item.status !== 'DO_NOT_CONTACT').map((item) => ({ id: item.id, empresa: textOf(item.empresa) }));
+      clients = (Array.isArray(crm && crm.items) ? crm.items : []).filter((item) => item && typeof item.id === 'string' && item.status !== 'DO_NOT_CONTACT').map((item) => ({ id: item.id, empresa: textOf(item.empresa), tipoPessoa: item.tipoPessoa === 'PF' || item.tipoPessoa === 'PJ' ? item.tipoPessoa : null, nomeCompleto: textOf(item.nomeCompleto), cpf: textOf(item.cpf), cnpj: textOf(item.cnpj), contato: textOf(item.contato), telefone: textOf(item.telefone), whatsapp: textOf(item.whatsapp), email: textOf(item.email) }));
       services = Array.isArray(catalog && catalog.items) ? catalog.items.filter((item) => item && item.ativo !== false) : [];
     } catch (error) {
       state.busyKey = null;
@@ -265,6 +266,7 @@ export function createFunnelsView({ document, root, api, permissions, navigate =
       funnels: state.board.funnels,
       funnelId: state.board.funnelId || '',
       clients,
+      initialClientId: clientId,
       services,
       onSubmit: async (body) => {
         // nada de sucesso antes da confirmação: a promessa só resolve DEPOIS da resposta; se rejeitar, o formulário mostra o erro e continua aberto
@@ -571,5 +573,14 @@ export function createFunnelsView({ document, root, api, permissions, navigate =
     fill(root);
   }
 
-  return { load, refresh, render, destroy, state, openDetail: (id) => openDetail(id), openForm: (card) => openForm(card || null) };
+  // Fase D2: o atalho "Nova negociação" da ficha do cliente (#/funis/nova-negociacao/<id>). Só abre depois de o quadro carregar com sucesso; o endereço volta a ser #/funis
+  // sem recarregar a tela (atualizar a página não reabre o formulário).
+  async function openNewFor(clientId) {
+    if (destroyed || state.status !== 'ready') return;
+    // (o endereço é só reescrito, sem avisar o roteador: a tela não é recriada e o formulário não fecha)
+    if (navigation && typeof navigation.rewrite === 'function') navigation.rewrite(buildHash({ name: 'funnels' }));
+    await openForm(null, { clientId });
+  }
+
+  return { load, refresh, render, destroy, state, openDetail: (id) => openDetail(id), openForm: (card, options) => openForm(card || null, options || {}), openNewFor };
 }

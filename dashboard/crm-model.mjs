@@ -1,6 +1,6 @@
 // O modelo de APRESENTAÇÃO do CRM no Dashboard — só funções e dados puros: nada aqui toca o DOM, a rede ou o servidor.
 //
-// O que este módulo É: o vocabulário que a interface precisa para desenhar o CRM (os 13 status e seus rótulos, os 31 campos
+// O que este módulo É: o vocabulário que a interface precisa para desenhar o CRM (os 13 status e seus rótulos, os 35 campos (31 legados + 4 de identificação PF/PJ)
 // e o bloco de cada um), a busca e os filtros do lado do navegador, a conversão do que a pessoa digita no corpo que a
 // CRM-API espera, e a tradução de cada erro da API para uma frase que uma pessoa entende.
 //
@@ -64,7 +64,89 @@ export function isLocked(record) {
 }
 
 // ---------------------------------------------------------------------------
-// Campos — os 31 graváveis de src/crm/constants.js (CRM_WRITABLE_FIELDS), agrupados nos blocos da ficha. Os dois campos
+// Cliente Pessoa Física / Pessoa Jurídica (Fase D2). Esta é uma CÓPIA deliberada das regras de src/crm/clientIdentity.js (o Dashboard não importa src/, regra R11):
+// serve só para a tela avisar ANTES de enviar. O servidor repete tudo e tem a palavra final; tests/server/dashboard-crm-person.test.js compara as duas implementações.
+// ---------------------------------------------------------------------------
+export const TIPOS_PESSOA = Object.freeze([
+  Object.freeze({ value: 'PF', label: 'Pessoa Física' }),
+  Object.freeze({ value: 'PJ', label: 'Pessoa Jurídica' }),
+]);
+export const SEM_TIPO = 'SEM_TIPO'; // só no filtro da lista: os registros antigos, ainda sem tipo definido
+
+export function tipoLabel(value) {
+  const known = TIPOS_PESSOA.find((tipo) => tipo.value === value);
+  return known ? known.label : 'Sem tipo definido';
+}
+export const tipoShort = (value) => (value === 'PF' || value === 'PJ' ? value : 'Sem tipo');
+
+// O nome pelo qual o cliente é mostrado: PF -> nome completo; PJ e registro sem tipo -> empresa (cada um cai no outro quando o primeiro falta).
+export function clientName(record) {
+  if (!record || typeof record !== 'object') return '';
+  const empresa = textOf(record.empresa).trim();
+  const nomeCompleto = textOf(record.nomeCompleto).trim();
+  return record.tipoPessoa === 'PF' ? nomeCompleto || empresa : empresa || nomeCompleto;
+}
+
+// O rótulo de um cliente numa LISTA DE ESCOLHA (ex.: o formulário de negociação): o nome e, quando há, o tipo — "Maria Souza (PF)", "Clínica Aurora (PJ)"; registro antigo, só o nome.
+export function clientOptionLabel(record) {
+  const name = clientName(record) || 'Sem nome';
+  return record && (record.tipoPessoa === 'PF' || record.tipoPessoa === 'PJ') ? name + ' (' + record.tipoPessoa + ')' : name;
+}
+
+// "123.456.789-09" -> "12345678909"; "12.abc.345/01de-35" -> "12ABC34501DE35"; vazio -> ''.
+export function normalizeDocument(value) {
+  // só texto (como no domínio): um número ou um objeto nunca é um documento
+  if (typeof value !== 'string') return '';
+  return value.replace(/[.\-/\s]/g, '').toUpperCase();
+}
+const allSame = (text) => text.split('').every((char) => char === text[0]);
+export function isValidCpf(value) {
+  const cpf = normalizeDocument(value);
+  if (!/^\d{11}$/.test(cpf) || allSame(cpf)) return false;
+  const digits = cpf.split('').map(Number);
+  const check = (length) => {
+    let sum = 0;
+    for (let i = 0; i < length; i += 1) sum += digits[i] * (length + 1 - i);
+    const rest = (sum * 10) % 11;
+    return rest === 10 ? 0 : rest;
+  };
+  return check(9) === digits[9] && check(10) === digits[10];
+}
+const CNPJ_WEIGHTS_12 = [5, 4, 3, 2, 9, 8, 7, 6, 5, 4, 3, 2];
+const CNPJ_WEIGHTS_13 = [6, 5, 4, 3, 2, 9, 8, 7, 6, 5, 4, 3, 2];
+const cnpjDigit = (chars, weights) => {
+  let sum = 0;
+  for (let i = 0; i < weights.length; i += 1) sum += (chars.charCodeAt(i) - 48) * weights[i];
+  const rest = sum % 11;
+  return rest < 2 ? 0 : 11 - rest;
+};
+export function isValidCnpj(value) {
+  const cnpj = normalizeDocument(value);
+  if (!/^[0-9A-Z]{12}\d{2}$/.test(cnpj) || allSame(cnpj)) return false;
+  const first = cnpjDigit(cnpj.slice(0, 12), CNPJ_WEIGHTS_12);
+  const second = cnpjDigit(cnpj.slice(0, 12) + String(first), CNPJ_WEIGHTS_13);
+  return cnpj.slice(12) === `${first}${second}`;
+}
+// Só para MOSTRAR: um documento válido em forma de máscara; qualquer outra coisa passa como veio.
+export function formatCpf(value) {
+  const cpf = normalizeDocument(value);
+  return /^\d{11}$/.test(cpf) ? `${cpf.slice(0, 3)}.${cpf.slice(3, 6)}.${cpf.slice(6, 9)}-${cpf.slice(9)}` : textOf(value);
+}
+export function formatCnpj(value) {
+  const cnpj = normalizeDocument(value);
+  return /^[0-9A-Z]{12}\d{2}$/.test(cnpj) ? `${cnpj.slice(0, 2)}.${cnpj.slice(2, 5)}.${cnpj.slice(5, 8)}/${cnpj.slice(8, 12)}-${cnpj.slice(12)}` : textOf(value);
+}
+
+// Quais campos de identificação fazem sentido para o tipo escolhido (a tela esconde os outros enquanto estão vazios; um campo já preenchido nunca é escondido,
+// para o dado nunca sumir da vista nem ser descartado em silêncio). Sem tipo (registro antigo ou formulário novo ainda sem escolha): só a empresa, como sempre foi.
+export function relevantIdentityKeys(tipo) {
+  if (tipo === 'PF') return ['nomeCompleto', 'cpf'];
+  if (tipo === 'PJ') return ['empresa', 'cnpj', 'contato'];
+  return ['empresa'];
+}
+
+// ---------------------------------------------------------------------------
+// Campos — os 35 graváveis de src/crm/constants.js (CRM_WRITABLE_FIELDS: os 31 legados + tipoPessoa, nomeCompleto, cpf e cnpj), agrupados nos blocos da ficha. Os dois campos
 // `managed` (status, dataDeEntrada) só são EXIBIDOS: o domínio os gerencia (o status muda pela ação "Mudar status").
 // kind: text | textarea | email | tel | url | date | number | status | datetime
 // ---------------------------------------------------------------------------
@@ -73,7 +155,12 @@ const group = (id, title, fields) => Object.freeze({ id, title, fields: Object.f
 
 export const FIELD_GROUPS = Object.freeze([
   group('identificacao', 'Identificação', [
-    field('empresa', 'Empresa', 'text', { required: true }),
+    field('tipoPessoa', 'Tipo de pessoa', 'tipo'),
+    field('nomeCompleto', 'Nome completo'),
+    // a empresa é obrigatória para Pessoa Jurídica e para o registro ainda sem tipo (a tela mostra o "(obrigatório)" conforme o tipo escolhido)
+    field('empresa', 'Empresa'),
+    field('cpf', 'CPF', 'cpf'),
+    field('cnpj', 'CNPJ', 'cnpj'),
     field('nicho', 'Nicho'),
     field('cidade', 'Cidade'),
     field('estado', 'Estado (UF)'),
@@ -129,7 +216,8 @@ export const SUGGESTION_KEYS = Object.freeze(['nicho', 'cidade', 'estado', 'orig
 
 // As colunas da lista (só campos que existem na API).
 export const LIST_COLUMNS = Object.freeze([
-  { key: 'empresa', label: 'Empresa' },
+  { key: 'empresa', label: 'Cliente' }, // o nome de exibição: empresa (PJ e registros antigos) ou nome completo (PF)
+  { key: 'tipoPessoa', label: 'Tipo' },
   { key: 'contato', label: 'Contato' },
   { key: 'nicho', label: 'Nicho' },
   { key: 'cidade', label: 'Cidade' },
@@ -165,6 +253,9 @@ export function displayValue(entry, record) {
   if (entry.kind === 'date') return formatDateValue(value);
   if (entry.kind === 'datetime') return formatDateTime(value);
   if (entry.kind === 'status') return value === null || value === undefined ? '' : statusLabel(value);
+  if (entry.kind === 'tipo') return value === 'PF' || value === 'PJ' ? tipoLabel(value) : '';
+  if (entry.kind === 'cpf') return formatCpf(value);
+  if (entry.kind === 'cnpj') return formatCnpj(value);
   return textOf(value);
 }
 
@@ -173,7 +264,8 @@ export function listCells(record) {
   const cidade = [textOf(record.cidade), textOf(record.estado)].filter(Boolean).join('/');
   const proxima = [textOf(record.proximaAcao), formatDateValue(record.dataDaProximaAcao)].filter(Boolean).join(' · ');
   return {
-    empresa: textOf(record.empresa) || 'Sem nome',
+    empresa: clientName(record) || 'Sem nome',
+    tipoPessoa: tipoShort(record.tipoPessoa),
     contato: textOf(record.contato),
     nicho: textOf(record.nicho),
     cidade,
@@ -197,7 +289,7 @@ export function normalizeText(value) {
 
 export const digitsOf = (value) => textOf(value).replace(/\D/g, '');
 
-const SEARCH_TEXT_KEYS = Object.freeze(['empresa', 'contato', 'telefone', 'whatsapp', 'email', 'instagram']);
+const SEARCH_TEXT_KEYS = Object.freeze(['empresa', 'nomeCompleto', 'contato', 'telefone', 'whatsapp', 'email', 'instagram']);
 const MIN_PHONE_DIGITS = 3;
 
 // Cada palavra da busca precisa aparecer em algum dos campos pesquisáveis (sem acento, sem diferença de caixa). Uma
@@ -208,22 +300,27 @@ export function matchesQuery(record, query) {
   if (tokens.length === 0) return true;
   const text = normalizeText(SEARCH_TEXT_KEYS.map((key) => textOf(record[key])).join('\n'));
   const phones = `${digitsOf(record.telefone)}\n${digitsOf(record.whatsapp)}`;
+  // CPF e CNPJ: pelo documento sem pontuação ("529.982.247-25" e "52998224725" encontram o mesmo cliente)
+  const documents = `${normalizeDocument(record.cpf)}\n${normalizeDocument(record.cnpj)}`.toLowerCase();
   return tokens.every((token) => {
     if (text.includes(token)) return true;
     const digits = digitsOf(token);
-    return digits.length >= MIN_PHONE_DIGITS && phones.includes(digits);
+    if (digits.length >= MIN_PHONE_DIGITS && phones.includes(digits)) return true;
+    const document = normalizeDocument(token).toLowerCase();
+    return document.length >= MIN_PHONE_DIGITS && documents.includes(document);
   });
 }
 
-// criteria: { query, status, nicho, responsavel } — '' significa "sem filtro". Nicho e responsável casam sem acento nem
+// criteria: { query, status, nicho, responsavel, tipo } — '' significa "sem filtro"; tipo: 'PF', 'PJ' ou 'SEM_TIPO' (os registros antigos, ainda sem tipo definido). Nicho e responsável casam sem acento nem
 // diferença de caixa (o mesmo critério das opções do filtro, que juntam "Psicologia" e "psicologia").
 export function filterRecords(items, criteria = {}) {
-  const { query = '', status = '', nicho = '', responsavel = '' } = criteria;
+  const { query = '', status = '', nicho = '', responsavel = '', tipo = '' } = criteria;
   const nichoKey = normalizeText(nicho);
   const responsavelKey = normalizeText(responsavel);
   return items.filter(
     (record) =>
       (status === '' || record.status === status) &&
+      (tipo === '' || (tipo === SEM_TIPO ? record.tipoPessoa !== 'PF' && record.tipoPessoa !== 'PJ' : record.tipoPessoa === tipo)) &&
       (nichoKey === '' || normalizeText(record.nicho) === nichoKey) &&
       (responsavelKey === '' || normalizeText(record.responsavel) === responsavelKey) &&
       matchesQuery(record, query)
@@ -243,22 +340,20 @@ export function distinctValues(items, key) {
 
 // Do mais recente para o mais antigo (a API devolve na ordem de criação); o desempate é o nome da empresa.
 export function sortRecords(items) {
-  return [...items].sort(
-    (a, b) => textOf(b.dataDeEntrada).localeCompare(textOf(a.dataDeEntrada)) || textOf(a.empresa).localeCompare(textOf(b.empresa), 'pt-BR')
-  );
+  return [...items].sort((a, b) => textOf(b.dataDeEntrada).localeCompare(textOf(a.dataDeEntrada)) || clientName(a).localeCompare(clientName(b), 'pt-BR'));
 }
 
 // As ordens da lista: SÓ critérios que existem nos dados do registro (nada de coluna inventada). A ordem padrão é a de sempre.
 export const SORT_OPTIONS = Object.freeze([
   { value: 'recentes', label: 'Mais recentes' },
   { value: 'antigos', label: 'Mais antigos' },
-  { value: 'empresa', label: 'Empresa (A–Z)' },
+  { value: 'empresa', label: 'Cliente (A–Z)' },
   { value: 'status', label: 'Status (ordem do funil)' },
   { value: 'proxima', label: 'Próxima ação (mais próxima)' },
   { value: 'valor', label: 'Maior valor da proposta' },
 ]);
 
-const byCompany = (a, b) => textOf(a.empresa).localeCompare(textOf(b.empresa), 'pt-BR');
+const byCompany = (a, b) => clientName(a).localeCompare(clientName(b), 'pt-BR');
 const numberOrNull = (value) => (value === null || value === undefined || value === '' || !Number.isFinite(Number(value)) ? null : Number(value));
 // Quem não tem o dado (sem próxima ação, sem valor) vai sempre para o fim, em qualquer sentido.
 const withValueFirst = (a, b, pick, compare) => {
@@ -290,7 +385,7 @@ export const RECORD_TABS = Object.freeze([
     key: 'resumo',
     label: 'Resumo',
     sections: Object.freeze([
-      Object.freeze({ title: 'Identificação', keys: Object.freeze(['empresa', 'nicho', 'cidade', 'estado', 'origem']) }),
+      Object.freeze({ title: 'Identificação', keys: Object.freeze(['tipoPessoa', 'nomeCompleto', 'empresa', 'cpf', 'cnpj', 'nicho', 'cidade', 'estado', 'origem']) }),
       Object.freeze({ title: 'Funil de Vendas', keys: Object.freeze(['status', 'dataDeEntrada', 'responsavel', 'ultimaInteracao']) }),
       Object.freeze({ title: 'Próxima ação', keys: Object.freeze(['proximaAcao', 'dataDaProximaAcao']) }),
     ]),
@@ -322,6 +417,28 @@ export function countByStatus(items) {
 }
 
 // ---------------------------------------------------------------------------
+// O formulário de NOVO CLIENTE (Fase D2): o essencial à vista e o resto numa seção expansível. TODO campo editável do registro aparece em exatamente UMA destas seções
+// (um teste confere): nada é eliminado, só escondido até a pessoa querer. `principal` é o que se pede de início; `mais` é o que fica recolhido.
+// ---------------------------------------------------------------------------
+export const CLIENT_FORM_SECTIONS = Object.freeze({
+  principal: Object.freeze([
+    Object.freeze({ id: 'quem', title: 'Quem é o cliente', keys: Object.freeze(['tipoPessoa', 'nomeCompleto', 'empresa', 'cpf', 'cnpj', 'contato']) }),
+    Object.freeze({ id: 'falar', title: 'Como falar com ele', keys: Object.freeze(['telefone', 'whatsapp', 'email']) }),
+    Object.freeze({ id: 'classificacao', title: 'Classificação', keys: Object.freeze(['nicho', 'origem', 'responsavel']) }),
+  ]),
+  mais: Object.freeze([
+    Object.freeze({ id: 'redes', title: 'Redes sociais e presença digital', keys: Object.freeze(['site', 'instagram', 'facebook', 'googlePerfil']) }),
+    Object.freeze({ id: 'adicionais', title: 'Informações adicionais', keys: Object.freeze(['cargo', 'cidade', 'estado', 'observacoes']) }),
+    Object.freeze({
+      id: 'legado',
+      title: 'Diagnóstico e histórico comercial',
+      keys: Object.freeze(['servicoPotencial', 'temperatura', 'problemaIdentificado', 'raioXDeNicho', 'raioXPersonalizado', 'statusDoDiagnostico', 'linkDoRaioX', 'dataDaAnalise', 'valorProposta', 'valorTotal']),
+    }),
+    Object.freeze({ id: 'agenda', title: 'Reunião e próxima ação', keys: Object.freeze(['ultimaInteracao', 'dataDaReuniao', 'linkDoMeet', 'proximaAcao', 'dataDaProximaAcao']) }),
+  ]),
+});
+
+// ---------------------------------------------------------------------------
 // Formulários: do que a pessoa digita para o corpo da CRM-API
 // ---------------------------------------------------------------------------
 const rawText = (value) => (typeof value === 'string' ? value : value === null || value === undefined ? '' : String(value));
@@ -340,6 +457,11 @@ function formValue(entry, raw) {
     const parsed = parseAmount(raw);
     return parsed.ok ? parsed.value : null;
   }
+  // CPF e CNPJ vão (e são comparados) só com os caracteres do documento: a máscara é só da tela
+  if (entry.kind === 'cpf' || entry.kind === 'cnpj') {
+    const document = normalizeDocument(raw);
+    return document === '' ? null : document;
+  }
   const text = rawText(raw).trim();
   return text === '' ? null : text;
 }
@@ -354,11 +476,29 @@ export function valuesFromRecord(record) {
   return values;
 }
 
-// { [campo]: mensagem } — vazio quando está tudo certo. A empresa é obrigatória; os valores em dinheiro precisam ser
-// números >= 0. O resto (tamanho, duplicidade, DNC) é do servidor.
-export function validateForm(values) {
+// { [campo]: mensagem } — vazio quando está tudo certo. As regras espelham as do servidor (que repete tudo e decide): num cadastro NOVO o tipo de pessoa é obrigatório; PF exige o
+// nome completo e PJ (e o registro antigo, sem tipo) exige a empresa; CPF e CNPJ são opcionais mas, preenchidos, precisam ser válidos e do tipo certo; os valores em dinheiro
+// precisam ser números >= 0. O resto (tamanho, duplicidade, DNC) é do servidor. `creating`: true no formulário de novo cliente.
+export function validateForm(values, { creating = false } = {}) {
   const errors = {};
-  if (textOf(values.empresa) === '') errors.empresa = 'Informe o nome da empresa.';
+  const tipo = textOf(values.tipoPessoa);
+  const filled = (key) => textOf(values[key]).trim() !== '';
+  if (tipo !== '' && tipo !== 'PF' && tipo !== 'PJ') errors.tipoPessoa = 'Escolha Pessoa Física ou Pessoa Jurídica.';
+  else if (tipo === '' && creating) errors.tipoPessoa = 'Escolha se o cliente é Pessoa Física ou Pessoa Jurídica.';
+  else if (tipo === '' && (filled('nomeCompleto') || filled('cpf') || filled('cnpj'))) errors.tipoPessoa = 'Escolha o tipo de pessoa para informar nome completo, CPF ou CNPJ.';
+
+  if (tipo === 'PF') {
+    if (!filled('nomeCompleto')) errors.nomeCompleto = 'Informe o nome completo.';
+    if (filled('cnpj')) errors.cnpj = 'O CNPJ só vale para Pessoa Jurídica.';
+  } else if (tipo === 'PJ') {
+    if (!filled('empresa')) errors.empresa = 'Informe o nome da empresa.';
+    if (filled('nomeCompleto')) errors.nomeCompleto = 'O nome completo só vale para Pessoa Física; para uma empresa use o campo Empresa.';
+    if (filled('cpf')) errors.cpf = 'O CPF só vale para Pessoa Física.';
+  } else if (!(creating && tipo === '') && !filled('empresa')) {
+    errors.empresa = 'Informe o nome da empresa.';
+  }
+  if (filled('cpf') && !isValidCpf(values.cpf) && errors.cpf === undefined) errors.cpf = 'CPF inválido. Confira os 11 números.';
+  if (filled('cnpj') && !isValidCnpj(values.cnpj) && errors.cnpj === undefined) errors.cnpj = 'CNPJ inválido. Confira os 14 caracteres.';
   for (const entry of EDITABLE_FIELDS) {
     if (entry.kind === 'number' && !parseAmount(values[entry.key]).ok) errors[entry.key] = 'Informe um valor numérico maior ou igual a zero.';
   }

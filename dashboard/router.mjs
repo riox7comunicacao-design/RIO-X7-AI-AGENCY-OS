@@ -101,6 +101,16 @@ export function parseRoute(hash) {
   }
   if (segments.length === 1 && segments[0] === 'agentes') return { name: 'agents' };
   if (segments.length === 1 && segments[0] === 'funis') return { name: 'funnels' };
+  // Fase D2: a ficha do cliente leva à tela de Funis com o formulário de nova negociação já aberto para aquele cliente (#/funis/nova-negociacao/<id codificado>).
+  if (segments.length === 3 && segments[0] === 'funis' && segments[1] === 'nova-negociacao' && segments[2] !== '') {
+    try {
+      const newFor = decodeURIComponent(segments[2]);
+      if (newFor.trim() !== '') return { name: 'funnels', newFor };
+    } catch {
+      // um "%" solto: not-found, como qualquer rota que não existe.
+    }
+    return { name: 'not-found' };
+  }
   if (segments.length === 1 && segments[0] === 'prospeccao') return { name: 'prospecting' };
   if (segments.length === 3 && segments[0] === 'prospeccao' && segments[1] === 'briefing' && segments[2] !== '') {
     try {
@@ -181,7 +191,7 @@ export function buildHash(route) {
     case 'agents':
       return '#/agentes';
     case 'funnels':
-      return '#/funis';
+      return typeof route.newFor === 'string' && route.newFor !== '' ? '#/funis/nova-negociacao/' + encodeURIComponent(route.newFor) : '#/funis';
     case 'prospecting':
       return '#/prospeccao';
     case 'prospecting-brief':
@@ -327,6 +337,12 @@ export function browserNavigation(win) {
       ensureInit();
       stamp(index, hash);
       notify();
+    },
+    // reescreve o endereço da entrada ATUAL (sem criar entrada e SEM avisar quem escuta): a tela já está na página e só o texto do endereço muda — ex.: o atalho "Nova negociação" da ficha do cliente
+    // (#/funis/nova-negociacao/<id>) volta para #/funis depois de abrir o formulário, para atualizar a página não reabri-lo.
+    rewrite(hash) {
+      ensureInit();
+      stamp(index, hash);
     },
     // leva o endereço de volta a `hash` sem empilhar nada (ver o cabeçalho). Se já está lá, não faz nada.
     restore(hash) {

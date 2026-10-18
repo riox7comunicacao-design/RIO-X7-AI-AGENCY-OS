@@ -101,15 +101,15 @@ const rotulos = (s, el) => s.browser.by.tag(el, 'dt').map((dt) => dt.textContent
 // A LISTA
 // ---------------------------------------------------------------------------------------------------------------------------------------------
 
-test('[CRM-UX-1] a lista no padrão da Fila de Aprovação: cabeçalho, busca, filtros de status/nicho/responsável, ordenação, Atualizar e Novo registro; linhas "queue-row" com o nome da empresa como botão; só LÊ ao abrir', async () => {
+test('[CRM-UX-1] a lista no padrão da Fila de Aprovação: cabeçalho, busca, filtros de status/tipo/nicho/responsável, ordenação, Atualizar e Novo cliente; linhas "queue-row" com o nome da empresa como botão; só LÊ ao abrir', async () => {
   const s = await abrir();
   assert.equal(s.browser.by.tag(s.root, 'h2')[0].textContent, 'Clientes');
-  assert.match(textoDaTela(s), /Os registros comerciais\. Clique em uma linha para abrir a ficha sem sair da lista\./);
-  for (const rotulo of ['Buscar', 'Status', 'Nicho', 'Responsável', 'Ordenar por']) assert.ok(s.browser.by.label(s.root, rotulo), `campo "${rotulo}"`);
+  assert.match(textoDaTela(s), /Pessoas físicas e jurídicas do CRM\. Clique em uma linha para abrir a ficha sem sair da lista\./);
+  for (const rotulo of ['Buscar', 'Status', 'Tipo', 'Nicho', 'Responsável', 'Ordenar por']) assert.ok(s.browser.by.label(s.root, rotulo), `campo "${rotulo}"`);
   assert.ok(botao(s, 'Atualizar'));
   assert.ok(botao(s, 'Limpar filtros'));
-  assert.equal(s.browser.by.link(s.root, 'Novo registro').href, '#/crm/novo');
-  assert.deepEqual(s.browser.by.tag(s.root, 'th').map((th) => th.textContent), ['Empresa', 'Contato', 'Nicho', 'Cidade', 'Status', 'Serviço potencial', 'Responsável', 'Próxima ação', 'Valor da proposta']);
+  assert.equal(s.browser.by.link(s.root, 'Novo cliente').href, '#/crm/novo');
+  assert.deepEqual(s.browser.by.tag(s.root, 'th').map((th) => th.textContent), ['Cliente', 'Tipo', 'Contato', 'Nicho', 'Cidade', 'Status', 'Serviço potencial', 'Responsável', 'Próxima ação', 'Valor da proposta']);
   assert.match(linha(s, 'crm:a').className, /\bqueue-row\b/);
   assert.match(s.browser.by.tag(s.root, 'table')[0].className, /\bqueue\b/);
   assert.equal(botao(s, 'Clínica Alfa').getAttribute('data-item'), 'crm:a');
@@ -259,17 +259,20 @@ test('[CRM-UX-7] a ficha abre numa GAVETA por cima da lista (a lista continua po
   await clicar(s, botao(s, 'Clínica Alfa'));
   const g = gaveta(s);
   assert.equal(titulo(s), 'Clínica Alfa');
-  assert.equal(s.browser.by.cls(g, 'ficha-head')[0].textContent, 'Contatado', 'o selo do status');
+  assert.equal(s.browser.by.cls(g, 'ficha-head')[0].children[0].textContent, 'Contatado', 'o selo do status');
+  assert.equal(s.browser.by.cls(g, 'ficha-head')[0].children[1].textContent, 'Sem tipo definido', 'registro antigo: o tipo não é inferido');
   assert.equal(s.browser.by.tag(s.root, 'table').length, 1, 'a lista continua na página, por baixo');
   assert.equal(s.browser.by.tag(s.root, 'tbody')[0].children.length, 4);
   assert.deepEqual(s.browser.by.tag(g, 'button').filter((b) => b.getAttribute('role') === 'tab').map((b) => b.textContent), ['Resumo', 'Contato e presença', 'Comercial', 'Histórico']);
   assert.equal(abaSelecionada(s), 'resumo');
   assert.equal(s.browser.by.tag(g, 'form').length, 0, 'somente leitura: nenhum formulário aberto');
 
-  assert.deepEqual(rotulos(s, painelDaAba(s, 'resumo')), ['Empresa', 'Nicho', 'Cidade', 'Estado (UF)', 'Origem do Lead', 'Status', 'Data de entrada', 'Responsável', 'Última interação', 'Próxima ação', 'Data da próxima ação']);
+  assert.deepEqual(rotulos(s, painelDaAba(s, 'resumo')), ['Tipo de pessoa', 'Empresa', 'Nicho', 'Cidade', 'Estado (UF)', 'Origem do Lead', 'Status', 'Data de entrada', 'Responsável', 'Última interação', 'Próxima ação', 'Data da próxima ação']);
   assert.deepEqual(rotulos(s, painelDaAba(s, 'contato')), ['Nome do contato', 'Cargo', 'Telefone', 'WhatsApp', 'E-mail', 'Site', 'Instagram', 'Facebook', 'Perfil no Google']);
   assert.deepEqual(rotulos(s, painelDaAba(s, 'comercial')), ['Serviço potencial', 'Temperatura', 'Problema identificado', 'Raio-X de nicho', 'Raio-X personalizado', 'Status do diagnóstico', 'Link do Raio-X', 'Data da análise', 'Valor da proposta', 'Valor total', 'Observações', 'Data da reunião', 'Link do Google Meet']);
-  const todos = FIELD_GROUPS.flatMap((grupo) => grupo.fields.map((campo) => campo.label));
+  // nome completo, CPF e CNPJ só aparecem na ficha quando existem (num registro antigo seriam só ruído); todo o resto aparece sempre
+  const SO_QUANDO_EXISTE = ['Nome completo', 'CPF', 'CNPJ'];
+  const todos = FIELD_GROUPS.flatMap((grupo) => grupo.fields.map((campo) => campo.label)).filter((rotulo) => !SO_QUANDO_EXISTE.includes(rotulo));
   assert.deepEqual(s.browser.by.tag(g, 'dt').map((dt) => dt.textContent.trim()).sort(), [...todos].sort(), 'só campos que existem, todos');
   const valor = (chave, rotulo) => { const dt = s.browser.find(painelDaAba(s, chave), (e) => e.localName === 'dt' && e.textContent.trim() === rotulo); return dt.parentNode.children[dt.parentNode.children.indexOf(dt) + 1].textContent; };
   assert.equal(valor('resumo', 'Cidade'), 'Petrópolis');

@@ -7,10 +7,11 @@ const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const path = require('node:path');
 
-const { CRM_WRITABLE_FIELDS } = require('../../src/crm/constants');
+const { CRM_WRITABLE_FIELDS, CRM_LEGACY_WRITABLE_FIELDS, CRM_PERSON_FIELDS } = require('../../src/crm/constants');
 const { FIELD_COLUMNS, MANAGED_COLUMNS, camelToSnake, recordToRow, rowToRecord } = require('../../src/crm-adapters/crmSupabaseMapping');
 
 const SQL = fs.readFileSync(path.join(__dirname, '..', '..', 'supabase', 'migrations', '20260927120000_crm_initial_schema.sql'), 'utf8');
+const SQL_D2 = fs.readFileSync(path.join(__dirname, '..', '..', 'supabase', 'migrations', '20261020090000_crm_client_person_type.sql'), 'utf8');
 
 function registroCompleto() {
   const registro = {
@@ -31,9 +32,12 @@ function registroCompleto() {
   return registro;
 }
 
-test('[MAP-1] FIELD_COLUMNS tem exatamente os 31 CRM_WRITABLE_FIELDS, cada um convertido para snake_case', () => {
-  assert.equal(Object.keys(FIELD_COLUMNS).length, 31);
+test('[MAP-1] FIELD_COLUMNS tem exatamente os CRM_WRITABLE_FIELDS (os 31 legados, na mesma ordem, + os 4 de identificação PF/PJ), cada um convertido para snake_case', () => {
+  assert.equal(Object.keys(FIELD_COLUMNS).length, 35);
   assert.deepEqual(Object.keys(FIELD_COLUMNS), CRM_WRITABLE_FIELDS);
+  assert.deepEqual(Object.keys(FIELD_COLUMNS).slice(0, 31), CRM_LEGACY_WRITABLE_FIELDS, 'os 31 legados continuam os primeiros, na mesma ordem');
+  assert.deepEqual(Object.keys(FIELD_COLUMNS).slice(31), CRM_PERSON_FIELDS);
+  assert.deepEqual([FIELD_COLUMNS.tipoPessoa, FIELD_COLUMNS.nomeCompleto, FIELD_COLUMNS.cpf, FIELD_COLUMNS.cnpj], ['tipo_pessoa', 'nome_completo', 'cpf', 'cnpj']);
   assert.equal(FIELD_COLUMNS.googlePerfil, 'google_perfil');
   assert.equal(FIELD_COLUMNS.raioXDeNicho, 'raio_x_de_nicho');
   assert.equal(FIELD_COLUMNS.valorProposta, 'valor_proposta');
@@ -84,7 +88,10 @@ test('[MAP-5] coluna ausente na linha (defensivo) vira NULL no registro', () => 
 });
 
 test('[MAP-6] nenhuma coluna do mapeamento diverge da migration real: cada valor de FIELD_COLUMNS/MANAGED_COLUMNS aparece como coluna na migration, e "id" também', () => {
-  for (const column of [...Object.values(FIELD_COLUMNS), ...Object.values(MANAGED_COLUMNS), 'id']) {
+  const novas = CRM_PERSON_FIELDS.map((field) => FIELD_COLUMNS[field]);
+  for (const column of [...Object.values(FIELD_COLUMNS).filter((name) => !novas.includes(name)), ...Object.values(MANAGED_COLUMNS), 'id']) {
     assert.match(SQL, new RegExp(`^\\s*${column}\\s+(TEXT|NUMERIC|JSONB)\\b`, 'm'), `coluna "${column}" não encontrada na migration`);
   }
+  // as quatro colunas de identificação PF/PJ vêm da migration da Fase D2 (ADD COLUMN)
+  for (const column of novas) assert.match(SQL_D2, new RegExp(`ADD COLUMN\\s+${column}\\s+TEXT\\b`), `coluna "${column}" não encontrada na migration da Fase D2`);
 });
