@@ -202,9 +202,13 @@ export function createFakeApi(options = {}) {
 // ---------------------------------------------------------------------------
 export const FAKE_SESSION = Object.freeze({ access_token: 'token-de-teste-do-navegador-nao-real', refresh_token: 'refresh-de-teste-nao-real', user: { id: 'auth-de-teste' } });
 
-// options: { session, loginError, refreshSession }. `session` presente = já há sessão (o usuário já entrou).
+// A sessão que um link de recuperação (falso) cria: tokens de teste óbvios, nunca reais.
+export const FAKE_RECOVERY_SESSION = Object.freeze({ access_token: 'token-de-recuperacao-de-teste-nao-real', refresh_token: 'refresh-de-recuperacao-de-teste-nao-real', user: { id: 'auth-de-teste' } });
+
+// options: { session, loginError, refreshSession } + a recuperação de senha: { resetError, setSessionError, verifyOtpError, exchangeError, updateUserError, updateUserResult }.
+// `session` presente = já há sessão (o usuário já entrou).
 export function createFakeSdk(options = {}) {
-  const calls = { createClient: null, signIn: [], signOut: [], refresh: 0, getSession: 0 };
+  const calls = { createClient: null, signIn: [], signOut: [], refresh: 0, getSession: 0, resetPassword: [], setSession: [], verifyOtp: [], exchange: [], updateUser: [] };
   let current = options.session === undefined ? null : options.session;
   const listeners = [];
   const emit = (event) => {
@@ -237,6 +241,42 @@ export function createFakeSdk(options = {}) {
           return options.refreshSession;
         }
         return { data: { session: current }, error: null };
+      },
+      // --- recuperação de senha (o SDK de verdade: resetPasswordForEmail, setSession, verifyOtp, exchangeCodeForSession, updateUser) ---
+      async resetPasswordForEmail(email, opts) {
+        calls.resetPassword.push({ email, options: opts === undefined ? null : opts });
+        if (options.resetGate) await options.resetGate; // segura a resposta (para provar o bloqueio de envios repetidos)
+        if (options.resetError) return { data: null, error: options.resetError };
+        return { data: {}, error: null };
+      },
+      async setSession(tokens) {
+        calls.setSession.push(tokens);
+        if (options.setSessionError) return { data: { user: null, session: null }, error: options.setSessionError };
+        current = FAKE_RECOVERY_SESSION;
+        emit('SIGNED_IN');
+        return { data: { user: current.user, session: current }, error: null };
+      },
+      async verifyOtp(params) {
+        calls.verifyOtp.push(params);
+        if (options.verifyOtpError) return { data: { user: null, session: null }, error: options.verifyOtpError };
+        current = FAKE_RECOVERY_SESSION;
+        emit('PASSWORD_RECOVERY');
+        return { data: { user: current.user, session: current }, error: null };
+      },
+      async exchangeCodeForSession(code) {
+        calls.exchange.push(code);
+        if (options.exchangeError) return { data: { user: null, session: null }, error: options.exchangeError };
+        current = FAKE_RECOVERY_SESSION;
+        emit('PASSWORD_RECOVERY');
+        return { data: { user: current.user, session: current }, error: null };
+      },
+      async updateUser(attributes) {
+        calls.updateUser.push(attributes);
+        if (options.updateUserThrows) throw options.updateUserThrows;
+        if (options.updateUserResult !== undefined) return options.updateUserResult;
+        if (options.updateUserError) return { data: { user: null }, error: options.updateUserError };
+        if (!current) return { data: { user: null }, error: Object.assign(new Error('Auth session missing!'), { name: 'AuthSessionMissingError', status: 400 }) };
+        return { data: { user: current.user }, error: null };
       },
       onAuthStateChange(listener) {
         listeners.push(listener);

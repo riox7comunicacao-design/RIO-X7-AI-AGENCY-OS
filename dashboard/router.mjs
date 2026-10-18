@@ -312,6 +312,15 @@ export function browserNavigation(win) {
       };
     },
     current: () => win.location.hash,
+    // O endereço inteiro, só para LER: a recuperação de senha precisa da origem (para o redirecionamento do e-mail) e do ? e do # que o link do e-mail traz (passwordRecovery.mjs).
+    url: () => ({ origin: win.location.origin || '', pathname: win.location.pathname || '/', search: win.location.search || '', hash: win.location.hash }),
+    // Troca o endereço da entrada ATUAL por `<caminho><hash>` — SEM ? e sem os parâmetros que estavam no #. Serve para tirar da barra de endereços e do histórico o token que o link
+    // do e-mail trouxe (não cria entrada nem avisa quem escuta).
+    scrub(hash) {
+      win.history.replaceState(win.history.state, '', `${win.location.pathname || '/'}${hash}`);
+      if (index === null) ensureInit();
+      else hashes.set(index, hash);
+    },
     subscribe(listener) {
       ensureInit();
       if (listeners.size === 0) win.addEventListener('hashchange', notify);

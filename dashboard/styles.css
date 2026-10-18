@@ -105,6 +105,14 @@ a { color: var(--primary); }
 .login .brand-block { margin-bottom: 14px; }
 .login .muted { margin-bottom: 4px; }
 .login-hint { margin: 0 0 18px; color: var(--muted); font-size: 14px; }
+.login-title { margin: 0 0 6px; font-size: 18px; }
+.login-links { margin: -2px 0 12px; font-size: 14px; }
+.login-links .link-button { color: var(--primary); }
+.login.recovery .login-links { margin: 14px 0 0; }
+.recovery-form .btn.primary { width: 100%; }
+.login.recovery .actions { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 8px; }
+.login.recovery .actions .btn { flex: 1 1 140px; }
+@media (max-width: 480px) { .login { padding: 24px 18px; } }
 .field { display: grid; gap: 4px; margin-bottom: 12px; }
 .field label { font-weight: 600; }
 input, textarea {

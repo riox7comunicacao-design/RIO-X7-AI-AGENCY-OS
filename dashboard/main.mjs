@@ -22,6 +22,7 @@ import { parseRoute, buildHash, sectionOf, catalogListRouteName } from './router
 import { NAV_TREE, visibleTree, menuItemOf } from './nav.mjs';
 import { PAGE_TITLES, SHELL_TEXT } from './i18n/pt-BR.mjs';
 import { permissionsOf } from './crm-model.mjs';
+import { createPasswordRecovery, RESET_HASH, RECOVERY_TEXT } from './passwordRecovery.mjs';
 import { createAgentsView } from './views/agents.mjs';
 import { createApprovalsView } from './views/approvals.mjs';
 import { createCrmView } from './views/crm.mjs';
@@ -49,7 +50,7 @@ const BASE_TITLE = 'Rio X7 AI Agency OS';
 // quando a primeira tela (login ou painel) está desenhada.
 // preferences: { getSidebarCollapsed(), setSidebarCollapsed(bool) } (preferences.mjs) — a ÚNICA preferência visual lembrada: menu recolhido ou expandido. Sem ela, vale só enquanto a página está aberta.
 // viewport: { isMobile(), subscribe(fn) } — quando a largura é de celular (padrão: window.matchMedia, se existir).
-export function startDashboard({ document, root, fetchImpl, sdk, navigation, preferences = null, viewport = null }) {
+export function startDashboard({ document, root, fetchImpl, sdk, navigation, preferences = null, viewport = null, clock = () => Date.now() }) {
   function mount(...children) {
     root.replaceChildren(...children.filter(Boolean));
   }
@@ -107,7 +108,7 @@ export function startDashboard({ document, root, fetchImpl, sdk, navigation, pre
 
     // O painel em andamento (só existe com sessão): a assinatura das rotas e as telas que guardam dados.
     let session = null;
-    // A tela de login está na página? Um SIGNED_OUT que chega com ela já visível (a sessão acabou aqui, ou saiu-se em
+    // A tela de login (ou de recuperação de senha) está na página? Um SIGNED_OUT que chega com ela já visível (a sessão acabou aqui, ou saiu-se em
     // outra aba) não a reconstrói: apagaria o aviso "Sua sessão expirou" e o que a pessoa já digitou.
     let loginVisible = false;
 
@@ -175,6 +176,8 @@ export function startDashboard({ document, root, fetchImpl, sdk, navigation, pre
             h(document, 'p', { className: 'login-hint', text: 'Entre com a sua conta para acessar o painel.' }),
             h(document, 'div', { className: 'field' }, h(document, 'label', { for: 'login-email', text: 'E-mail' }), email),
             h(document, 'div', { className: 'field' }, h(document, 'label', { for: 'login-password', text: 'Senha' }), password),
+            // "Esqueci minha senha?": logo abaixo do campo Senha (passwordRecovery.mjs). Leva o e-mail já digitado para a tela de recuperação.
+            h(document, 'p', { className: 'login-links' }, h(document, 'button', { type: 'button', className: 'link-button forgot-password', text: RECOVERY_TEXT.forgotLink, onclick: () => recovery.showForgot({ email: email.value.trim() }) })),
             feedback,
             submit
           )
@@ -182,6 +185,21 @@ export function startDashboard({ document, root, fetchImpl, sdk, navigation, pre
       );
       email.focus();
     }
+
+    // "Esqueci minha senha?", a tela de nova senha e a leitura do link do e-mail (passwordRecovery.mjs). Cada tela de recuperação para o painel (enter) e conta como "tela de login" na página.
+    const recovery = createPasswordRecovery({
+      document,
+      mount,
+      client,
+      navigation,
+      clock,
+      enter: () => {
+        endSession();
+        loginVisible = true;
+        document.title = BASE_TITLE;
+      },
+      showLogin: (notice) => showLogin(notice),
+    });
 
     // O bloco de baixo do menu: quem está logado e "Sair".
     function whoBlock(me) {
@@ -446,9 +464,20 @@ export function startDashboard({ document, root, fetchImpl, sdk, navigation, pre
 
     client.auth.onAuthStateChange((event) => {
       if (event === 'SIGNED_OUT' && !loginVisible) showLogin();
+      // o link de recuperação foi aceito: a pessoa define a nova senha (um SIGNED_IN comum NÃO leva ao painel por aqui — só showLogin/showDashboard fazem isso)
+      else if (event === 'PASSWORD_RECOVERY') recovery.showNewPassword();
     });
 
+    // O link do e-mail de recuperação (ou um link vencido) chega no ENDEREÇO: é tratado antes de qualquer tela.
+    if (await recovery.handleRedirect()) return;
+
     const { data } = await client.auth.getSession();
+    // #/redefinir-senha é o estado de recuperação reconhecível (o que sobra no endereço depois de limpar o token): com sessão, ainda é "Definir nova senha"; sem ela, o link já não vale.
+    if (navigation.current() === RESET_HASH) {
+      if (data && data.session) recovery.showNewPassword();
+      else recovery.showForgot({ notice: RECOVERY_TEXT.linkInvalid });
+      return;
+    }
     if (data && data.session) await showDashboard();
     else showLogin();
   }

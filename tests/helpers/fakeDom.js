@@ -276,14 +276,22 @@ class FakeDocument {
 
 // Um `window` com o mínimo que a navegação por # usa: location.hash, hashchange (assíncrono) e history.replaceState.
 class FakeWindow {
-  constructor(hash = '') {
+  constructor(hash = '', search = '') {
     this._hash = hash;
+    this._search = search; // o ?… do endereço (o link do e-mail de recuperação de senha pode trazê-lo)
     this._entries = [hash];
     this._states = [null]; // o history.state de cada entrada (como no navegador: nasce nulo, replaceState grava)
     this._index = 0;
     this._listeners = new Set();
     const win = this;
     this.location = {
+      origin: 'http://localhost:3000',
+      get pathname() {
+        return '/';
+      },
+      get search() {
+        return win._search;
+      },
       get hash() {
         return win._hash;
       },
@@ -299,7 +307,14 @@ class FakeWindow {
     };
     this.history = {
       replaceState(state, _title, url) {
-        win._hash = String(url);
+        // como o navegador: `#x` troca só o fragmento (o ? fica); `/caminho#x` ou `/caminho` reescreve o ? e o #
+        const text = String(url);
+        const at = text.indexOf('#');
+        if (text !== '' && !text.startsWith('#')) {
+          const query = (at >= 0 ? text.slice(0, at) : text).indexOf('?');
+          win._search = query >= 0 ? (at >= 0 ? text.slice(query, at) : text.slice(query)) : '';
+        }
+        win._hash = at >= 0 ? text.slice(at) : '';
         win._entries[win._index] = win._hash;
         win._states[win._index] = state === undefined ? null : state;
       },
@@ -405,9 +420,9 @@ const by = {
 // ---------------------------------------------------------------------------
 // O "navegador" de teste: o document, o window e as ações de usuário
 // ---------------------------------------------------------------------------
-function createBrowser({ hash = '' } = {}) {
+function createBrowser({ hash = '', search = '' } = {}) {
   const document = new FakeDocument();
-  const window = new FakeWindow(hash);
+  const window = new FakeWindow(hash, search);
   const root = document.createElement('div');
   document.body = document.createElement('body');
 
