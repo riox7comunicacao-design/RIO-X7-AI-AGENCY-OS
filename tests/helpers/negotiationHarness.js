@@ -28,8 +28,10 @@ async function negociacao(n, extras = {}) {
   const { previewFinance } = await loadModel();
   const base = { id: `negotiation:${n}`, crmRecordId: 'crm:1', cliente: { empresa: 'Clínica Alfa' }, funnelId: 'funnel:1', funnelNome: 'Funil 1', cardId: `card:${n}`, stageId: 'stage:1', stageNome: 'Contato', serviceId: 'service:1', servicoNome: 'Gestão de redes', responsavelUserId: 'user-breno', responsavelNome: 'Breno Bento', prazoMeses: 12, formaPagamento: 'RECORRENTE', periodicidade: 'MENSAL', valorNegociado: 1500, previsaoFechamento: null, situacao: 'ABERTA', motivoPerda: null, fechadoEm: null, criadoEm: T, atualizadoEm: T, criadoPorNome: 'Breno Bento', atualizadoPorNome: 'Breno Bento', eventos: [{ tipo: 'CRIADA', em: T, porUserId: 'user-breno', porNome: 'Breno Bento', detalhe: { etapaId: 'stage:1' } }] };
   const item = { ...base, ...extras };
-  const finance = previewFinance({ formaPagamento: item.formaPagamento, periodicidade: item.periodicidade, prazoMeses: item.prazoMeses, valorNegociado: item.valorNegociado });
-  item.financeiro = finance.ok ? { tcv: finance.tcv, mrr: finance.mrr, equivalenteMensal: finance.equivalenteMensal, cronograma: { ...finance.cronograma } } : null;
+  item.duracao = item.duracao ?? 'DEFINIDA';
+  item.avisoPrevioDias = item.avisoPrevioDias ?? null;
+  const finance = previewFinance({ duracao: item.duracao, formaPagamento: item.formaPagamento, periodicidade: item.periodicidade, prazoMeses: item.prazoMeses ?? null, valorNegociado: item.valorNegociado });
+  item.financeiro = finance.ok ? { tcv: finance.tcv, tcvIndeterminado: finance.tcvIndeterminado, mrr: finance.mrr, equivalenteMensal: finance.equivalenteMensal, cronograma: { ...finance.cronograma } } : null;
   return item;
 }
 
@@ -57,8 +59,10 @@ async function apiNegocios({ funnels = [funil(1)], stages = null, clients = [cli
   const naoAchou = async () => erroApi(404, 'NEGOTIATION_NOT_FOUND');
   const { previewFinance } = await loadModel();
   const comFinanceiro = (item) => {
-    const finance = previewFinance({ formaPagamento: item.formaPagamento, periodicidade: item.periodicidade, prazoMeses: item.prazoMeses, valorNegociado: item.valorNegociado });
-    item.financeiro = finance.ok ? { tcv: finance.tcv, mrr: finance.mrr, equivalenteMensal: finance.equivalenteMensal, cronograma: { ...finance.cronograma } } : null;
+    item.duracao = item.duracao ?? 'DEFINIDA';
+  item.avisoPrevioDias = item.avisoPrevioDias ?? null;
+  const finance = previewFinance({ duracao: item.duracao, formaPagamento: item.formaPagamento, periodicidade: item.periodicidade, prazoMeses: item.prazoMeses ?? null, valorNegociado: item.valorNegociado });
+    item.financeiro = finance.ok ? { tcv: finance.tcv, tcvIndeterminado: finance.tcvIndeterminado, mrr: finance.mrr, equivalenteMensal: finance.equivalenteMensal, cronograma: { ...finance.cronograma } } : null;
     return item;
   };
   const stageOf = (id) => mem.stages.find((entry) => entry.id === id);
@@ -75,7 +79,7 @@ async function apiNegocios({ funnels = [funil(1)], stages = null, clients = [cli
     const totais = etapas.map((entry) => {
       const naEtapa = cards.filter((card) => card.stageId === entry.id);
       const abertas = naEtapa.filter((card) => card.negociacao && card.negociacao.situacao === 'ABERTA');
-      return { stageId: entry.id, cards: naEtapa.length, negociacoesAbertas: abertas.length, tcvEmJogo: abertas.reduce((soma, card) => soma + (card.negociacao.financeiro ? Math.round(card.negociacao.financeiro.tcv * 100) : 0), 0) / 100 };
+      return { stageId: entry.id, cards: naEtapa.length, negociacoesAbertas: abertas.length, tcvEmJogo: abertas.reduce((soma, card) => soma + (card.negociacao.financeiro && typeof card.negociacao.financeiro.tcv === 'number' ? Math.round(card.negociacao.financeiro.tcv * 100) : 0), 0) / 100, tcvIndeterminadas: abertas.filter((card) => card.negociacao.financeiro && card.negociacao.financeiro.tcvIndeterminado === true).length, mrrEmJogo: abertas.reduce((soma, card) => soma + (card.negociacao.financeiro && typeof card.negociacao.financeiro.mrr === 'number' ? Math.round(card.negociacao.financeiro.mrr * 100) : 0), 0) / 100 };
     });
     return { funnels: clone(mem.funnels), funnelId: escolhido.id, stages: clone(etapas), cards, totais };
   }
@@ -126,7 +130,9 @@ async function apiNegocios({ funnels = [funil(1)], stages = null, clients = [cli
         stageNome: primeira.nome,
         serviceId: corpo.serviceId,
         servicoNome: srv ? srv.nome : null,
-        prazoMeses: corpo.prazoMeses,
+        duracao: corpo.duracao ?? 'DEFINIDA',
+        prazoMeses: corpo.prazoMeses ?? null,
+        avisoPrevioDias: corpo.avisoPrevioDias ?? null,
         formaPagamento: corpo.formaPagamento,
         periodicidade: corpo.periodicidade ?? null,
         valorNegociado: corpo.valorNegociado,
@@ -142,6 +148,8 @@ async function apiNegocios({ funnels = [funil(1)], stages = null, clients = [cli
       if (!item) throw await naoAchou();
       if (item.situacao !== 'ABERTA') throw await erroApi(409, 'NEGOTIATION_CLOSED');
       Object.assign(item, patch);
+      if (item.duracao === 'INDETERMINADA' && !Object.prototype.hasOwnProperty.call(patch, 'prazoMeses')) item.prazoMeses = null;
+      if (item.duracao !== 'INDETERMINADA' && !Object.prototype.hasOwnProperty.call(patch, 'avisoPrevioDias')) item.avisoPrevioDias = null;
       if (patch.serviceId) item.servicoNome = (mem.services.find((s) => s.id === patch.serviceId) || {}).nome ?? item.servicoNome;
       comFinanceiro(item);
       item.eventos.push(evento('ATUALIZADA', { alteracoes: Object.keys(patch).map((campo) => ({ campo, de: null, para: patch[campo] })) }));
@@ -283,7 +291,7 @@ async function apiNegocios({ funnels = [funil(1)], stages = null, clients = [cli
 
 const centavos = (valor) => Math.round(valor * 100);
 function resumoDe(negociacoes) {
-  const balde = () => ({ quantidade: 0, tcv: 0, mrr: 0, outras: 0, semCalculo: 0 });
+  const balde = () => ({ quantidade: 0, tcv: 0, indeterminado: 0, mrr: 0, outras: 0, semCalculo: 0 });
   const baldes = { ABERTA: balde(), GANHA: balde(), PERDIDA: balde() };
   const porEtapa = new Map();
   for (const n of negociacoes) {
@@ -291,22 +299,25 @@ function resumoDe(negociacoes) {
     if (!b) continue;
     b.quantidade += 1;
     if (n.financeiro) {
-      b.tcv += centavos(n.financeiro.tcv);
+      if (typeof n.financeiro.tcv === 'number') b.tcv += centavos(n.financeiro.tcv);
+      else b.indeterminado += 1;
       if (n.financeiro.mrr !== null && n.financeiro.mrr !== undefined) b.mrr += centavos(n.financeiro.mrr);
       else if (n.financeiro.equivalenteMensal !== null && n.financeiro.equivalenteMensal !== undefined) b.outras += centavos(n.financeiro.equivalenteMensal);
     } else b.semCalculo += 1;
     if (n.situacao === 'ABERTA') {
       const chave = `${n.funnelId}|${n.stageId}`;
-      const linha = porEtapa.get(chave) || { funnelId: n.funnelId, funnelNome: n.funnelNome, stageId: n.stageId, stageNome: n.stageNome, quantidade: 0, tcv: 0 };
+      const linha = porEtapa.get(chave) || { funnelId: n.funnelId, funnelNome: n.funnelNome, stageId: n.stageId, stageNome: n.stageNome, quantidade: 0, tcv: 0, tcvIndeterminadas: 0, mrrCentavos: 0 };
       linha.quantidade += 1;
-      if (n.financeiro) linha.tcv += centavos(n.financeiro.tcv);
+      if (n.financeiro && typeof n.financeiro.tcv === 'number') linha.tcv += centavos(n.financeiro.tcv);
+      else if (n.financeiro) linha.tcvIndeterminadas += 1;
+      if (n.financeiro && typeof n.financeiro.mrr === 'number') linha.mrrCentavos += centavos(n.financeiro.mrr);
       porEtapa.set(chave, linha);
     }
   }
-  const forma = (b) => ({ quantidade: b.quantidade, tcv: b.tcv / 100, mrr: b.mrr / 100, equivalenteMensalOutrasRecorrencias: b.outras / 100, receitaMensalEquivalenteTotal: (b.mrr + b.outras) / 100, semCalculo: b.semCalculo });
+  const forma = (b) => ({ quantidade: b.quantidade, tcv: b.tcv / 100, tcvIndeterminado: b.indeterminado, mrr: b.mrr / 100, equivalenteMensalOutrasRecorrencias: b.outras / 100, receitaMensalEquivalenteTotal: (b.mrr + b.outras) / 100, semCalculo: b.semCalculo });
   const ganhas = baldes.GANHA.quantidade;
   const perdidas = baldes.PERDIDA.quantidade;
-  return { abertas: forma(baldes.ABERTA), ganhas: forma(baldes.GANHA), perdidas: forma(baldes.PERDIDA), conversao: { fechadas: ganhas + perdidas, ganhas, perdidas, taxa: ganhas + perdidas > 0 ? ganhas / (ganhas + perdidas) : null }, porEtapa: [...porEtapa.values()].map((l) => ({ ...l, tcv: l.tcv / 100 })), total: negociacoes.length };
+  return { abertas: forma(baldes.ABERTA), ganhas: forma(baldes.GANHA), perdidas: forma(baldes.PERDIDA), conversao: { fechadas: ganhas + perdidas, ganhas, perdidas, taxa: ganhas + perdidas > 0 ? ganhas / (ganhas + perdidas) : null }, porEtapa: [...porEtapa.values()].map((l) => ({ ...l, tcv: l.tcv / 100, mrr: l.mrrCentavos / 100 })), total: negociacoes.length };
 }
 
 // Monta a tela do quadro sobre o DOM de teste, com a camada de modais e avisos REAL do Dashboard.

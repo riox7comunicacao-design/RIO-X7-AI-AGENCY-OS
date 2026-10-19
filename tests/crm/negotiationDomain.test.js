@@ -370,9 +370,9 @@ test('[NEG-DOM-16] INDICADORES: abertas, ganhas e perdidas separadas; TCV, MRR (
   await domain.loseNegotiation(e.deps, m2.id, 'Preço', OP);
   const resumo = domain.summarizeNegotiations(await domain.listNegotiations(e.deps));
   assert.equal(resumo.total, 5);
-  assert.deepEqual(resumo.ganhas, { quantidade: 2, tcv: 24001.2, mrr: 1000.1, equivalenteMensalOutrasRecorrencias: 1000, receitaMensalEquivalenteTotal: 2000.1, semCalculo: 0 });
-  assert.deepEqual(resumo.abertas, { quantidade: 2, tcv: 13400, mrr: 700, equivalenteMensalOutrasRecorrencias: 0, receitaMensalEquivalenteTotal: 700, semCalculo: 0 });
-  assert.deepEqual(resumo.perdidas, { quantidade: 1, tcv: 6000, mrr: 500, equivalenteMensalOutrasRecorrencias: 0, receitaMensalEquivalenteTotal: 500, semCalculo: 0 });
+  assert.deepEqual(resumo.ganhas, { quantidade: 2, tcv: 24001.2, tcvIndeterminado: 0, mrr: 1000.1, equivalenteMensalOutrasRecorrencias: 1000, receitaMensalEquivalenteTotal: 2000.1, semCalculo: 0 });
+  assert.deepEqual(resumo.abertas, { quantidade: 2, tcv: 13400, tcvIndeterminado: 0, mrr: 700, equivalenteMensalOutrasRecorrencias: 0, receitaMensalEquivalenteTotal: 700, semCalculo: 0 });
+  assert.deepEqual(resumo.perdidas, { quantidade: 1, tcv: 6000, tcvIndeterminado: 0, mrr: 500, equivalenteMensalOutrasRecorrencias: 0, receitaMensalEquivalenteTotal: 500, semCalculo: 0 });
   assert.deepEqual(resumo.conversao, { fechadas: 3, ganhas: 2, perdidas: 1, taxa: 2 / 3 });
   assert.deepEqual(resumo.porEtapa.map((l) => [l.stageNome, l.quantidade, l.tcv]).sort(), [['Contato', 2, 13400]]);
   void u1; void t2;

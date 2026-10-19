@@ -1,5 +1,5 @@
 // O formulário de NEGOCIAÇÃO (CRM 5.0, Fase D1, decisão 0028): "Nova negociação" e "Editar negociação", no mesmo modal centralizado dos cadastros. Só monta os campos REAIS do contrato do servidor:
-// cliente, funil, serviço, prazo (3, 6, 12 meses ou outro), forma de pagamento (único ou recorrente, só as que o SERVIÇO permite), periodicidade (só as que o serviço permite), valor negociado e a
+// cliente, funil, serviço, duração do contrato (prazo indeterminado, 3, 6, 12 meses ou outro prazo definido; no indeterminado, o aviso prévio de cancelamento em dias), forma de pagamento (único ou recorrente, só as que o SERVIÇO permite), periodicidade (só as que o serviço permite), valor negociado e a
 // previsão de fechamento. Mostra uma PRÉVIA do resultado (TCV, MRR / equivalente mensal e o cronograma) com a MESMA conta do servidor — nunca gravada pelo navegador.
 //
 // O QUE NÃO FAZ: regra de negócio. O servidor repete tudo (cliente real, serviço permitido, prazo x periodicidade, situação) e tem a palavra final; o responsável e a situação NUNCA são campos. Editar
@@ -9,11 +9,11 @@ import { h } from '../dom.mjs';
 import { formField } from '../ui/index.mjs';
 import { clientName, clientOptionLabel, formatMoney, normalizeDocument, normalizeText } from '../crm-model.mjs';
 import { parseMoney } from '../catalog-model.mjs';
-import { PAYMENT_OPTIONS, PERIODICITY_OPTIONS, TERM_PRESETS, MESSAGES, buildCreateBody, buildPatchBody, emptyFormValues, formValuesFromNegotiation, negotiationErrorInfo, previewFinance, scheduleText, fieldMessage, parseTerm } from '../negotiation-model.mjs';
+import { PAYMENT_OPTIONS, PERIODICITY_OPTIONS, TERM_PRESETS, DURATIONS, MESSAGES, buildCreateBody, buildPatchBody, emptyFormValues, formValuesFromNegotiation, negotiationErrorInfo, previewFinance, scheduleText, fieldMessage, parseTerm, parseNotice, noticeText, tcvText } from '../negotiation-model.mjs';
 import { textOf } from '../format.mjs';
 
 const idOf = (field) => `negotiation-field-${field}`;
-const FIELD_ORDER = Object.freeze(['crmRecordId', 'funnelId', 'serviceId', 'prazoMeses', 'formaPagamento', 'periodicidade', 'valorNegociado', 'previsaoFechamento']);
+const FIELD_ORDER = Object.freeze(['crmRecordId', 'funnelId', 'serviceId', 'duracao', 'prazoMeses', 'avisoPrevioDias', 'formaPagamento', 'periodicidade', 'valorNegociado', 'previsaoFechamento']);
 
 // document. mode: 'create' | 'edit'. negotiation: a negociação atual (edição). funnels: [{ id, nome, ativo }]. funnelId: o funil já escolhido no quadro. clients: [{ id, empresa, tipoPessoa, nomeCompleto, cpf, cnpj }] (o nome mostrado é o do tipo: nome completo da PF, empresa da PJ). initialClientId: o cliente já escolhido (vindo da ficha do cliente). services: os itens do catálogo
 // (ativos) com as modalidades. onSubmit(body): Promise (o dono grava; se rejeitar, o erro aparece AQUI e o formulário continua aberto). onCancel(): fecha pelo caminho normal.
@@ -101,23 +101,36 @@ export function createNegotiationForm({ document, mode, negotiation = null, funn
   const paymentGroup = el('fieldset', { className: 'modality-group negotiation-payment', id: idOf('formaPagamento'), 'aria-describedby': `${idOf('formaPagamento')}-help ${idOf('formaPagamento')}-error` }, el('legend', { className: 'required', text: 'Forma de pagamento negociada' }), paymentHelp, ...paymentRows.map((row) => row.element), paymentError);
   controls.formaPagamento = { element: paymentGroup, setError: (message) => { paymentError.textContent = message || ''; paymentError.hidden = !message; }, setHidden: () => {}, focus: () => (paymentRows.find((row) => row.input.checked) || paymentRows[0]).input.focus() };
 
-  // ---- prazo (3, 6, 12 ou outro) ----
+  // ---- duração do contrato (prazo indeterminado, 3, 6, 12 ou outro prazo definido) ----
+  // "Prazo indeterminado": o contrato não tem data final nem número de meses; o TCV fica indeterminado (nunca estimado) e o aviso prévio de cancelamento (dias) é só uma condição do contrato.
   const termError = el('p', { className: 'field-error', id: `${idOf('prazoMeses')}-error`, role: 'alert', hidden: true });
   const isPreset = (text) => TERM_PRESETS.some((preset) => String(preset) === text);
-  const initialOther = initial.prazoMeses !== '' && !isPreset(initial.prazoMeses);
-  const termRows = [...TERM_PRESETS.map((preset) => ({ value: String(preset), label: `${preset} meses` })), { value: 'outro', label: 'Outro prazo' }].map((entry) => {
+  const initialIndefinite = initial.duracao === DURATIONS.INDETERMINADA;
+  const initialOther = !initialIndefinite && initial.prazoMeses !== '' && !isPreset(initial.prazoMeses);
+  const termRows = [{ value: 'indeterminado', label: 'Prazo indeterminado' }, ...TERM_PRESETS.map((preset) => ({ value: String(preset), label: `${preset} meses` })), { value: 'outro', label: 'Outro prazo definido' }].map((entry) => {
     const input = el('input', { id: `negotiation-field-prazo-${entry.value}`, type: 'radio', name: 'negociacao-prazo', value: entry.value });
-    input.checked = entry.value === 'outro' ? initialOther : initial.prazoMeses === entry.value;
+    input.checked = entry.value === 'indeterminado' ? initialIndefinite : entry.value === 'outro' ? initialOther : !initialIndefinite && initial.prazoMeses === entry.value;
     return { value: entry.value, input, element: el('div', { className: 'modality-option' }, input, el('label', { for: input.getAttribute('id'), text: entry.label })) };
   });
   const termInput = el('input', { id: idOf('prazoMeses'), type: 'text', inputmode: 'numeric', autocomplete: 'off', maxlength: '3', placeholder: 'Meses (1 a 120)', 'aria-label': 'Prazo em meses' });
   termInput.value = initialOther ? initial.prazoMeses : '';
   const termInputWrap = el('div', { className: 'negotiation-term-other' }, termInput);
-  const termGroup = el('fieldset', { className: 'modality-group negotiation-term', id: 'negotiation-field-prazo', 'aria-describedby': `${idOf('prazoMeses')}-error` }, el('legend', { className: 'required', text: 'Prazo do contrato' }), el('p', { className: 'field-help muted', text: 'Por quanto tempo o contrato vale. É independente da periodicidade da cobrança.' }), ...termRows.map((row) => row.element), termInputWrap, termError);
-  controls.prazoMeses = { element: termGroup, setError: (message) => { termError.textContent = message || ''; termError.hidden = !message; }, setHidden: () => {}, focus: () => (termRows.find((row) => row.input.checked) || termRows[2]).input.focus() };
+  const noticeError = el('p', { className: 'field-error', id: `${idOf('avisoPrevioDias')}-error`, role: 'alert', hidden: true });
+  const noticeInput = el('input', { id: idOf('avisoPrevioDias'), type: 'text', inputmode: 'numeric', autocomplete: 'off', maxlength: '3', placeholder: 'Dias (ex.: 30)', 'aria-describedby': `${idOf('avisoPrevioDias')}-help ${idOf('avisoPrevioDias')}-error` });
+  noticeInput.value = initialIndefinite ? initial.avisoPrevioDias : '';
+  const noticeWrap = el('div', { className: 'field negotiation-notice' },
+    el('label', { for: idOf('avisoPrevioDias'), text: 'Aviso prévio para cancelamento (dias)' }),
+    noticeInput,
+    el('p', { className: 'field-help muted', id: `${idOf('avisoPrevioDias')}-help`, text: 'Opcional. Com quantos dias de antecedência o contrato pode ser cancelado. Não é a duração do contrato, nem um período mínimo, nem uma cobrança adicional.' }),
+    noticeError);
+  const termGroup = el('fieldset', { className: 'modality-group negotiation-term', id: 'negotiation-field-prazo', 'aria-describedby': `${idOf('prazoMeses')}-error` }, el('legend', { className: 'required', text: 'Duração do contrato' }), el('p', { className: 'field-help muted', text: 'Por quanto tempo o contrato vale. É independente da periodicidade da cobrança. O prazo indeterminado vale só para o pagamento recorrente.' }), ...termRows.map((row) => row.element), termInputWrap, noticeWrap, termError);
+  controls.prazoMeses = { element: termGroup, setError: (message) => { termError.textContent = message || ''; termError.hidden = !message; }, setHidden: () => {}, focus: () => (termRows.find((row) => row.input.checked) || termRows[3]).input.focus() };
+  controls.duracao = controls.prazoMeses; // um erro da duração aparece no mesmo grupo
+  controls.avisoPrevioDias = { element: noticeWrap, setError: (message) => { noticeError.textContent = message || ''; noticeError.hidden = !message; }, setHidden: () => {}, focus: () => noticeInput.focus() };
+  const isIndefinite = () => Boolean(termRows.find((row) => row.input.checked && row.value === 'indeterminado'));
   const termValue = () => {
     const chosen = termRows.find((row) => row.input.checked);
-    if (!chosen) return '';
+    if (!chosen || chosen.value === 'indeterminado') return '';
     return chosen.value === 'outro' ? String(termInput.value || '') : chosen.value;
   };
 
@@ -129,7 +142,9 @@ export function createNegotiationForm({ document, mode, negotiation = null, funn
       crmRecordId: String(clientControl.value || ''),
       funnelId: String(funnelControl.value || ''),
       serviceId: String(serviceControl.value || ''),
+      duracao: isIndefinite() ? DURATIONS.INDETERMINADA : DURATIONS.DEFINIDA,
       prazoMeses: termValue(),
+      avisoPrevioDias: isIndefinite() ? String(noticeInput.value || '') : '',
       formaPagamento: (paymentRows.find((row) => row.input.checked) || { value: '' }).value,
       periodicidade: String(periodicityControl.value || ''),
       valorNegociado: String(valueControl.value || ''),
@@ -182,23 +197,29 @@ export function createNegotiationForm({ document, mode, negotiation = null, funn
   function paintPreview() {
     const values = currentValues();
     const money = parseMoney(values.valorNegociado);
+    const indefinite = values.duracao === DURATIONS.INDETERMINADA;
     const term = parseTerm(values.prazoMeses);
-    const ready = values.formaPagamento !== '' && money.ok && money.value !== null && term.ok;
+    const ready = values.formaPagamento !== '' && money.ok && money.value !== null && (indefinite || term.ok);
     const children = [];
     if (!ready) {
-      children.push(el('p', { className: 'muted', text: 'Preencha a forma de pagamento, o prazo e o valor para ver o total do contrato (TCV) e o cronograma.' }));
+      children.push(el('p', { className: 'muted', text: indefinite ? 'Preencha a forma de pagamento e o valor para ver o MRR e o cronograma. Num contrato por prazo indeterminado o TCV não é determinado.' : 'Preencha a forma de pagamento, o prazo e o valor para ver o total do contrato (TCV) e o cronograma.' }));
     } else {
-      const finance = previewFinance({ formaPagamento: values.formaPagamento, periodicidade: values.formaPagamento === 'RECORRENTE' ? values.periodicidade || null : null, prazoMeses: term.value, valorNegociado: money.value });
+      const finance = previewFinance({ duracao: values.duracao, formaPagamento: values.formaPagamento, periodicidade: values.formaPagamento === 'RECORRENTE' ? values.periodicidade || null : null, prazoMeses: indefinite ? null : term.value, valorNegociado: money.value });
       if (!finance.ok) {
-        children.push(el('p', { className: 'message warn', text: fieldMessage(finance.code === 'PRAZO_NAO_MULTIPLO_DA_PERIODICIDADE' || finance.code === 'PRAZO_INVALIDO' ? 'prazoMeses' : finance.code === 'VALOR_INVALIDO' ? 'valorNegociado' : 'periodicidade', finance.code) }));
+        const path = finance.code === 'DURACAO_INDETERMINADA_EXIGE_RECORRENCIA' ? 'duracao' : finance.code === 'PRAZO_NAO_MULTIPLO_DA_PERIODICIDADE' || finance.code === 'PRAZO_INVALIDO' ? 'prazoMeses' : finance.code === 'VALOR_INVALIDO' ? 'valorNegociado' : 'periodicidade';
+        children.push(el('p', { className: 'message warn', text: fieldMessage(path, finance.code) }));
       } else {
+        const notice = parseNotice(values.avisoPrevioDias);
         children.push(
           el('p', { className: 'negotiation-preview-title', text: 'Prévia do contrato (nada é salvo por aqui)' }),
           el('dl', { className: 'fields negotiation-preview-fields' },
-            el('dt', { text: 'TCV (valor total do contrato)' }), el('dd', { text: formatMoney(finance.tcv) }),
-            ...(finance.mrr !== null ? [el('dt', { text: 'MRR (receita recorrente mensal)' }), el('dd', { text: formatMoney(finance.mrr) })] : []),
+            // por prazo indeterminado o MRR vem primeiro (é o que o contrato vale por mês) e o TCV é "Indeterminado" — nunca zero nem uma estimativa
+            ...(finance.tcvIndeterminado && finance.mrr !== null ? [el('dt', { text: 'MRR (receita recorrente mensal)' }), el('dd', { text: formatMoney(finance.mrr) })] : []),
+            el('dt', { text: 'TCV (valor total do contrato)' }), el('dd', { text: finance.tcvIndeterminado ? 'Indeterminado (contrato sem prazo final)' : tcvText(finance) }),
+            ...(!finance.tcvIndeterminado && finance.mrr !== null ? [el('dt', { text: 'MRR (receita recorrente mensal)' }), el('dd', { text: formatMoney(finance.mrr) })] : []),
             ...(finance.equivalenteMensal !== null && finance.mrr === null ? [el('dt', { text: 'Equivalente mensal' }), el('dd', { text: `${formatMoney(finance.equivalenteMensal)} (comparação; não é o que entra no caixa)` })] : []),
-            el('dt', { text: 'Cronograma' }), el('dd', { text: scheduleText(finance.cronograma) })
+            el('dt', { text: 'Cronograma' }), el('dd', { text: scheduleText(finance.cronograma) }),
+            ...(indefinite && notice.ok && notice.value !== null ? [el('dt', { text: 'Aviso prévio de cancelamento' }), el('dd', { text: `${noticeText(notice.value)} (condição do contrato: não é duração, período mínimo nem cobrança)` })] : [])
           )
         );
       }
@@ -247,12 +268,15 @@ export function createNegotiationForm({ document, mode, negotiation = null, funn
     row.input.addEventListener('change', () => {
       const chosen = termRows.find((entry) => entry.input.checked);
       termInputWrap.hidden = !chosen || chosen.value !== 'outro';
+      noticeWrap.hidden = !isIndefinite();
       controls.prazoMeses.setError(null);
+      controls.avisoPrevioDias.setError(null);
       if (!termInputWrap.hidden) termInput.focus();
       onAnyChange();
     });
   }
   termInput.addEventListener('input', () => { controls.prazoMeses.setError(null); onAnyChange(); });
+  noticeInput.addEventListener('input', () => { controls.avisoPrevioDias.setError(null); onAnyChange(); });
   periodicityControl.addEventListener('change', () => { controls.periodicidade.setError(null); onAnyChange(); });
   valueControl.addEventListener('input', () => { controls.valorNegociado.setError(null); onAnyChange(); });
   dateControl.addEventListener('change', () => controls.previsaoFechamento.setError(null));
@@ -266,7 +290,7 @@ export function createNegotiationForm({ document, mode, negotiation = null, funn
     cancelButton.disabled = busy;
     saveButton.textContent = busy ? 'Salvando…' : 'Salvar';
     if (clientSearch) clientSearch.disabled = busy;
-    for (const control of [clientControl, funnelControl, serviceControl, periodicityControl, valueControl, dateControl, termInput, ...paymentRows.map((row) => row.input), ...termRows.map((row) => row.input)]) {
+    for (const control of [clientControl, funnelControl, serviceControl, periodicityControl, valueControl, dateControl, termInput, noticeInput, ...paymentRows.map((row) => row.input), ...termRows.map((row) => row.input)]) {
       if (mode === 'edit' && (control === clientControl || control === funnelControl)) continue;
       control.disabled = busy;
     }
@@ -330,6 +354,7 @@ export function createNegotiationForm({ document, mode, negotiation = null, funn
   });
   const chosenTerm = termRows.find((row) => row.input.checked);
   termInputWrap.hidden = !chosenTerm || chosenTerm.value !== 'outro';
+  noticeWrap.hidden = !isIndefinite();
   syncService();
   syncPayment();
   paintPreview();

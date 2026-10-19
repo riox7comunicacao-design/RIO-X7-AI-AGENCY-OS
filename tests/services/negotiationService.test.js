@@ -110,8 +110,8 @@ test('[NEG-SVC-4] CRIAR: o responsável e quem alterou vêm do CONTEXTO (o corpo
   const n = await m.service.create(closer(), corpo(m));
   assert.deepEqual([n.responsavelUserId, n.responsavelNome, n.criadoPorNome, n.atualizadoPorNome], ['user-closer-neg', 'Closer Negociação', 'Closer Negociação', 'Closer Negociação']);
   assert.deepEqual([n.servicoNome, n.cliente], ['Gestão de redes', { empresa: 'Clínica Teste', tipoPessoa: null, nomeCompleto: null }]);
-  assert.deepEqual(Object.keys(n).sort(), ['atualizadoEm', 'atualizadoPorNome', 'cardId', 'cliente', 'criadoEm', 'criadoPorNome', 'crmRecordId', 'eventos', 'fechadoEm', 'financeiro', 'formaPagamento', 'funnelId', 'funnelNome', 'id', 'motivoPerda', 'periodicidade', 'prazoMeses', 'previsaoFechamento', 'responsavelNome', 'responsavelUserId', 'serviceId', 'servicoNome', 'situacao', 'stageId', 'stageNome', 'valorNegociado']);
-  assert.deepEqual(n.financeiro, { tcv: 18000, mrr: 1500, equivalenteMensal: 1500, cronograma: { cobrancas: 12, valorPorCobranca: 1500, mesesEntreCobrancas: 1 } });
+  assert.deepEqual(Object.keys(n).sort(), ['atualizadoEm', 'atualizadoPorNome', 'avisoPrevioDias', 'cardId', 'cliente', 'criadoEm', 'criadoPorNome', 'crmRecordId', 'duracao', 'eventos', 'fechadoEm', 'financeiro', 'formaPagamento', 'funnelId', 'funnelNome', 'id', 'motivoPerda', 'periodicidade', 'prazoMeses', 'previsaoFechamento', 'responsavelNome', 'responsavelUserId', 'serviceId', 'servicoNome', 'situacao', 'stageId', 'stageNome', 'valorNegociado']);
+  assert.deepEqual(n.financeiro, { tcv: 18000, tcvIndeterminado: false, mrr: 1500, equivalenteMensal: 1500, cronograma: { cobrancas: 12, valorPorCobranca: 1500, mesesEntreCobrancas: 1 } });
   assert.equal(JSON.stringify(n).includes('Centavos'), false, 'nada de campo interno em centavos');
   // identidade no corpo é recusada (nunca definida pelo cliente): responsável, quem alterou, situação, id
   for (const campo of ['responsavelUserId', 'responsavelNome', 'atualizadoPorUserId', 'situacao', 'id', 'cardId']) {
@@ -196,9 +196,9 @@ test('[NEG-SVC-8] O QUADRO: funis (só id/nome/situação), as etapas do funil e
   const avulso = quadro.cards.find((card) => card.negotiationId === null);
   assert.deepEqual([avulso.negociacao, avulso.crm.empresa], [null, 'Outra Clínica']);
   const totais = Object.fromEntries(quadro.totais.map((t) => [t.stageId, t]));
-  assert.deepEqual(totais[m.etapas[0].id], { stageId: m.etapas[0].id, cards: 3, negociacoesAbertas: 1, tcvEmJogo: 18000 }, 'Contato: a, o ganho de c e o avulso; só a é aberta (TCV 12 × 1500)');
-  assert.deepEqual(totais[m.etapas[1].id], { stageId: m.etapas[1].id, cards: 1, negociacoesAbertas: 1, tcvEmJogo: 7000 });
-  assert.deepEqual(totais[m.etapas[2].id], { stageId: m.etapas[2].id, cards: 0, negociacoesAbertas: 0, tcvEmJogo: 0 });
+  assert.deepEqual(totais[m.etapas[0].id], { stageId: m.etapas[0].id, cards: 3, negociacoesAbertas: 1, tcvEmJogo: 18000, tcvIndeterminadas: 0, mrrEmJogo: 1500 }, 'Contato: a, o ganho de c e o avulso; só a é aberta (TCV 12 × 1500)');
+  assert.deepEqual(totais[m.etapas[1].id], { stageId: m.etapas[1].id, cards: 1, negociacoesAbertas: 1, tcvEmJogo: 7000, tcvIndeterminadas: 0, mrrEmJogo: 0 });
+  assert.deepEqual(totais[m.etapas[2].id], { stageId: m.etapas[2].id, cards: 0, negociacoesAbertas: 0, tcvEmJogo: 0, tcvIndeterminadas: 0, mrrEmJogo: 0 });
   // funil escolhido por id; id desconhecido = nenhum funil (nunca outro); sem nenhum funil = quadro vazio, sem inventar
   assert.equal((await m.service.board(admin(), m.funil.id)).cards.length, 4);
   assert.deepEqual(await m.service.board(admin(), 'funnel:nao-existe'), { funnels: quadro.funnels, funnelId: null, stages: [], cards: [], totais: [] });

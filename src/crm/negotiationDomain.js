@@ -7,6 +7,8 @@
 //   - A forma de pagamento (único ou recorrente) e a periodicidade são ESCOLHIDAS AQUI, dentro do que o SERVIÇO permite (catálogo, decisão 0027) — nada disto altera o catálogo: o preço
 //     de referência e as modalidades do serviço nunca são lidos para calcular nem gravados. O nome do serviço é copiado como FOTO (para o histórico não mudar se o catálogo mudar).
 //   - O prazo é independente da periodicidade; a combinação que não fecha (prazo que não é múltiplo da periodicidade) é BLOQUEADA — ver negotiationFinance.js.
+//   - (Fase D3) A DURAÇÃO do contrato é DEFINIDA (o prazo em meses) ou INDETERMINADA (sem prazo final, só recorrente): nesta o prazo é `null`, o TCV é indeterminado (`null`, nunca zero nem estimado) e o AVISO PRÉVIO de
+//     cancelamento (`avisoPrevioDias`, opcional) é só uma condição do contrato — não é duração, período mínimo nem cobrança. Uma negociação anterior à D3 (sem `duracao`) vale como DEFINIDA, sem nenhuma alteração.
 //   - Os 31 campos legados do CRM (valorProposta, valorTotal…) NUNCA são lidos nem gravados por aqui. O valor negociado desta negociação é outro campo, de outra entidade.
 //   - A situação segue ABERTA -> GANHA | PERDIDA; só uma negociação ABERTA se edita ou muda de etapa; reabrir é uma decisão separada (autorização mais alta, no Service). GANHA não é
 //     "dinheiro recebido": o valor recebido virá de eventos de pagamento (fase futura).
@@ -19,7 +21,7 @@ const crypto = require('node:crypto');
 const { assertValidNegotiationRepository, NEGOTIATION_REPOSITORY_ERROR } = require('./negotiationRepositoryPort');
 const { assertValidFunnelRepository } = require('./funnelRepositoryPort');
 const funnelDomain = require('./funnelDomain');
-const { BILLING, PERIODICITIES, LIMITS, computeFinance } = require('./negotiationFinance');
+const { BILLING, DURATION, PERIODICITIES, LIMITS, computeFinance } = require('./negotiationFinance');
 const { CRM_STATUS } = require('./constants');
 
 const NEGOTIATION_ERROR = Object.freeze({
@@ -63,6 +65,10 @@ const invalidState = (message) => new NegotiationError(NEGOTIATION_ERROR.INVALID
 const checkId = (value) => (typeof value === 'string' && value.trim() !== '' && value.length <= LIMIT.ID && !CONTROL.test(value) ? { ok: true, value } : { ok: false, code: typeof value === 'string' ? 'ID_INVALIDO' : 'TIPO_INVALIDO' });
 const checkInteger = (value) => (Number.isInteger(value) ? { ok: true, value } : { ok: false, code: typeof value === 'number' ? 'VALOR_INVALIDO' : 'TIPO_INVALIDO' });
 const checkNumber = (value) => (typeof value === 'number' ? { ok: true, value } : { ok: false, code: 'TIPO_INVALIDO' });
+// prazo: inteiro, ou null (contrato INDETERMINADO; o estado final decide se vale)
+const checkTerm = (value) => (value === null ? { ok: true, value: null } : checkInteger(value));
+const checkNotice = (value) => (value === null ? { ok: true, value: null } : checkInteger(value));
+const checkDuration = (value) => (typeof value !== 'string' ? { ok: false, code: 'TIPO_INVALIDO' } : Object.values(DURATION).includes(value) ? { ok: true, value } : { ok: false, code: 'VALOR_INVALIDO' });
 const checkBilling = (value) => (typeof value !== 'string' ? { ok: false, code: 'TIPO_INVALIDO' } : Object.values(BILLING).includes(value) ? { ok: true, value } : { ok: false, code: 'VALOR_INVALIDO' });
 function checkPeriodicity(value) {
   if (value === null) return { ok: true, value: null };
@@ -90,9 +96,10 @@ function checkReason(max) {
 }
 
 // Os campos que se enviam ao CRIAR e os que se podem EDITAR (as referências — cliente, funil — nunca mudam depois).
-const CREATE_FIELDS = Object.freeze({ crmRecordId: checkId, funnelId: checkId, serviceId: checkId, prazoMeses: checkInteger, formaPagamento: checkBilling, periodicidade: checkPeriodicity, valorNegociado: checkNumber, previsaoFechamento: checkDate });
-const REQUIRED_ON_CREATE = Object.freeze(['crmRecordId', 'funnelId', 'serviceId', 'prazoMeses', 'formaPagamento', 'valorNegociado']);
-const EDITABLE_FIELDS = Object.freeze(['serviceId', 'prazoMeses', 'formaPagamento', 'periodicidade', 'valorNegociado', 'previsaoFechamento']);
+const CREATE_FIELDS = Object.freeze({ crmRecordId: checkId, funnelId: checkId, serviceId: checkId, duracao: checkDuration, prazoMeses: checkTerm, avisoPrevioDias: checkNotice, formaPagamento: checkBilling, periodicidade: checkPeriodicity, valorNegociado: checkNumber, previsaoFechamento: checkDate });
+// o prazo só é obrigatório quando a duração é DEFINIDA (o padrão; ver createNegotiation)
+const REQUIRED_ON_CREATE = Object.freeze(['crmRecordId', 'funnelId', 'serviceId', 'formaPagamento', 'valorNegociado']);
+const EDITABLE_FIELDS = Object.freeze(['serviceId', 'prazoMeses', 'formaPagamento', 'periodicidade', 'valorNegociado', 'previsaoFechamento', 'duracao', 'avisoPrevioDias']);
 const NON_EDITABLE = Object.freeze(['id', 'crmRecordId', 'funnelId', 'cardId', 'situacao', 'motivoPerda', 'fechadoEm', 'criadoEm', 'atualizadoEm', 'criadoPorUserId', 'criadoPorNome', 'atualizadoPorUserId', 'atualizadoPorNome', 'responsavelUserId', 'responsavelNome', 'servicoNome', 'eventos', 'stageId']);
 const SAFE_PATH = /^[A-Za-z0-9_]{1,40}$/;
 
@@ -123,7 +130,21 @@ const FINANCE_PATH = Object.freeze({
   PERIODICIDADE_OBRIGATORIA: 'periodicidade',
   PERIODICIDADE_INVALIDA: 'periodicidade',
   PERIODICIDADE_NAO_PERMITIDA: 'periodicidade',
+  DURACAO_INVALIDA: 'duracao',
+  DURACAO_INDETERMINADA_EXIGE_RECORRENCIA: 'duracao',
+  PRAZO_PROIBIDO_NO_INDETERMINADO: 'prazoMeses',
 });
+
+// O AVISO PRÉVIO (dias): só existe num contrato INDETERMINADO, de 1 a 365; num de duração definida é recusado (as condições dele continuam as de sempre).
+function noticeErrors(state) {
+  const notice = state.avisoPrevioDias === undefined ? null : state.avisoPrevioDias;
+  if (notice === null) return [];
+  if (state.duracao !== DURATION.INDETERMINADA) return [{ path: 'avisoPrevioDias', code: 'AVISO_PREVIO_NAO_PERMITIDO' }];
+  return Number.isInteger(notice) && notice >= LIMITS.AVISO_PREVIO_MINIMO && notice <= LIMITS.AVISO_PREVIO_MAXIMO ? [] : [{ path: 'avisoPrevioDias', code: 'AVISO_PREVIO_INVALIDO' }];
+}
+
+// Uma negociação anterior à D3 não traz a duração nem o aviso prévio: vale como DEFINIDA, sem aviso (nada é gravado por causa disto).
+const withContractDefaults = (negotiation) => ({ ...negotiation, duracao: negotiation.duracao ?? DURATION.DEFINIDA, avisoPrevioDias: negotiation.avisoPrevioDias ?? null });
 
 // O que o SERVIÇO permite (catálogo): `service` = { id, nome, ativo, permitePagamentoUnico, permitePagamentoRecorrente, periodicidades }.
 function serviceErrors(state, service, { checkChoice, checkActive }) {
@@ -152,6 +173,7 @@ function stateErrors(state, service, options) {
   const errors = [];
   const finance = computeFinance(state);
   if (!finance.ok) errors.push({ path: FINANCE_PATH[finance.code] || '', code: finance.code });
+  errors.push(...noticeErrors(state));
   const known = new Set(errors.map((error) => error.path));
   for (const error of serviceErrors(state, service, options)) if (!(known.has(error.path) && error.path !== 'serviceId')) errors.push(error);
   return errors;
@@ -268,11 +290,12 @@ async function toView(deps, negotiation, cache = new Map()) {
   const finance = financeOf(negotiation);
   return {
     ...clone(negotiation),
+    ...withContractDefaults({ duracao: negotiation.duracao, avisoPrevioDias: negotiation.avisoPrevioDias }),
     stageId: card ? card.stageId : null,
     stageNome: stage ? stage.nome : null,
     funnelNome: funnel ? funnel.nome : null,
     financeiro: finance
-      ? { tcv: finance.tcv, mrr: finance.mrr, equivalenteMensal: finance.equivalenteMensal, tcvCentavos: finance.tcvCentavos, mrrCentavos: finance.mrrCentavos, equivalenteMensalCentavos: finance.equivalenteMensalCentavos, cronograma: { ...finance.cronograma } }
+      ? { tcv: finance.tcv, tcvIndeterminado: finance.tcvIndeterminado, mrr: finance.mrr, equivalenteMensal: finance.equivalenteMensal, tcvCentavos: finance.tcvCentavos, mrrCentavos: finance.mrrCentavos, equivalenteMensalCentavos: finance.equivalenteMensalCentavos, cronograma: { ...finance.cronograma } }
       : null,
   };
 }
@@ -303,8 +326,11 @@ async function createNegotiation(deps, input, service, operator, options = {}) {
   const author = requireOperator(operator);
   return serialized(d.repository, async () => {
     const { value, errors } = readFields(input, Object.keys(CREATE_FIELDS));
-    for (const key of REQUIRED_ON_CREATE) if (!hasOwn(value, key) && !errors.some((error) => error.path === key)) errors.push({ path: key, code: 'OBRIGATORIO' });
-    const state = { periodicidade: null, previsaoFechamento: null, ...value };
+    const duration = hasOwn(value, 'duracao') ? value.duracao : DURATION.DEFINIDA;
+    const required = duration === DURATION.INDETERMINADA ? REQUIRED_ON_CREATE : [...REQUIRED_ON_CREATE, 'prazoMeses'];
+    for (const key of required) if (!hasOwn(value, key) && !errors.some((error) => error.path === key)) errors.push({ path: key, code: 'OBRIGATORIO' });
+    const state = { periodicidade: null, previsaoFechamento: null, avisoPrevioDias: null, ...value, duracao: duration };
+    if (duration === DURATION.INDETERMINADA && !hasOwn(value, 'prazoMeses')) state.prazoMeses = null;
     if (errors.length === 0) {
       // as REFERÊNCIAS: o cliente (registro do CRM) e o funil têm de existir; o funil, estar ativo
       const record = await viaRepository(() => d.crmRepository.getById(state.crmRecordId));
@@ -337,7 +363,9 @@ async function createNegotiation(deps, input, service, operator, options = {}) {
       servicoNome: typeof service.nome === 'string' ? service.nome : null,
       responsavelUserId: author.userId,
       responsavelNome: author.name,
-      prazoMeses: state.prazoMeses,
+      duracao: state.duracao,
+      prazoMeses: state.duracao === DURATION.INDETERMINADA ? null : state.prazoMeses,
+      avisoPrevioDias: state.duracao === DURATION.INDETERMINADA ? state.avisoPrevioDias : null,
       formaPagamento: state.formaPagamento,
       periodicidade: state.formaPagamento === BILLING.RECORRENTE ? state.periodicidade : null,
       valorNegociado: state.valorNegociado,
@@ -363,7 +391,7 @@ async function updateNegotiation(deps, id, patch, service, operator, options = {
   const d = requireDeps(deps);
   const author = requireOperator(operator);
   return serialized(d.repository, async () => {
-    const current = await loadNegotiation(d.repository, id);
+    const current = withContractDefaults(await loadNegotiation(d.repository, id));
     const { value, errors } = readFields(patch, EDITABLE_FIELDS);
     if (errors.length === 0 && Object.keys(value).length === 0) errors.push({ path: '', code: 'NADA_A_ALTERAR' });
     if (errors.length > 0) throw invalidInput(errors);
@@ -372,6 +400,9 @@ async function updateNegotiation(deps, id, patch, service, operator, options = {
     const next = { ...current };
     for (const key of Object.keys(value)) next[key] = value[key];
     if (next.formaPagamento === BILLING.UNICO && !hasOwn(value, 'periodicidade')) next.periodicidade = null; // trocar para pagamento único nunca deixa uma periodicidade antiga
+    // passar para prazo INDETERMINADO tira o prazo; voltar para prazo DEFINIDO tira o aviso prévio (o que não foi enviado e deixou de valer nunca fica para trás)
+    if (next.duracao === DURATION.INDETERMINADA && !hasOwn(value, 'prazoMeses')) next.prazoMeses = null;
+    if (next.duracao === DURATION.DEFINIDA && !hasOwn(value, 'avisoPrevioDias')) next.avisoPrevioDias = null;
     const touchesChoice = ['serviceId', 'formaPagamento', 'periodicidade'].some((key) => hasOwn(value, key));
     const serviceChanged = hasOwn(value, 'serviceId') && value.serviceId !== current.serviceId;
     const stateProblems = stateErrors(next, service, { checkChoice: touchesChoice, checkActive: serviceChanged });
@@ -481,6 +512,8 @@ async function reopenNegotiation(deps, id, operator, options = {}) {
 
 // ---------------------------------------------------------------------------------------------------------------------------------
 // INDICADORES (puro): a partir das negociações já projetadas. Tudo em centavos inteiros.
+//   (D3) `tcv` é o TCV CONHECIDO: soma só os contratos com TCV determinado. Um contrato por prazo INDETERMINADO tem TCV indeterminado: NÃO entra na soma (nem como zero, nem estimado) e é contado à parte em
+//   `tcvIndeterminado` (quantidade). O MRR dele entra normalmente: depende só da cobrança mensal.
 //   abertas   -> o que está EM NEGOCIAÇÃO (nunca é receita): quantidade, TCV, MRR e equivalente mensal em jogo
 //   ganhas    -> o que foi CONTRATADO (decisão comercial, não dinheiro recebido): quantidade, TCV, MRR (só mensais) e equivalente mensal das demais recorrências
 //   perdidas  -> quantidade e TCV que se deixou de fechar
@@ -489,7 +522,7 @@ async function reopenNegotiation(deps, id, operator, options = {}) {
 // ---------------------------------------------------------------------------------------------------------------------------------
 function summarizeNegotiations(views) {
   const list = Array.isArray(views) ? views : [];
-  const zero = () => ({ quantidade: 0, tcvCentavos: 0, mrrCentavos: 0, equivalenteMensalOutrasCentavos: 0, semCalculo: 0 });
+  const zero = () => ({ quantidade: 0, tcvCentavos: 0, tcvIndeterminadas: 0, mrrCentavos: 0, equivalenteMensalOutrasCentavos: 0, semCalculo: 0 });
   const buckets = { [SITUATION.OPEN]: zero(), [SITUATION.WON]: zero(), [SITUATION.LOST]: zero() };
   const byStage = new Map();
   for (const view of list) {
@@ -498,7 +531,8 @@ function summarizeNegotiations(views) {
     bucket.quantidade += 1;
     const finance = view.financeiro;
     if (finance) {
-      bucket.tcvCentavos += finance.tcvCentavos;
+      if (finance.tcvCentavos === null) bucket.tcvIndeterminadas += 1;
+      else bucket.tcvCentavos += finance.tcvCentavos;
       if (finance.mrrCentavos !== null) bucket.mrrCentavos += finance.mrrCentavos;
       else if (finance.equivalenteMensalCentavos !== null) bucket.equivalenteMensalOutrasCentavos += finance.equivalenteMensalCentavos;
     } else {
@@ -506,14 +540,18 @@ function summarizeNegotiations(views) {
     }
     if (view.situacao === SITUATION.OPEN) {
       const key = `${view.funnelId}|${view.stageId}`;
-      const row = byStage.get(key) || { funnelId: view.funnelId, funnelNome: view.funnelNome, stageId: view.stageId, stageNome: view.stageNome, quantidade: 0, tcvCentavos: 0 };
+      const row = byStage.get(key) || { funnelId: view.funnelId, funnelNome: view.funnelNome, stageId: view.stageId, stageNome: view.stageNome, quantidade: 0, tcvCentavos: 0, tcvIndeterminadas: 0, mrrCentavos: 0 };
       row.quantidade += 1;
-      if (finance) row.tcvCentavos += finance.tcvCentavos;
+      if (finance) {
+        if (finance.tcvCentavos === null) row.tcvIndeterminadas += 1;
+        else row.tcvCentavos += finance.tcvCentavos;
+        if (finance.mrrCentavos !== null) row.mrrCentavos += finance.mrrCentavos;
+      }
       byStage.set(key, row);
     }
   }
   const money = (cents) => cents / 100;
-  const shape = (bucket) => ({ quantidade: bucket.quantidade, tcv: money(bucket.tcvCentavos), mrr: money(bucket.mrrCentavos), equivalenteMensalOutrasRecorrencias: money(bucket.equivalenteMensalOutrasCentavos), receitaMensalEquivalenteTotal: money(bucket.mrrCentavos + bucket.equivalenteMensalOutrasCentavos), semCalculo: bucket.semCalculo });
+  const shape = (bucket) => ({ quantidade: bucket.quantidade, tcv: money(bucket.tcvCentavos), tcvIndeterminado: bucket.tcvIndeterminadas, mrr: money(bucket.mrrCentavos), equivalenteMensalOutrasRecorrencias: money(bucket.equivalenteMensalOutrasCentavos), receitaMensalEquivalenteTotal: money(bucket.mrrCentavos + bucket.equivalenteMensalOutrasCentavos), semCalculo: bucket.semCalculo });
   const won = buckets[SITUATION.WON].quantidade;
   const lost = buckets[SITUATION.LOST].quantidade;
   return {
@@ -521,7 +559,7 @@ function summarizeNegotiations(views) {
     ganhas: shape(buckets[SITUATION.WON]),
     perdidas: shape(buckets[SITUATION.LOST]),
     conversao: { fechadas: won + lost, ganhas: won, perdidas: lost, taxa: won + lost > 0 ? won / (won + lost) : null },
-    porEtapa: [...byStage.values()].map((row) => ({ ...row, tcv: money(row.tcvCentavos) })),
+    porEtapa: [...byStage.values()].map((row) => ({ ...row, tcv: money(row.tcvCentavos), mrr: money(row.mrrCentavos) })),
     total: list.length,
   };
 }

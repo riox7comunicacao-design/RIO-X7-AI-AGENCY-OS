@@ -19,7 +19,7 @@ import { buildHash } from '../router.mjs';
 import { clientName, formatMoney, normalizeText } from '../crm-model.mjs';
 import { statusBadge, emptyState, kvList } from '../ui/index.mjs';
 import { createNegotiationForm } from './negotiationForm.mjs';
-import { conditionsText, eventText, negotiationErrorInfo, paymentText, scheduleText, situationLabel, situationTone, termText, MESSAGES } from '../negotiation-model.mjs';
+import { conditionsText, durationText, eventText, negotiationErrorInfo, noticeText, paymentText, scheduleText, situationLabel, situationTone, MESSAGES } from '../negotiation-model.mjs';
 
 const MONEY_NOTE = Object.freeze({ UNICO: 'Valor total do contrato (uma cobrança só)', RECORRENTE: 'Valor de cada cobrança' });
 
@@ -324,13 +324,21 @@ export function createFunnelsView({ document, root, api, permissions, navigate =
       ['Serviço', textOf(negotiation.servicoNome) || 'Serviço sem nome'],
       ['Etapa', `${stageName(card.stageId) || negotiation.stageNome || 'Etapa desconhecida'} · ${textOf(negotiation.funnelNome)}`],
       ['Forma de pagamento', paymentText(negotiation)],
-      ['Prazo do contrato', termText(negotiation.prazoMeses)],
+      ['Prazo do contrato', durationText(negotiation)],
+      ...(negotiation.duracao === 'INDETERMINADA' && Number.isInteger(negotiation.avisoPrevioDias) ? [['Aviso prévio de cancelamento', `${noticeText(negotiation.avisoPrevioDias)} (condição do contrato: não é duração, período mínimo nem cobrança adicional)`]] : []),
       ['Valor negociado', `${formatMoney(negotiation.valorNegociado)} — ${MONEY_NOTE[negotiation.formaPagamento] || ''}`],
     ];
     if (finance) {
-      rows.push(['TCV (valor total do contrato)', formatMoney(finance.tcv)]);
-      if (finance.mrr !== null) rows.push(['MRR (receita recorrente mensal)', formatMoney(finance.mrr)]);
-      else if (finance.equivalenteMensal !== null) rows.push(['Equivalente mensal', `${formatMoney(finance.equivalenteMensal)} (comparação; não é o que entra no caixa)`]);
+      // contrato por prazo INDETERMINADO: o MRR é o destaque e o TCV é "Indeterminado" (nunca R$ 0,00 nem uma estimativa de 12 meses)
+      if (finance.tcvIndeterminado === true) {
+        if (finance.mrr !== null) rows.push(['MRR (receita recorrente mensal)', formatMoney(finance.mrr)]);
+        else if (finance.equivalenteMensal !== null) rows.push(['Equivalente mensal', `${formatMoney(finance.equivalenteMensal)} (comparação; não é o que entra no caixa)`]);
+        rows.push(['TCV (valor total do contrato)', 'Indeterminado (contrato sem prazo final)']);
+      } else {
+        rows.push(['TCV (valor total do contrato)', formatMoney(finance.tcv)]);
+        if (finance.mrr !== null) rows.push(['MRR (receita recorrente mensal)', formatMoney(finance.mrr)]);
+        else if (finance.equivalenteMensal !== null) rows.push(['Equivalente mensal', `${formatMoney(finance.equivalenteMensal)} (comparação; não é o que entra no caixa)`]);
+      }
       rows.push(['Cronograma', scheduleText(finance.cronograma)]);
     }
     rows.push(['Responsável', textOf(negotiation.responsavelNome) || 'Não informado']);
@@ -446,6 +454,20 @@ export function createFunnelsView({ document, root, api, permissions, navigate =
     return [empresaOf(card), n && n.servicoNome, n && n.responsavelNome].some((value) => normalizeText(textOf(value)).includes(q));
   };
 
+  // o valor do cartão: o TCV; num contrato por prazo INDETERMINADO, o MRR (ou o equivalente mensal) e "TCV indeterminado" — nunca um TCV zerado nem estimado
+  function cardValueText(finance) {
+    if (finance.tcvIndeterminado !== true) return `TCV ${formatMoney(finance.tcv)}`;
+    const monthly = finance.mrr !== null && finance.mrr !== undefined ? `MRR ${formatMoney(finance.mrr)}` : typeof finance.equivalenteMensal === 'number' ? `Equivalente mensal ${formatMoney(finance.equivalenteMensal)}` : '';
+    return [monthly, 'TCV indeterminado'].filter(Boolean).join(' · ');
+  }
+
+  // o total da coluna: o TCV conhecido; os contratos de TCV indeterminado são contados à parte (e o MRR deles aparece) — nunca somados como zero
+  function columnTotalText(totals) {
+    const indeterminate = Number(totals.tcvIndeterminadas) || 0;
+    if (indeterminate === 0) return `Em negociação: ${formatMoney(totals.tcvEmJogo)} (TCV)`;
+    return `Em negociação: ${formatMoney(totals.tcvEmJogo)} (TCV conhecido) · MRR ${formatMoney(Number(totals.mrrEmJogo) || 0)} · ${indeterminate} ${indeterminate === 1 ? 'contrato' : 'contratos'} com TCV indeterminado`;
+  }
+
   function cardNode(card) {
     const negotiation = card.negociacao;
     const busy = state.busyKey === `move:${card.id}`;
@@ -460,7 +482,7 @@ export function createFunnelsView({ document, root, api, permissions, navigate =
           el('button', { type: 'button', className: 'funnel-card-title', 'data-card': card.id, 'data-action': 'open', 'aria-label': `Ver detalhes da negociação com ${empresaOf(card)}`, text: empresaOf(card), onclick: guarded(() => openDetail(card.id)) }),
           line(textOf(negotiation.servicoNome)),
           line(conditionsText(negotiation)),
-          negotiation.financeiro ? el('p', { className: 'funnel-card-line funnel-card-value', text: `TCV ${formatMoney(negotiation.financeiro.tcv)}` }) : null,
+          negotiation.financeiro ? el('p', { className: 'funnel-card-line funnel-card-value', text: cardValueText(negotiation.financeiro) }) : null,
           line(negotiation.responsavelNome ? `Responsável: ${negotiation.responsavelNome}` : ''),
           negotiation.situacao !== 'ABERTA' ? statusBadge(document, situationLabel(negotiation.situacao), situationTone(negotiation.situacao)) : null,
         ]
@@ -491,7 +513,7 @@ export function createFunnelsView({ document, root, api, permissions, navigate =
       'section',
       { className: `funnel-column${stage.ativo === false ? ' is-inactive' : ''}`, 'aria-labelledby': `funnel-stage-${stage.id}`, 'data-stage': stage.id },
       el('h3', { id: `funnel-stage-${stage.id}`, className: 'funnel-column-title' }, el('span', { text: stage.nome }), el('span', { className: 'funnel-column-count', 'aria-label': `${totals.cards} ${totals.cards === 1 ? 'cartão' : 'cartões'}`, text: String(totals.cards) })),
-      totals.negociacoesAbertas > 0 ? el('p', { className: 'funnel-column-total muted', text: `Em negociação: ${formatMoney(totals.tcvEmJogo)} (TCV)` }) : null,
+      totals.negociacoesAbertas > 0 ? el('p', { className: 'funnel-column-total muted', text: columnTotalText(totals) }) : null,
       el('div', { className: 'funnel-column-cards' }, ...(cards.length > 0 ? cards.map(cardNode) : [el('p', { className: 'muted', text: totals.cards > 0 ? 'Nenhum cartão na busca.' : 'Nenhum cartão.' })]))
     );
   }

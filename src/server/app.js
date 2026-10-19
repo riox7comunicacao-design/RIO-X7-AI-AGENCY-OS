@@ -50,7 +50,7 @@
 // Ler exige READ:CRM; criar, editar, mudar de etapa, ganhar e perder exigem PROPOSE:CRM (ADMIN e COMMERCIAL_CLOSER); REABRIR exige WRITE:CRM (só ADMIN) — quem decide é o Service.
 // O responsável e quem alterou vêm SEMPRE do token; o corpo nunca os define. Não há DELETE: uma negociação nunca é apagada.
 //   GET   /api/negotiations[?funnelId=&situacao=&crmRecordId=]  as negociações, da mais recente à mais antiga -> 200 { items }
-//   POST  /api/negotiations                  cria (e cria o card no funil); corpo { crmRecordId, funnelId, serviceId, prazoMeses, formaPagamento, periodicidade?, valorNegociado, previsaoFechamento? } -> 201 { item }
+//   POST  /api/negotiations                  cria (e cria o card no funil); corpo { crmRecordId, funnelId, serviceId, prazoMeses, formaPagamento, periodicidade?, valorNegociado, previsaoFechamento?, duracao?, avisoPrevioDias? } (duracao INDETERMINADA: sem prazoMeses, só recorrente; TCV indeterminado = null) -> 201 { item }
 //   GET   /api/negotiations/summary          os indicadores (abertas, ganhas, perdidas, conversão, por etapa), calculados no servidor -> 200 { resumo }
 //   GET   /api/negotiations/:id              uma negociação (com o histórico)                                  -> 200 { item }
 //   PATCH /api/negotiations/:id              edita (parcial) enquanto ABERTA; corpo = só os campos a mudar        -> 200 { item }

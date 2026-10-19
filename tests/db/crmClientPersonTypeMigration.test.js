@@ -23,11 +23,12 @@ const semComentarios = (texto) => texto.split('\n').map((linha) => linha.replace
 const comandos = (texto) => semComentarios(texto).replace(/\$\$[\s\S]*?\$\$/g, '$$$$');
 const corpoDaFuncao = (texto) => /\$\$([\s\S]*?)\$\$/.exec(semComentarios(texto))[1];
 
-test('[MIG-PERSON-1] o arquivo existe, segue a convenção do CLI do Supabase, é a ÚLTIMA migration, vem depois da D1.1 e se declara NÃO APLICADA, com a ordem segura e o desfazer', () => {
+test('[MIG-PERSON-1] o arquivo existe, segue a convenção do CLI do Supabase, vem depois da D1.1 e se declara NÃO APLICADA, com a ordem segura e o desfazer', () => {
   assert.match(NOME, /^\d{14}_[a-z0-9_]+\.sql$/);
   const todas = fs.readdirSync(MIGRATIONS_DIR).filter((nome) => nome.endsWith('.sql')).sort();
-  assert.equal(todas.at(-1), NOME, 'a mais nova');
-  assert.equal(todas.at(-2), '20261019090000_crm_negotiations.sql', 'logo depois das Negociações (D1.1)');
+  assert.equal(todas.at(-2), NOME, 'só a do prazo indeterminado (D3) é mais nova');
+  assert.equal(todas.at(-1), '20261021090000_crm_negotiation_indefinite_term.sql');
+  assert.equal(todas.at(-3), '20261019090000_crm_negotiations.sql', 'logo depois das Negociações (D1.1)');
   assert.match(SQL.split('\n').slice(0, 8).join('\n'), /NÃO APLICADA/);
   assert.match(SQL, /decisão 0030/);
   assert.match(SQL, /Aplicar é uma ação humana e consciente do proprietário/);

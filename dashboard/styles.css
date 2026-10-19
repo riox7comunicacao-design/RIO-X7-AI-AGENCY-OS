@@ -545,7 +545,7 @@ select[aria-invalid="true"] { border-color: var(--danger); }
 .funnel-column-total { margin: 0; font-size: 12.5px; overflow-wrap: anywhere; }
 .funnel-empty { margin: 0; font-size: 13px; }
 .funnel-card-title { background: none; border: 0; padding: 0; text-align: left; cursor: pointer; font: inherit; font-weight: 600; overflow-wrap: anywhere; }
-.funnel-card-value { font-weight: 600; }
+.funnel-card-value { font-weight: 600; overflow-wrap: anywhere; }
 .funnel-card-actions select { max-width: 100%; min-height: 32px; }
 .negotiation-detail { display: grid; gap: 4px; }
 .negotiation-history { list-style: none; margin: 0; padding: 0; display: grid; gap: 8px; }
@@ -553,6 +553,8 @@ select[aria-invalid="true"] { border-color: var(--danger); }
 .negotiation-form .negotiation-term { margin-top: 4px; }
 .negotiation-form .negotiation-term-other { margin: 4px 0 0; }
 .negotiation-form .negotiation-payment { margin-top: 4px; }
+.negotiation-form .negotiation-notice { margin: 8px 0 0; padding: 8px 12px; border-left: 3px solid var(--brand-strong); background: var(--surface); }
+.negotiation-form .negotiation-notice[hidden] { display: none; }
 .negotiation-preview { margin: 8px 0 0; padding: 10px 12px; border: 1px dashed var(--line); border-radius: 10px; background: var(--surface); }
 .negotiation-preview-title { margin: 0 0 6px; font-weight: 600; }
 .negotiation-preview-fields { margin: 0; }

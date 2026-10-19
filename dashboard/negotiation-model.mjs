@@ -18,7 +18,10 @@ export const PAYMENT_OPTIONS = Object.freeze([option('UNICO', 'Pagamento único'
 export const PERIODICITY_OPTIONS = Object.freeze([option('MENSAL', 'Mensal'), option('TRIMESTRAL', 'Trimestral'), option('SEMESTRAL', 'Semestral'), option('ANUAL', 'Anual')]);
 export const MONTHS_PER_PERIOD = Object.freeze({ MENSAL: 1, TRIMESTRAL: 3, SEMESTRAL: 6, ANUAL: 12 });
 export const TERM_PRESETS = Object.freeze([3, 6, 12]);
-export const LIMITS = Object.freeze({ PRAZO_MINIMO: 1, PRAZO_MAXIMO: 120, MOTIVO_PERDA: 300 });
+export const LIMITS = Object.freeze({ PRAZO_MINIMO: 1, PRAZO_MAXIMO: 120, AVISO_PREVIO_MINIMO: 1, AVISO_PREVIO_MAXIMO: 365, MOTIVO_PERDA: 300 });
+// Fase D3: a duração do contrato — DEFINIDA (o prazo em meses) ou INDETERMINADA (sem prazo final, só recorrente; o TCV não é determinado)
+export const DURATIONS = Object.freeze({ DEFINIDA: 'DEFINIDA', INDETERMINADA: 'INDETERMINADA' });
+export const durationLabel = (value) => (value === DURATIONS.INDETERMINADA ? 'Prazo indeterminado' : value === DURATIONS.DEFINIDA ? 'Prazo definido' : '');
 export const SITUATIONS = Object.freeze({ OPEN: 'ABERTA', WON: 'GANHA', LOST: 'PERDIDA' });
 
 const labelIn = (options, value) => {
@@ -38,6 +41,11 @@ export function paymentText(negotiation) {
   return base;
 }
 export const termText = (months) => (Number.isInteger(months) ? `${months} ${months === 1 ? 'mês' : 'meses'}` : '');
+export const noticeText = (days) => (Number.isInteger(days) ? `${days} ${days === 1 ? 'dia' : 'dias'}` : '');
+// "12 meses" / "Prazo indeterminado": a duração do contrato como a pessoa lê (uma negociação anterior à D3 não traz `duracao` e vale como definida)
+export const durationText = (negotiation) => (negotiation && negotiation.duracao === DURATIONS.INDETERMINADA ? 'Prazo indeterminado' : termText(negotiation && negotiation.prazoMeses));
+// o TCV como texto: o valor, ou "Indeterminado" (nunca R$ 0,00 nem uma estimativa) quando o contrato não tem prazo final
+export const tcvText = (finance) => (finance && finance.tcvIndeterminado === true ? 'Indeterminado' : finance && typeof finance.tcv === 'number' ? formatMoney(finance.tcv) : '');
 
 // ---------------------------------------------------------------------------
 // A conta financeira (PRÉVIA no formulário) — paridade com src/crm/negotiationFinance.js
@@ -53,13 +61,24 @@ const halfUp = (numerator, denominator) => Math.floor((2 * numerator + denominat
 
 // { ok: true, tcv, mrr, equivalenteMensal, cronograma } ou { ok: false, code } — o MESMO contrato do servidor.
 export function previewFinance(input) {
-  const { formaPagamento, periodicidade = null, prazoMeses, valorNegociado } = input || {};
+  const { duracao = 'DEFINIDA', formaPagamento, periodicidade = null, prazoMeses, valorNegociado } = input || {};
   const cents = toCents(valorNegociado);
   if (cents === null) return { ok: false, code: 'VALOR_INVALIDO' };
+  if (duracao === 'INDETERMINADA') {
+    // sem prazo, sem número de cobranças e sem TCV (null): nada é estimado. O aviso prévio não entra em conta nenhuma.
+    if (prazoMeses !== null && prazoMeses !== undefined) return { ok: false, code: 'PRAZO_PROIBIDO_NO_INDETERMINADO' };
+    if (formaPagamento === 'UNICO') return { ok: false, code: 'DURACAO_INDETERMINADA_EXIGE_RECORRENCIA' };
+    if (formaPagamento !== 'RECORRENTE') return { ok: false, code: 'FORMA_PAGAMENTO_INVALIDA' };
+    if (periodicidade === null || periodicidade === undefined) return { ok: false, code: 'PERIODICIDADE_OBRIGATORIA' };
+    if (!Object.prototype.hasOwnProperty.call(MONTHS_PER_PERIOD, periodicidade)) return { ok: false, code: 'PERIODICIDADE_INVALIDA' };
+    const every = MONTHS_PER_PERIOD[periodicidade];
+    return { ok: true, duracao: 'INDETERMINADA', tcv: null, tcvIndeterminado: true, mrr: periodicidade === 'MENSAL' ? cents / 100 : null, equivalenteMensal: (every === 1 ? cents : halfUp(cents, every)) / 100, cronograma: { cobrancas: null, valorPorCobranca: cents / 100, mesesEntreCobrancas: every } };
+  }
+  if (duracao !== 'DEFINIDA') return { ok: false, code: 'DURACAO_INVALIDA' };
   if (!Number.isInteger(prazoMeses) || prazoMeses < LIMITS.PRAZO_MINIMO || prazoMeses > LIMITS.PRAZO_MAXIMO) return { ok: false, code: 'PRAZO_INVALIDO' };
   if (formaPagamento === 'UNICO') {
     if (periodicidade !== null && periodicidade !== undefined) return { ok: false, code: 'PERIODICIDADE_NAO_PERMITIDA' };
-    return { ok: true, tcv: cents / 100, mrr: null, equivalenteMensal: null, cronograma: { cobrancas: 1, valorPorCobranca: cents / 100, mesesEntreCobrancas: null } };
+    return { ok: true, duracao: 'DEFINIDA', tcv: cents / 100, tcvIndeterminado: false, mrr: null, equivalenteMensal: null, cronograma: { cobrancas: 1, valorPorCobranca: cents / 100, mesesEntreCobrancas: null } };
   }
   if (formaPagamento === 'RECORRENTE') {
     if (periodicidade === null || periodicidade === undefined) return { ok: false, code: 'PERIODICIDADE_OBRIGATORIA' };
@@ -68,13 +87,15 @@ export function previewFinance(input) {
     if (prazoMeses % months !== 0) return { ok: false, code: 'PRAZO_NAO_MULTIPLO_DA_PERIODICIDADE' };
     const charges = prazoMeses / months;
     const monthly = months === 1 ? cents : halfUp(cents, months);
-    return { ok: true, tcv: (cents * charges) / 100, mrr: periodicidade === 'MENSAL' ? cents / 100 : null, equivalenteMensal: monthly / 100, cronograma: { cobrancas: charges, valorPorCobranca: cents / 100, mesesEntreCobrancas: months } };
+    return { ok: true, duracao: 'DEFINIDA', tcv: (cents * charges) / 100, tcvIndeterminado: false, mrr: periodicidade === 'MENSAL' ? cents / 100 : null, equivalenteMensal: monthly / 100, cronograma: { cobrancas: charges, valorPorCobranca: cents / 100, mesesEntreCobrancas: months } };
   }
   return { ok: false, code: 'FORMA_PAGAMENTO_INVALIDA' };
 }
 
 // O texto do cronograma (a regra explícita: quantas cobranças, de quanto, de quanto em quanto tempo).
 export function scheduleText(schedule) {
+  // contrato por prazo indeterminado: não há número de cobranças — só o valor de cada uma e de quanto em quanto tempo
+  if (schedule && schedule.cobrancas === null && Number.isInteger(schedule.mesesEntreCobrancas)) return `Cobrança de ${formatMoney(schedule.valorPorCobranca)} ${schedule.mesesEntreCobrancas === 1 ? 'todo mês' : `a cada ${schedule.mesesEntreCobrancas} meses`}, por prazo indeterminado (sem número fixo de cobranças)`;
   if (!schedule || !Number.isInteger(schedule.cobrancas)) return '';
   if (schedule.mesesEntreCobrancas === null || schedule.mesesEntreCobrancas === undefined) return `1 cobrança de ${formatMoney(schedule.valorPorCobranca)}`;
   const every = schedule.mesesEntreCobrancas === 1 ? 'todo mês' : `a cada ${schedule.mesesEntreCobrancas} meses`;
@@ -84,10 +105,10 @@ export function scheduleText(schedule) {
 // ---------------------------------------------------------------------------
 // O formulário <-> o contrato. Os valores do formulário são sempre TEXTO ('' = vazio).
 // ---------------------------------------------------------------------------
-export const WRITABLE_CREATE_FIELDS = Object.freeze(['crmRecordId', 'funnelId', 'serviceId', 'prazoMeses', 'formaPagamento', 'periodicidade', 'valorNegociado', 'previsaoFechamento']);
-export const WRITABLE_EDIT_FIELDS = Object.freeze(['serviceId', 'prazoMeses', 'formaPagamento', 'periodicidade', 'valorNegociado', 'previsaoFechamento']);
+export const WRITABLE_CREATE_FIELDS = Object.freeze(['crmRecordId', 'funnelId', 'serviceId', 'duracao', 'prazoMeses', 'avisoPrevioDias', 'formaPagamento', 'periodicidade', 'valorNegociado', 'previsaoFechamento']);
+export const WRITABLE_EDIT_FIELDS = Object.freeze(['serviceId', 'duracao', 'prazoMeses', 'avisoPrevioDias', 'formaPagamento', 'periodicidade', 'valorNegociado', 'previsaoFechamento']);
 
-export const emptyFormValues = (funnelId = '') => ({ crmRecordId: '', funnelId, serviceId: '', prazoMeses: '12', formaPagamento: '', periodicidade: '', valorNegociado: '', previsaoFechamento: '' });
+export const emptyFormValues = (funnelId = '') => ({ crmRecordId: '', funnelId, serviceId: '', duracao: 'DEFINIDA', prazoMeses: '12', avisoPrevioDias: '', formaPagamento: '', periodicidade: '', valorNegociado: '', previsaoFechamento: '' });
 
 export function formValuesFromNegotiation(negotiation) {
   const source = negotiation && typeof negotiation === 'object' ? negotiation : {};
@@ -95,7 +116,9 @@ export function formValuesFromNegotiation(negotiation) {
     crmRecordId: textOf(source.crmRecordId),
     funnelId: textOf(source.funnelId),
     serviceId: textOf(source.serviceId),
+    duracao: source.duracao === DURATIONS.INDETERMINADA ? DURATIONS.INDETERMINADA : DURATIONS.DEFINIDA,
     prazoMeses: Number.isInteger(source.prazoMeses) ? String(source.prazoMeses) : '',
+    avisoPrevioDias: Number.isInteger(source.avisoPrevioDias) ? String(source.avisoPrevioDias) : '',
     formaPagamento: textOf(source.formaPagamento),
     periodicidade: textOf(source.periodicidade),
     valorNegociado: typeof source.valorNegociado === 'number' ? new Intl.NumberFormat('pt-BR', { minimumFractionDigits: 2, maximumFractionDigits: 2 }).format(source.valorNegociado) : '',
@@ -112,6 +135,15 @@ export function parseTerm(text) {
   return value >= LIMITS.PRAZO_MINIMO && value <= LIMITS.PRAZO_MAXIMO ? { ok: true, value } : { ok: false, code: 'PRAZO_INVALIDO' };
 }
 
+// O aviso prévio digitado (dias): vazio = sem aviso (null); senão só dígitos, inteiro de 1 a 365.
+export function parseNotice(text) {
+  const raw = typeof text === 'string' ? text.trim() : '';
+  if (raw === '') return { ok: true, value: null };
+  if (!/^\d{1,4}$/.test(raw)) return { ok: false, code: 'AVISO_PREVIO_INVALIDO' };
+  const value = Number(raw);
+  return value >= LIMITS.AVISO_PREVIO_MINIMO && value <= LIMITS.AVISO_PREVIO_MAXIMO ? { ok: true, value } : { ok: false, code: 'AVISO_PREVIO_INVALIDO' };
+}
+
 // O valor de cada campo como vai para o servidor: { ok, value } ou { ok: false, code }.
 function wireValue(field, values) {
   const text = values[field];
@@ -121,8 +153,14 @@ function wireValue(field, values) {
     case 'serviceId':
     case 'formaPagamento':
       return textOf(text).trim() === '' ? { ok: false, code: 'OBRIGATORIO' } : { ok: true, value: textOf(text).trim() };
+    case 'duracao':
+      return { ok: true, value: textOf(text).trim() === DURATIONS.INDETERMINADA ? DURATIONS.INDETERMINADA : DURATIONS.DEFINIDA };
     case 'prazoMeses':
-      return parseTerm(text);
+      return values.duracao === DURATIONS.INDETERMINADA ? { ok: true, value: null } : parseTerm(text); // sem prazo no contrato indeterminado
+    case 'avisoPrevioDias': {
+      // o aviso só vale no contrato indeterminado (num de prazo definido o campo nem aparece)
+      return values.duracao === DURATIONS.INDETERMINADA ? parseNotice(text) : { ok: true, value: null };
+    }
     case 'periodicidade':
       return { ok: true, value: textOf(text).trim() === '' ? null : textOf(text).trim() };
     case 'valorNegociado': {
@@ -143,7 +181,7 @@ function stateProblems(state, service, { checkService }) {
   const errors = {};
   const finance = previewFinance(state);
   if (!finance.ok) {
-    const path = { VALOR_INVALIDO: 'valorNegociado', PRAZO_INVALIDO: 'prazoMeses', PRAZO_NAO_MULTIPLO_DA_PERIODICIDADE: 'prazoMeses', FORMA_PAGAMENTO_INVALIDA: 'formaPagamento', PERIODICIDADE_OBRIGATORIA: 'periodicidade', PERIODICIDADE_INVALIDA: 'periodicidade', PERIODICIDADE_NAO_PERMITIDA: 'periodicidade' }[finance.code] || 'valorNegociado';
+    const path = { VALOR_INVALIDO: 'valorNegociado', PRAZO_INVALIDO: 'prazoMeses', PRAZO_NAO_MULTIPLO_DA_PERIODICIDADE: 'prazoMeses', FORMA_PAGAMENTO_INVALIDA: 'formaPagamento', PERIODICIDADE_OBRIGATORIA: 'periodicidade', PERIODICIDADE_INVALIDA: 'periodicidade', PERIODICIDADE_NAO_PERMITIDA: 'periodicidade', DURACAO_INVALIDA: 'duracao', DURACAO_INDETERMINADA_EXIGE_RECORRENCIA: 'duracao', PRAZO_PROIBIDO_NO_INDETERMINADO: 'prazoMeses' }[finance.code] || 'valorNegociado';
     errors[path] = fieldMessage(path, finance.code);
   }
   if (checkService && service) {
@@ -163,8 +201,13 @@ function stateProblems(state, service, { checkService }) {
 export function buildCreateBody(values, { service = null } = {}) {
   const errors = {};
   const body = {};
+  const indefinite = values.duracao === DURATIONS.INDETERMINADA;
   for (const field of WRITABLE_CREATE_FIELDS) {
     if (field === 'periodicidade' && values.formaPagamento !== 'RECORRENTE') continue;
+    // o prazo definido continua sendo enviado como sempre; o indeterminado envia a duração (e o aviso prévio, se houver) e NÃO envia prazo
+    if (field === 'duracao' && !indefinite) continue;
+    if (field === 'prazoMeses' && indefinite) continue;
+    if (field === 'avisoPrevioDias' && !indefinite) continue;
     const wired = wireValue(field, values);
     if (!wired.ok) {
       errors[field] = fieldMessage(field, wired.code);
@@ -172,9 +215,10 @@ export function buildCreateBody(values, { service = null } = {}) {
     }
     if (field === 'previsaoFechamento' && wired.value === null) continue;
     if (field === 'periodicidade' && wired.value === null) continue;
+    if (field === 'avisoPrevioDias' && wired.value === null) continue;
     body[field] = wired.value;
   }
-  if (Object.keys(errors).length === 0) Object.assign(errors, stateProblems({ ...body, periodicidade: body.periodicidade ?? null }, service, { checkService: true }));
+  if (Object.keys(errors).length === 0) Object.assign(errors, stateProblems({ ...body, duracao: indefinite ? DURATIONS.INDETERMINADA : DURATIONS.DEFINIDA, prazoMeses: indefinite ? null : body.prazoMeses, periodicidade: body.periodicidade ?? null }, service, { checkService: true }));
   return { ok: Object.keys(errors).length === 0, body, errors };
 }
 
@@ -198,13 +242,18 @@ export function buildPatchBody(initial, values, { service = null } = {}) {
     send.add('formaPagamento');
     send.add('periodicidade');
   }
+  // mudar a DURAÇÃO leva os três campos dela juntos (a coerência é do estado final): prazo, aviso prévio e a própria duração; editar só o prazo ou só o aviso não reenvia a duração
+  if (send.has('duracao')) {
+    send.add('prazoMeses');
+    send.add('avisoPrevioDias');
+  }
   for (const field of WRITABLE_EDIT_FIELDS) {
     if (!send.has(field)) continue;
     const wired = wireValue(field, values);
     if (wired.ok) body[field] = field === 'periodicidade' && values.formaPagamento !== 'RECORRENTE' ? null : wired.value;
   }
   if (Object.keys(errors).length === 0 && changed.length > 0) {
-    const state = { prazoMeses: wireValue('prazoMeses', values).value, formaPagamento: wireValue('formaPagamento', values).value, periodicidade: values.formaPagamento === 'RECORRENTE' ? wireValue('periodicidade', values).value : null, valorNegociado: wireValue('valorNegociado', values).value };
+    const state = { duracao: wireValue('duracao', values).value, prazoMeses: wireValue('prazoMeses', values).value, formaPagamento: wireValue('formaPagamento', values).value, periodicidade: values.formaPagamento === 'RECORRENTE' ? wireValue('periodicidade', values).value : null, valorNegociado: wireValue('valorNegociado', values).value };
     Object.assign(errors, stateProblems(state, service, { checkService: send.has('serviceId') || send.has('formaPagamento') || send.has('periodicidade') }));
   }
   return { ok: Object.keys(errors).length === 0, body, errors, empty: changed.length === 0 };
@@ -213,7 +262,7 @@ export function buildPatchBody(initial, values, { service = null } = {}) {
 // ---------------------------------------------------------------------------
 // Mensagens (pt-BR, por campo)
 // ---------------------------------------------------------------------------
-const FIELD_NOUN = Object.freeze({ crmRecordId: 'o cliente', funnelId: 'o funil', serviceId: 'o serviço', prazoMeses: 'o prazo', formaPagamento: 'a forma de pagamento', periodicidade: 'a periodicidade', valorNegociado: 'o valor', previsaoFechamento: 'a previsão de fechamento', motivo: 'o motivo', stageId: 'a etapa' });
+const FIELD_NOUN = Object.freeze({ crmRecordId: 'o cliente', funnelId: 'o funil', serviceId: 'o serviço', duracao: 'a duração do contrato', avisoPrevioDias: 'o aviso prévio', prazoMeses: 'o prazo', formaPagamento: 'a forma de pagamento', periodicidade: 'a periodicidade', valorNegociado: 'o valor', previsaoFechamento: 'a previsão de fechamento', motivo: 'o motivo', stageId: 'a etapa' });
 const FIELD_PATHS = Object.freeze(Object.keys(FIELD_NOUN));
 
 export function fieldMessage(path, code) {
@@ -252,6 +301,14 @@ export function fieldMessage(path, code) {
       return `Informe o prazo em meses, um número inteiro de ${LIMITS.PRAZO_MINIMO} a ${LIMITS.PRAZO_MAXIMO}.`;
     case 'PRAZO_NAO_MULTIPLO_DA_PERIODICIDADE':
       return 'O prazo precisa ser um múltiplo da periodicidade (por exemplo, 12 meses com cobrança trimestral = 4 cobranças). Ajuste o prazo ou a periodicidade.';
+    case 'DURACAO_INDETERMINADA_EXIGE_RECORRENCIA':
+      return 'O prazo indeterminado só vale para o pagamento recorrente. Escolha o pagamento recorrente ou um prazo definido.';
+    case 'PRAZO_PROIBIDO_NO_INDETERMINADO':
+      return 'O contrato por prazo indeterminado não tem prazo em meses.';
+    case 'AVISO_PREVIO_INVALIDO':
+      return `Informe o aviso prévio em dias, um número inteiro de ${LIMITS.AVISO_PREVIO_MINIMO} a ${LIMITS.AVISO_PREVIO_MAXIMO}, ou deixe em branco.`;
+    case 'AVISO_PREVIO_NAO_PERMITIDO':
+      return 'O aviso prévio só vale no contrato por prazo indeterminado.';
     case 'VALOR_INVALIDO':
       return path === 'valorNegociado' ? 'Informe um valor maior que zero, em reais, com até duas casas decimais (como 1.500,00).' : `Confira ${noun}.`;
     case 'NEGATIVO':
@@ -326,12 +383,16 @@ export function negotiationErrorInfo(error) {
 // ---------------------------------------------------------------------------
 // O histórico (cada evento vira uma frase: o que, e com quem e quando a tela mostra ao lado)
 // ---------------------------------------------------------------------------
-const CHANGE_LABEL = Object.freeze({ serviceId: 'Serviço', prazoMeses: 'Prazo', formaPagamento: 'Forma de pagamento', periodicidade: 'Periodicidade', valorNegociado: 'Valor negociado', previsaoFechamento: 'Previsão de fechamento' });
+const CHANGE_LABEL = Object.freeze({ serviceId: 'Serviço', duracao: 'Duração do contrato', avisoPrevioDias: 'Aviso prévio', prazoMeses: 'Prazo', formaPagamento: 'Forma de pagamento', periodicidade: 'Periodicidade', valorNegociado: 'Valor negociado', previsaoFechamento: 'Previsão de fechamento' });
 
 function changeText(change) {
   const label = CHANGE_LABEL[change.campo] || 'Campo';
   const show = (value) => {
+    if (change.campo === 'prazoMeses' && (value === null || value === undefined)) return 'sem prazo (indeterminado)';
+    if (change.campo === 'avisoPrevioDias' && (value === null || value === undefined)) return 'sem aviso prévio';
     if (value === null || value === undefined || value === '') return 'vazio';
+    if (change.campo === 'duracao') return durationLabel(value) || 'valor inválido';
+    if (change.campo === 'avisoPrevioDias') return noticeText(value);
     if (change.campo === 'valorNegociado') return formatMoney(value);
     if (change.campo === 'prazoMeses') return termText(value);
     if (change.campo === 'formaPagamento') return paymentLabel(value) || 'valor inválido';
@@ -366,4 +427,4 @@ export function eventText(event) {
 // O QUADRO
 // ---------------------------------------------------------------------------
 // O texto de uma linha do cartão da negociação: "Pagamento recorrente (mensal) · 12 meses".
-export const conditionsText = (negotiation) => [paymentText(negotiation), termText(negotiation && negotiation.prazoMeses)].filter(Boolean).join(' · ');
+export const conditionsText = (negotiation) => [paymentText(negotiation), durationText(negotiation)].filter(Boolean).join(' · ');

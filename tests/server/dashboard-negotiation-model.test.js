@@ -108,7 +108,7 @@ test('[NEGMODEL-5] EDITAR: vai SÓ o que mudou; sem mudança nada é enviado; es
   const m = await loadModel();
   const item = { crmRecordId: 'crm:1', funnelId: 'funnel:1', serviceId: 'service:1', prazoMeses: 12, formaPagamento: 'RECORRENTE', periodicidade: 'MENSAL', valorNegociado: 1500, previsaoFechamento: null };
   const inicial = m.formValuesFromNegotiation(item);
-  assert.deepEqual(inicial, { crmRecordId: 'crm:1', funnelId: 'funnel:1', serviceId: 'service:1', prazoMeses: '12', formaPagamento: 'RECORRENTE', periodicidade: 'MENSAL', valorNegociado: '1.500,00', previsaoFechamento: '' });
+  assert.deepEqual(inicial, { crmRecordId: 'crm:1', funnelId: 'funnel:1', serviceId: 'service:1', duracao: 'DEFINIDA', prazoMeses: '12', avisoPrevioDias: '', formaPagamento: 'RECORRENTE', periodicidade: 'MENSAL', valorNegociado: '1.500,00', previsaoFechamento: '' });
   assert.equal(m.buildPatchBody(inicial, { ...inicial }, { service: SERVICO }).empty, true);
   assert.equal(m.buildPatchBody(inicial, { ...inicial, valorNegociado: '1500' }, { service: SERVICO }).empty, true, '1500 e 1.500,00 são o mesmo valor');
   assert.equal(m.buildPatchBody(inicial, { ...inicial, valorNegociado: ' 1.500,00 ' }, { service: SERVICO }).empty, true);

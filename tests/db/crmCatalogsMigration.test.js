@@ -38,7 +38,7 @@ test('[MIG-CAT-1] o arquivo existe, segue a convenção de nome do CLI do Supaba
   // importa continua valendo — as cinco migrations anteriores, e só elas, vêm antes desta.
   assert.equal(todas.indexOf(path.basename(MIGRATION_FILE)), 5, 'exatamente as cinco migrations anteriores vêm antes');
   // Depois dela, só quatro, nesta ordem (a quarta, D2, ACRESCENTA colunas a crm_records sem editar esta): a corretiva das Exclusões Permanentes (H2), a das modalidades de pagamento dos Serviços (C1, que ACRESCENTA colunas a crm_services sem editar esta) e a das Negociações (D1.1, que só REFERENCIA crm_services).
-  assert.deepEqual(todas.slice(6), ['20261017090000_prospecting_permanent_exclusions_created_by_text.sql', '20261018090000_crm_services_payment_modalities.sql', '20261019090000_crm_negotiations.sql', '20261020090000_crm_client_person_type.sql'], 'as únicas posteriores: H2 (Exclusões), C1 (modalidades dos Serviços), D1.1 (Negociações) e D2 (Clientes PF/PJ)');
+  assert.deepEqual(todas.slice(6), ['20261017090000_prospecting_permanent_exclusions_created_by_text.sql', '20261018090000_crm_services_payment_modalities.sql', '20261019090000_crm_negotiations.sql', '20261020090000_crm_client_person_type.sql', '20261021090000_crm_negotiation_indefinite_term.sql'], 'as únicas posteriores: H2 (Exclusões), C1 (modalidades dos Serviços), D1.1 (Negociações), D2 (Clientes PF/PJ) e D3 (prazo indeterminado)');
   assert.match(SQL.split('\n').slice(0, 14).join('\n'), /NÃO APLICADA\./, 'o cabeçalho diz que NÃO foi aplicada');
   assert.match(SQL, /decisão 0026/);
   assert.match(SQL, /Aplicar é uma ação humana e consciente do proprietário/i);

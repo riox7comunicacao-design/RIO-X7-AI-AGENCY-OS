@@ -59,7 +59,9 @@ function toPublicNegotiation(view, cliente) {
     servicoNome: view.servicoNome ?? null,
     responsavelUserId: view.responsavelUserId,
     responsavelNome: view.responsavelNome,
-    prazoMeses: view.prazoMeses,
+    duracao: view.duracao ?? 'DEFINIDA',
+    prazoMeses: view.prazoMeses ?? null,
+    avisoPrevioDias: view.avisoPrevioDias ?? null,
     formaPagamento: view.formaPagamento,
     periodicidade: view.periodicidade ?? null,
     valorNegociado: view.valorNegociado,
@@ -71,7 +73,7 @@ function toPublicNegotiation(view, cliente) {
     atualizadoEm: view.atualizadoEm,
     criadoPorNome: view.criadoPorNome ?? null,
     atualizadoPorNome: view.atualizadoPorNome ?? null,
-    financeiro: view.financeiro ? { tcv: view.financeiro.tcv, mrr: view.financeiro.mrr, equivalenteMensal: view.financeiro.equivalenteMensal, cronograma: { ...view.financeiro.cronograma } } : null,
+    financeiro: view.financeiro ? { tcv: view.financeiro.tcv, tcvIndeterminado: view.financeiro.tcvIndeterminado === true, mrr: view.financeiro.mrr, equivalenteMensal: view.financeiro.equivalenteMensal, cronograma: { ...view.financeiro.cronograma } } : null,
     eventos: Array.isArray(view.eventos) ? view.eventos.map((item) => structuredClone(item)) : [],
   };
 }
@@ -207,8 +209,12 @@ function createNegotiationService(dependencies) {
     const totais = stages.map((stage) => {
       const inStage = items.filter((item) => item.stageId === stage.id);
       const open = inStage.filter((item) => item.negociacao && item.negociacao.situacao === 'ABERTA');
-      const tcv = open.reduce((sum, item) => sum + (item.negociacao.financeiro ? Math.round(item.negociacao.financeiro.tcv * 100) : 0), 0);
-      return { stageId: stage.id, cards: inStage.length, negociacoesAbertas: open.length, tcvEmJogo: tcv / 100 };
+      // TCV conhecido: só os contratos com TCV determinado; os de prazo INDETERMINADO ficam à parte (contados, nunca somados como zero nem estimados), e o MRR deles entra no MRR em jogo
+      const known = open.filter((item) => item.negociacao.financeiro && typeof item.negociacao.financeiro.tcv === 'number');
+      const tcv = known.reduce((sum, item) => sum + Math.round(item.negociacao.financeiro.tcv * 100), 0);
+      const indeterminate = open.filter((item) => item.negociacao.financeiro && item.negociacao.financeiro.tcvIndeterminado === true).length;
+      const mrr = open.reduce((sum, item) => sum + (item.negociacao.financeiro && typeof item.negociacao.financeiro.mrr === 'number' ? Math.round(item.negociacao.financeiro.mrr * 100) : 0), 0);
+      return { stageId: stage.id, cards: inStage.length, negociacoesAbertas: open.length, tcvEmJogo: tcv / 100, tcvIndeterminadas: indeterminate, mrrEmJogo: mrr / 100 };
     });
     return { funnels, funnelId: chosen.id, stages, cards: items, totais };
   }

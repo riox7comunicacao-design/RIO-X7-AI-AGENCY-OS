@@ -12,7 +12,7 @@ test('[NEGFIN-1] as constantes: duas formas de pagamento, as quatro periodicidad
   assert.deepEqual({ ...BILLING }, { UNICO: 'UNICO', RECORRENTE: 'RECORRENTE' });
   assert.deepEqual([...PERIODICITIES], ['MENSAL', 'TRIMESTRAL', 'SEMESTRAL', 'ANUAL']);
   assert.deepEqual({ ...MONTHS_PER_PERIOD }, { MENSAL: 1, TRIMESTRAL: 3, SEMESTRAL: 6, ANUAL: 12 });
-  assert.deepEqual({ ...LIMITS }, { PRAZO_MINIMO: 1, PRAZO_MAXIMO: 120, VALOR_MAXIMO_CENTAVOS: 100_000_000_000 });
+  assert.deepEqual({ ...LIMITS }, { PRAZO_MINIMO: 1, PRAZO_MAXIMO: 120, AVISO_PREVIO_MINIMO: 1, AVISO_PREVIO_MAXIMO: 365, VALOR_MAXIMO_CENTAVOS: 100_000_000_000 });
   for (const objeto of [BILLING, MONTHS_PER_PERIOD, LIMITS]) assert.equal(Object.isFrozen(objeto), true);
 });
 

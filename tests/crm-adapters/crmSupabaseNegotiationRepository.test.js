@@ -38,7 +38,7 @@ async function montar({ referencias = 'estritas', ...opcoes } = {}) {
 }
 const evento = (tipo, em, detalhe) => ({ tipo, em, porUserId: QUEM.userId, porNome: QUEM.name, ...(detalhe === undefined ? {} : { detalhe }) });
 const negociacao = (n = 1, extras = {}) => ({
-  id: N(n), crmRecordId: R(1), funnelId: F(1), cardId: C(n), serviceId: S(1), servicoNome: 'Gestão de redes', responsavelUserId: QUEM.userId, responsavelNome: QUEM.name, prazoMeses: 12,
+  id: N(n), crmRecordId: R(1), funnelId: F(1), cardId: C(n), serviceId: S(1), servicoNome: 'Gestão de redes', responsavelUserId: QUEM.userId, responsavelNome: QUEM.name, duracao: 'DEFINIDA', prazoMeses: 12, avisoPrevioDias: null,
   formaPagamento: 'RECORRENTE', periodicidade: 'MENSAL', valorNegociado: 1500, previsaoFechamento: null, situacao: 'ABERTA', motivoPerda: null, fechadoEm: null, criadoEm: T, atualizadoEm: T,
   criadoPorUserId: QUEM.userId, criadoPorNome: QUEM.name, atualizadoPorUserId: QUEM.userId, atualizadoPorNome: QUEM.name, eventos: [evento('CRIADA', T, { etapaId: E(1) })], ...extras,
 });
@@ -296,4 +296,75 @@ test('[SBNEG-11] SEGREDO E ERROS: erros desconhecidos saem sem `code` e citam s�
   const semRede = createSupabaseNegotiationRepository({ url: URL, serviceRoleKey: CHAVE, fetchImpl: async () => { throw Object.assign(new Error('host-interno-segredo'), { name: 'TypeError' }); } });
   await assert.rejects(() => semRede.list(), (e) => /falha de rede/.test(e.message) && !/host-interno-segredo/.test(e.message));
   await assert.rejects(() => semRede.commit({ mode: 'create', negotiation: negociacao(1), card: card(1), cardMove: movimento(1, null, E(1)) }), (e) => /falha de rede/.test(e.message) && !/host-interno-segredo/.test(e.message));
+});
+
+// ---------------------------------------------------------------------------------------------------------------------------------
+// Fase D3 — contratos por PRAZO INDETERMINADO (migration 20261021090000, emulada pelo PostgREST falso)
+// ---------------------------------------------------------------------------------------------------------------------------------
+const indeterminada = (n = 1, extras = {}) => negociacao(n, { duracao: 'INDETERMINADA', prazoMeses: null, avisoPrevioDias: 30, valorNegociado: 1350, ...extras });
+
+test('[SBNEG-D3-1] um contrato INDETERMINADO é gravado e lido de volta idêntico: sem prazo (NULL no banco), duração e aviso prévio nas colunas novas, valor em centavos; o JSON enviado leva `prazoMeses: null` (nunca um 12 inventado) e nenhum TCV', async () => {
+  const m = await montar();
+  await criar(m, 1, { duracao: 'INDETERMINADA', prazoMeses: null, avisoPrevioDias: 30, valorNegociado: 1350 });
+  const corpo = m.db.rpcs(COMMIT_RPC)[0].corpo.p_negotiation;
+  assert.deepEqual([corpo.duracao, corpo.prazoMeses, corpo.avisoPrevioDias, corpo.valorCentavos], ['INDETERMINADA', null, 30, 135000]);
+  assert.equal(JSON.stringify(corpo).toLowerCase().includes('tcv'), false);
+  const linha = m.db.tabelas.crm_negotiations.get(N(1));
+  assert.deepEqual([linha.duracao_tipo, linha.prazo_meses, linha.aviso_previo_dias], ['INDETERMINADA', null, 30]);
+  const lida = await m.repo.getById(N(1));
+  assert.deepEqual(lida, indeterminada(1));
+  assert.deepEqual([lida.prazoMeses, lida.avisoPrevioDias, lida.duracao], [null, 30, 'INDETERMINADA']);
+  assert.deepEqual(await m.repo.list(), [lida]);
+});
+
+test('[SBNEG-D3-2] CORRIGIR um contrato existente para indeterminado: UMA transação atualiza as colunas e ACRESCENTA o evento (o histórico anterior intacto); o mesmo ID; a concorrência otimista segue valendo', async () => {
+  const m = await montar();
+  await criar(m, 1);
+  const antes = await m.repo.getById(N(1));
+  const evento2 = evento('ATUALIZADA', T1, { alteracoes: [{ campo: 'prazoMeses', de: 12, para: null }, { campo: 'duracao', de: 'DEFINIDA', para: 'INDETERMINADA' }, { campo: 'avisoPrevioDias', de: null, para: 30 }] });
+  await mudar(m, antes, { duracao: 'INDETERMINADA', prazoMeses: null, avisoPrevioDias: 30 }, evento2);
+  const depois = await m.repo.getById(N(1));
+  assert.deepEqual([depois.id, depois.duracao, depois.prazoMeses, depois.avisoPrevioDias, depois.valorNegociado], [N(1), 'INDETERMINADA', null, 30, 1500]);
+  assert.deepEqual(depois.eventos.slice(0, 1), antes.eventos);
+  assert.equal(depois.eventos.length, 2);
+  assert.equal(m.db.tabelas.crm_negotiation_events.length, 2);
+  // um segundo editor com a leitura antiga é recusado (conflito) e nada muda
+  await assert.rejects(() => mudar(m, antes, { duracao: 'INDETERMINADA', prazoMeses: null, avisoPrevioDias: 60 }, evento('ATUALIZADA', T2)), rejeita(NEGOTIATION_REPOSITORY_ERROR.CONFLICT));
+  assert.equal((await m.repo.getById(N(1))).avisoPrevioDias, 30);
+});
+
+test('[SBNEG-D3-3] o BANCO recusa a duração incoerente (defesa em profundidade, mesmo fora do domínio): indeterminado com prazo, com pagamento único ou sem periodicidade; definido sem prazo ou com aviso prévio; duração desconhecida — REJECTED, e nada fica (nem card, nem negociação, nem evento)', async () => {
+  const m = await montar();
+  const ruins = [
+    { duracao: 'INDETERMINADA', prazoMeses: 12 },
+    { duracao: 'INDETERMINADA', prazoMeses: null, formaPagamento: 'UNICO', periodicidade: null },
+    { duracao: 'INDETERMINADA', prazoMeses: null, periodicidade: null },
+    { duracao: 'DEFINIDA', prazoMeses: null },
+    { duracao: 'DEFINIDA', prazoMeses: 12, avisoPrevioDias: 30 },
+    { duracao: 'ETERNA', prazoMeses: null },
+  ];
+  for (const extras of ruins) {
+    await assert.rejects(() => criar(m, 1, extras), rejeita(NEGOTIATION_REPOSITORY_ERROR.REJECTED), JSON.stringify(extras));
+  }
+  assert.deepEqual([m.db.tabelas.crm_negotiations.size, m.db.tabelas.crm_negotiation_events.length, m.db.tabelas.crm_funnel_cards.size, m.db.tabelas.crm_funnel_card_moves.length], [0, 0, 0, 0]);
+});
+
+test('[SBNEG-D3-4] os limites do banco para o aviso prévio (1 a 365) e a coerência: 0, 366 e fracionário são recusados pelo CHECK; 1 e 365 passam', async () => {
+  const m = await montar();
+  for (const aviso of [0, 366, -1]) await assert.rejects(() => criar(m, 1, { duracao: 'INDETERMINADA', prazoMeses: null, avisoPrevioDias: aviso }), (e) => !e.code, `aviso ${aviso}`);
+  assert.equal(m.db.tabelas.crm_negotiations.size, 0);
+  await criar(m, 1, { duracao: 'INDETERMINADA', prazoMeses: null, avisoPrevioDias: 1 });
+  await criar(m, 2, { duracao: 'INDETERMINADA', prazoMeses: null, avisoPrevioDias: 365 });
+  assert.equal(m.db.tabelas.crm_negotiations.size, 2);
+});
+
+test('[SBNEG-D3-5] COMPATIBILIDADE de leitura: uma linha SEM as colunas novas (banco antigo) é lida como DEFINIDA, sem aviso prévio; prazo NULL só é aceito na leitura quando a duração é indeterminada', async () => {
+  const antigo = await montar({ schemaD3: false });
+  await criar(antigo, 1);
+  const linhaAntiga = antigo.db.tabelas.crm_negotiations.get(N(1));
+  assert.equal('duracao_tipo' in linhaAntiga, false);
+  const lida = await antigo.repo.getById(N(1));
+  assert.deepEqual([lida.duracao, lida.avisoPrevioDias, lida.prazoMeses], ['DEFINIDA', null, 12]);
+  await assert.rejects(() => criar(antigo, 2, { duracao: 'INDETERMINADA', prazoMeses: null, avisoPrevioDias: 30 }), (e) => !e.code, 'o banco antigo recusa (prazo_meses NOT NULL): erro de armazenamento, sem código de domínio');
+  assert.equal(antigo.db.tabelas.crm_negotiations.size, 1);
 });

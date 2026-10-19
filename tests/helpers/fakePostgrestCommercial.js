@@ -11,6 +11,8 @@
 //     ATÔMICA (um instantâneo das tabelas é restaurado se qualquer passo falhar) e com as MESMAS verificações do SQL (concorrência otimista, transições, histórico que só cresce, etc.);
 //   - GET: filtros `col=eq.x` / `col=is.null`, `order`, `limit`/`offset`, o TETO de linhas por resposta (db-max-rows, padrão 1000), `Prefer: count=exact` com o total em Content-Range e o 206
 //     quando parcial; o formato de timestamptz do Postgres ("...123000+00:00").
+// Fase D3 (migration 20261021090000_crm_negotiation_indefinite_term.sql): com `schemaD3: true` (o padrão) a tabela de negociações tem `duracao_tipo` e `aviso_previo_dias`, `prazo_meses` aceita NULL só no contrato
+// INDETERMINADO e a restrição de coerência do pagamento é a nova; com `schemaD3: false` é o banco SEM a D3 (sem as colunas e com `prazo_meses` NOT NULL) — gravar um contrato indeterminado nele falha.
 // `aoResponder(n, req, api)` (opcional) pode devolver uma resposta pronta para a n-ésima requisição (falhas, corpos inválidos); `falhar(nome)` faz a PRÓXIMA chamada àquela RPC/tabela falhar.
 // Registra cada requisição em `chamadas` (método, caminho, query, Prefer, corpo). Todos os dados são fictícios.
 
@@ -45,7 +47,7 @@ function resposta(status, corpo, cabecalhos = {}) {
   return { ok: status >= 200 && status < 300, status, headers: { get: (nome) => cabecalhos[String(nome).toLowerCase()] ?? null }, text: async () => (corpo === undefined ? '' : typeof corpo === 'string' ? corpo : JSON.stringify(corpo)) };
 }
 
-function criarPostgrestComercial({ maxRows = 1000, bigintComoTexto = false, referencias = 'estritas', inicio = '2026-10-19T12:00:00.000Z', aoResponder } = {}) {
+function criarPostgrestComercial({ maxRows = 1000, bigintComoTexto = false, referencias = 'estritas', inicio = '2026-10-19T12:00:00.000Z', aoResponder, schemaD3 = true } = {}) {
   const t = { crm_funnels: new Map(), crm_funnel_stages: new Map(), crm_funnel_cards: new Map(), crm_funnel_card_moves: [], crm_negotiations: new Map(), crm_negotiation_events: [] };
   const clientes = new Map(); // crm_records: id -> { status }
   const servicos = new Map(); // crm_services: id -> { ativo, permite_pagamento_unico, permite_pagamento_recorrente, periodicidades }
@@ -119,12 +121,19 @@ function criarPostgrestComercial({ maxRows = 1000, bigintComoTexto = false, refe
   }
   function validarNegociacao(n) {
     if (!/^negotiation:[0-9a-f-]{36}$/.test(n.id)) throw cheque('crm_negotiations_id_check');
-    if (!Number.isInteger(n.prazo_meses) || n.prazo_meses < 1 || n.prazo_meses > 120) throw cheque('crm_negotiations_prazo_meses_check');
+    const indeterminado = schemaD3 && n.duracao_tipo === 'INDETERMINADA';
+    if (schemaD3 && !['DEFINIDA', 'INDETERMINADA'].includes(n.duracao_tipo)) throw cheque('crm_negotiations_duracao_tipo_check');
+    if (schemaD3 && n.aviso_previo_dias !== null && !(Number.isInteger(n.aviso_previo_dias) && n.aviso_previo_dias >= 1 && n.aviso_previo_dias <= 365)) throw cheque('crm_negotiations_aviso_previo_dias_check');
+    if (n.prazo_meses === null && !indeterminado) throw naoNulo('prazo_meses'); // NOT NULL (no banco antigo, sempre; no novo, só a duração DEFINIDA)
+    if (n.prazo_meses !== null && (!Number.isInteger(n.prazo_meses) || n.prazo_meses < 1 || n.prazo_meses > 120)) throw cheque('crm_negotiations_prazo_meses_check');
     if (!['UNICO', 'RECORRENTE'].includes(n.forma_pagamento)) throw cheque('crm_negotiations_forma_pagamento_check');
     if (n.periodicidade !== null && !(n.periodicidade in PERIODICITIES)) throw cheque('crm_negotiations_periodicidade_check');
     if (!Number.isInteger(n.valor_centavos) || n.valor_centavos < 1 || n.valor_centavos > 100000000000) throw cheque('crm_negotiations_valor_centavos_check');
     if (!['ABERTA', 'GANHA', 'PERDIDA'].includes(n.situacao)) throw cheque('crm_negotiations_situacao_check');
-    const pagamentoOk = (n.forma_pagamento === 'UNICO' && n.periodicidade === null) || (n.forma_pagamento === 'RECORRENTE' && n.periodicidade !== null && n.prazo_meses % PERIODICITIES[n.periodicidade] === 0);
+    const pagamentoDefinido = (n.forma_pagamento === 'UNICO' && n.periodicidade === null) || (n.forma_pagamento === 'RECORRENTE' && n.periodicidade !== null && n.prazo_meses % PERIODICITIES[n.periodicidade] === 0);
+    const pagamentoOk = schemaD3
+      ? (n.duracao_tipo === 'DEFINIDA' && n.prazo_meses !== null && n.aviso_previo_dias === null && pagamentoDefinido) || (n.duracao_tipo === 'INDETERMINADA' && n.prazo_meses === null && n.forma_pagamento === 'RECORRENTE' && n.periodicidade !== null)
+      : pagamentoDefinido;
     if (!pagamentoOk) throw cheque('crm_negotiations_pagamento_coerente');
     const situacaoOk = (n.situacao === 'ABERTA' && n.motivo_perda === null && n.fechado_em === null) || (n.situacao === 'GANHA' && n.motivo_perda === null && n.fechado_em !== null)
       || (n.situacao === 'PERDIDA' && naoVazio(n.motivo_perda) && n.fechado_em !== null);
@@ -137,6 +146,7 @@ function criarPostgrestComercial({ maxRows = 1000, bigintComoTexto = false, refe
       responsavel_nome: p.responsavelNome, prazo_meses: p.prazoMeses, forma_pagamento: p.formaPagamento, periodicidade: unico(p.periodicidade), valor_centavos: p.valorCentavos,
       previsao_fechamento: unico(p.previsaoFechamento), situacao: p.situacao, motivo_perda: unico(p.motivoPerda), fechado_em: unico(p.fechadoEm), created_at: p.criadoEm, updated_at: p.atualizadoEm,
       created_by_user_id: p.criadoPorUserId, created_by_name: p.criadoPorNome, updated_by_user_id: p.atualizadoPorUserId, updated_by_name: p.atualizadoPorNome,
+      ...(schemaD3 ? { duracao_tipo: p.duracao === undefined || p.duracao === null ? 'DEFINIDA' : p.duracao, aviso_previo_dias: unico(p.avisoPrevioDias) } : {}),
     };
   }
   function eventoLinha(negociacaoId, seq, e) {
@@ -156,6 +166,11 @@ function criarPostgrestComercial({ maxRows = 1000, bigintComoTexto = false, refe
     if (!Array.isArray(pn.eventos) || pn.eventos.length === 0) throw p0001('crm_negotiation_history: a negociação não traz o histórico obrigatório');
     if ((pc === null) !== (pm === null)) throw new ErroBanco(400, '22023', 'commit_crm_negotiation_change: o card e o movimento do card vêm juntos');
     const dado = linhaNegociacao(pn);
+    // a conferência da duração que a função da D3 faz ANTES de gravar (crm_negotiation_invalid_term); o banco antigo (sem a D3) não a tem
+    if (schemaD3 && (!['DEFINIDA', 'INDETERMINADA'].includes(dado.duracao_tipo) || (dado.duracao_tipo === 'INDETERMINADA' && (dado.prazo_meses !== null || dado.forma_pagamento !== 'RECORRENTE' || dado.periodicidade === null))
+      || (dado.duracao_tipo === 'DEFINIDA' && (dado.prazo_meses === null || dado.aviso_previo_dias !== null)))) {
+      throw p0001('crm_negotiation_invalid_term: a duração do contrato não é coerente com o prazo, o aviso prévio e a forma de pagamento');
+    }
     if (modo === 'create') {
       if (pc === null) throw new ErroBanco(400, '22023', 'commit_crm_negotiation_change: criar exige o card e o primeiro movimento');
       if (pn.situacao !== 'ABERTA' || pn.eventos.length !== 1 || pn.eventos[0].tipo !== 'CRIADA') throw p0001('crm_negotiation_history: uma negociação nasce ABERTA com o histórico [CRIADA]');
@@ -214,7 +229,7 @@ function criarPostgrestComercial({ maxRows = 1000, bigintComoTexto = false, refe
       t.crm_funnel_cards.set(card.id, novo);
       inserirMovimento({ card_id: card.id, stage_from: card.stage_id, stage_to: pm.stageTo, moved_by_user_id: pm.movedBy && pm.movedBy.userId, moved_by_name: pm.movedBy && pm.movedBy.name, moved_by_role: pm.movedBy && pm.movedBy.role, motivo: pm.motivo || null, moved_at: pm.movedAt });
     }
-    const novoRegistro = { ...atual, service_id: dado.service_id, servico_nome: dado.servico_nome, prazo_meses: dado.prazo_meses, forma_pagamento: dado.forma_pagamento, periodicidade: dado.periodicidade, valor_centavos: dado.valor_centavos,
+    const novoRegistro = { ...atual, service_id: dado.service_id, servico_nome: dado.servico_nome, prazo_meses: dado.prazo_meses, ...(schemaD3 ? { duracao_tipo: dado.duracao_tipo, aviso_previo_dias: dado.aviso_previo_dias } : {}), forma_pagamento: dado.forma_pagamento, periodicidade: dado.periodicidade, valor_centavos: dado.valor_centavos,
       previsao_fechamento: dado.previsao_fechamento, situacao: dado.situacao, motivo_perda: dado.motivo_perda, fechado_em: dado.fechado_em, updated_at: dado.updated_at, updated_by_user_id: dado.updated_by_user_id, updated_by_name: dado.updated_by_name };
     validarNegociacao(novoRegistro);
     if (referencias === 'estritas' && !servicos.has(novoRegistro.service_id)) throw fk('crm_negotiations_service_id_fkey');

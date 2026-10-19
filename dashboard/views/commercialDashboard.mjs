@@ -3,6 +3,7 @@
 //   Browser -> esta tela -> api.mjs -> GET /api/negotiations/summary  ({ resumo }: abertas, ganhas, perdidas, conversão, por etapa)
 //
 // A tela NUNCA soma, estima nem inventa: cada número vem do servidor; sem dados, mostra o que falta (estado vazio), nunca um zero de enfeite. Definições (as mesmas do resto do sistema):
+//   (D3) Um contrato por prazo INDETERMINADO tem TCV indeterminado: não entra no total de TCV (que passa a ser o TCV CONHECIDO), é contado à parte e o MRR dele entra normalmente. Nunca zero, nunca estimado.
 //   TCV = valor total do contrato; MRR = receita recorrente MENSAL (só da recorrência mensal); equivalente mensal = TCV ÷ prazo, só para COMPARAR recorrências que não são mensais;
 //   "em negociação" = negociações abertas; "contratado" = negociações ganhas. Valor RECEBIDO não aparece: ganhar é uma decisão comercial, não pagamento (virá dos pagamentos).
 // Leitura com READ:CRM. Todo texto entra por dom.mjs (textContent).
@@ -69,13 +70,20 @@ export function createCommercialDashboardView({ document, root, api, permissions
     return rows;
   }
 
+  // O TCV: com contratos por prazo indeterminado no grupo, o total é o TCV CONHECIDO (só os de prazo definido) e a nota diz quantos ficaram de fora — o TCV deles não é determinado
+  function tcvStat(id, bucket) {
+    const indeterminate = number(bucket.tcvIndeterminado);
+    if (indeterminate === 0) return stat(`${id}-tcv`, 'TCV (valor total dos contratos)', formatMoney(number(bucket.tcv)));
+    return stat(`${id}-tcv`, 'TCV conhecido (contratos com prazo definido)', formatMoney(number(bucket.tcv)), `${plural(indeterminate, 'contrato por prazo indeterminado não entra', 'contratos por prazo indeterminado não entram')} neste total: o TCV deles é indeterminado (não é zero nem uma estimativa).`);
+  }
+
   function group(id, title, subtitle, bucket, extra = []) {
     return el(
       'section',
       { className: 'dash-group', 'data-group': id, 'aria-labelledby': `dash-${id}-title` },
       el('h3', { id: `dash-${id}-title`, className: 'panel-section-title', text: title }),
       el('p', { className: 'muted', text: subtitle }),
-      el('div', { className: 'dash-stats' }, stat(`${id}-qtd`, 'Negociações', String(number(bucket.quantidade))), stat(`${id}-tcv`, 'TCV (valor total dos contratos)', formatMoney(number(bucket.tcv))), ...monthly(bucket), ...extra),
+      el('div', { className: 'dash-stats' }, stat(`${id}-qtd`, 'Negociações', String(number(bucket.quantidade))), tcvStat(id, bucket), ...monthly(bucket), ...extra),
       number(bucket.semCalculo) > 0 ? el('p', { className: 'muted', text: `${plural(number(bucket.semCalculo), 'negociação ficou fora', 'negociações ficaram fora')} dos valores por não ter as condições de pagamento completas.` }) : null
     );
   }
@@ -87,7 +95,7 @@ export function createCommercialDashboardView({ document, root, api, permissions
       { className: 'crm-table dash-table' },
       el('caption', { className: 'muted', text: 'Negociações abertas por etapa' }),
       el('thead', {}, el('tr', {}, ...['Funil', 'Etapa', 'Negociações', 'TCV em jogo'].map((title) => el('th', { scope: 'col', text: title })))),
-      el('tbody', {}, ...summary.porEtapa.map((row) => el('tr', {}, el('td', { 'data-label': 'Funil', text: textOf(row.funnelNome) || 'Funil' }), el('td', { 'data-label': 'Etapa', text: textOf(row.stageNome) || 'Etapa' }), el('td', { 'data-label': 'Negociações', text: String(number(row.quantidade)) }), el('td', { 'data-label': 'TCV em jogo', text: formatMoney(number(row.tcv)) }))))
+      el('tbody', {}, ...summary.porEtapa.map((row) => el('tr', {}, el('td', { 'data-label': 'Funil', text: textOf(row.funnelNome) || 'Funil' }), el('td', { 'data-label': 'Etapa', text: textOf(row.stageNome) || 'Etapa' }), el('td', { 'data-label': 'Negociações', text: String(number(row.quantidade)) }), el('td', { 'data-label': 'TCV em jogo', text: number(row.tcvIndeterminadas) > 0 ? `${formatMoney(number(row.tcv))} (+ ${number(row.tcvIndeterminadas)} com TCV indeterminado; MRR ${formatMoney(number(row.mrr))})` : formatMoney(number(row.tcv)) }))))
     );
   }
 

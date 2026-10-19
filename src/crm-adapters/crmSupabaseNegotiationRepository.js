@@ -5,6 +5,9 @@
 // TABELAS (migration 20261019090000_crm_negotiations.sql — NÃO APLICADA por este código nem por nenhum teste): crm_negotiations e crm_negotiation_events (histórico IMUTÁVEL), mais o card e o
 // movimento do card (crm_funnel_cards, crm_funnel_card_moves — ver crmSupabaseFunnelRepository.js).
 //
+// DURAÇÃO (Fase D3, migration 20261021090000): `duracao_tipo` (DEFINIDA | INDETERMINADA) e `aviso_previo_dias`; `prazo_meses` é NULL no contrato por prazo indeterminado. Uma linha lida de um banco SEM a D3 (as colunas
+// novas não existem) vale como DEFINIDA, sem aviso prévio — o adapter novo lê o banco antigo sem erro.
+//
 // O OBJETO DO DOMÍNIO: a negociação com o histórico DENTRO dela (`eventos`) e o valor em REAIS (`valorNegociado`). No banco o valor é `valor_centavos` (inteiro): a conversão é exata —
 // um valor que não é um número positivo com no máximo duas casas é RECUSADO aqui (nunca arredondado em silêncio). TCV, MRR e equivalente mensal não são gravados: derivam no domínio.
 //
@@ -93,7 +96,9 @@ function rowToNegotiation(row, events) {
     servicoNome: row.servico_nome ?? null,
     responsavelUserId: row.responsavel_user_id,
     responsavelNome: row.responsavel_nome,
-    prazoMeses: Number(row.prazo_meses),
+    duracao: row.duracao_tipo === 'INDETERMINADA' ? 'INDETERMINADA' : 'DEFINIDA',
+    prazoMeses: row.prazo_meses === null || row.prazo_meses === undefined ? null : Number(row.prazo_meses),
+    avisoPrevioDias: row.aviso_previo_dias === null || row.aviso_previo_dias === undefined ? null : Number(row.aviso_previo_dias),
     formaPagamento: row.forma_pagamento,
     periodicidade: row.periodicidade ?? null,
     valorNegociado: centsToReais(row.valor_centavos),
@@ -131,7 +136,9 @@ function negotiationToPayload(negotiation) {
     servicoNome: negotiation.servicoNome ?? null,
     responsavelUserId: negotiation.responsavelUserId,
     responsavelNome: negotiation.responsavelNome,
-    prazoMeses: negotiation.prazoMeses,
+    duracao: negotiation.duracao ?? 'DEFINIDA',
+    prazoMeses: negotiation.prazoMeses ?? null,
+    avisoPrevioDias: negotiation.avisoPrevioDias ?? null,
     formaPagamento: negotiation.formaPagamento,
     periodicidade: negotiation.periodicidade ?? null,
     valorCentavos: toCentsOrThrow(negotiation.valorNegociado),
