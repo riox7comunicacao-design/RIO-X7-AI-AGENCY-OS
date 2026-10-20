@@ -73,6 +73,12 @@
 //   POST  /api/crm-catalogs/<catalogo>/:id/deactivate   corpo {}                                          -> 200 { item }
 // Tudo fora de /api é arquivo estático (ver static.js).
 //
+// IMPLANTAÇÃO HOSPEDADA (Fase WEB 1, decisão 0033; deployment.js): com deploymentMode "crm-only" este app NÃO recebe a Approval Queue, a promoção, a prospecção, os briefs, os jobs, os leads
+// reprovados, o enriquecimento nem as exclusões permanentes (createApp recusa recebê-los). /api/approvals, /api/prospecting e /api/leads respondem 404 MODULE_DISABLED a qualquer método, ANTES
+// da autenticação. Antes de tudo: GET /healthz (público, só { status: "ok" }); um pedido que o proxy diz ter vindo por HTTP é redirecionado (leitura) ou recusado (escrita) para a origem pública
+// configurada; as respostas levam HSTS (sem includeSubDomains) e Permissions-Policy; e o limitador de falhas de autenticação devolve 429 a quem insiste com sessões ausentes ou inválidas.
+// Não há CORS. No modo "local" (padrão) nada disso muda, a não ser /healthz, que também responde.
+//
 // PIPELINE de toda rota de /api, sempre nesta ordem:
 //   1. rota e método existem?                        (404 / 405)
 //   2. Authorization: Bearer <access token>          (401 sem token)
@@ -115,6 +121,7 @@ const {
   USER_NOT_FOUND,
 } = require('../auth');
 const { createStaticHandler } = require('./static');
+const { DEPLOYMENT_MODE, HEALTH_PATH, isDisabledInCrmOnly, forwardedProto, clientKey } = require('./deployment');
 
 const MAX_BODY_BYTES = 16 * 1024;
 // A ÚNICA rota com corpo maior: a submissão de prospecção (até 150 achados brutos, decisão 0020). O limite geral acima NÃO mudou; este vale só
@@ -174,6 +181,10 @@ const CATALOG = Object.freeze({
   INACTIVE: [403, NO_ACCESS_MESSAGE],
   FORBIDDEN: [403, NO_ACCESS_MESSAGE],
   ROUTE_NOT_FOUND: [404, 'Rota não encontrada.'],
+  // Implantação hospedada (Fase WEB 1, decisão 0033): o módulo existe no sistema completo, mas esta instalação não o liga; a segurança do acesso HTTP; o freio a quem insiste em falhar.
+  MODULE_DISABLED: [404, 'Este módulo não está disponível nesta instalação.'],
+  HTTPS_REQUIRED: [403, 'Use o endereço seguro (https) deste site.'],
+  RATE_LIMITED: [429, 'Muitas tentativas recusadas. Aguarde alguns minutos e tente novamente.'],
   NOT_FOUND: [404, 'Item não encontrado.'],
   METHOD_NOT_ALLOWED: [405, 'Método não permitido.'],
   ALREADY_DECIDED: [409, 'Este item já foi decidido.'],
@@ -882,6 +893,13 @@ const SECURITY_HEADERS = Object.freeze({
   'Cross-Origin-Resource-Policy': 'same-origin',
 });
 
+// Só na instância hospedada (internet): HSTS por um ano, SEM includeSubDomains (o domínio pode abrigar outros sites que não são deste sistema) e sem preload; e nenhum recurso do aparelho.
+// Não há CORS: nenhum cabeçalho Access-Control-* é enviado, então só a própria origem lê as respostas (e CORP: same-origin reforça).
+const HOSTED_HEADERS = Object.freeze({
+  'Strict-Transport-Security': 'max-age=31536000',
+  'Permissions-Policy': 'camera=(), microphone=(), geolocation=(), payment=(), usb=()',
+});
+
 function requireFunction(value, name) {
   if (typeof value !== 'function') throw new Error(`createApp exige { ${name} } (função)`);
 }
@@ -917,13 +935,31 @@ function createApp(dependencies) {
     staticFiles,
     log = () => {},
     authTimeoutMs = DEFAULT_AUTH_TIMEOUT_MS,
+    deploymentMode = DEPLOYMENT_MODE.LOCAL,
+    publicOrigin,
+    trustProxy = false,
+    authFailureLimiter,
   } = dependencies || {};
   requireFunction(verifyAccessToken, 'verifyAccessToken');
   requireFunction(log, 'log');
   if (!userStore || typeof userStore.findByAuthUserId !== 'function') throw new Error('createApp exige { userStore } (com findByAuthUserId)');
-  for (const operation of ['listQueue', 'approveProspect', 'rejectProspect']) {
-    if (!approvalQueueService || typeof approvalQueueService[operation] !== 'function') {
-      throw new Error(`createApp exige { approvalQueueService } com ${operation}()`);
+  if (deploymentMode !== DEPLOYMENT_MODE.LOCAL && deploymentMode !== DEPLOYMENT_MODE.CRM_ONLY) throw new Error('createApp: deploymentMode deve ser "local" ou "crm-only"');
+  const crmOnly = deploymentMode === DEPLOYMENT_MODE.CRM_ONLY;
+  if (crmOnly) {
+    // INSTÂNCIA HOSPEDADA: nenhum módulo que dependa de arquivo local entra no app (nem como dependência morta) — quem compõe não os cria, e aqui a recusa é explícita.
+    const fileBacked = { approvalQueueService, crmIntegrationService, prospectingService, prospectingBriefService, prospectingJobService, prospectingExclusionService, leadReconsiderationService, leadEnrichmentService };
+    const present = Object.keys(fileBacked).filter((name) => fileBacked[name] !== undefined);
+    if (present.length > 0) throw new Error(`createApp (crm-only) não aceita módulos de arquivo local: ${present.join(', ')}`);
+    if (typeof publicOrigin !== 'string' || !/^https:\/\/[^/?#\s]+$/.test(publicOrigin)) throw new Error('createApp (crm-only) exige { publicOrigin } (origem https, sem caminho)');
+  }
+  if (authFailureLimiter !== undefined && (!authFailureLimiter || typeof authFailureLimiter.check !== 'function' || typeof authFailureLimiter.fail !== 'function')) {
+    throw new Error('createApp: authFailureLimiter deve ter check() e fail()');
+  }
+  if (!crmOnly) {
+    for (const operation of ['listQueue', 'approveProspect', 'rejectProspect']) {
+      if (!approvalQueueService || typeof approvalQueueService[operation] !== 'function') {
+        throw new Error(`createApp exige { approvalQueueService } com ${operation}()`);
+      }
     }
   }
   if (crmService !== undefined) {
@@ -998,18 +1034,31 @@ function createApp(dependencies) {
   const staticHandler = createStaticHandler({
     root: staticRoot,
     files: staticFiles,
-    config: { supabaseUrl: publicConfig.supabaseUrl, supabaseAnonKey: publicConfig.supabaseAnonKey },
+    // `modo` só existe na instância hospedada: o painel o usa para esconder os módulos desligados (o servidor é quem os recusa de verdade). No modo local o conteúdo é o de sempre.
+    config: { supabaseUrl: publicConfig.supabaseUrl, supabaseAnonKey: publicConfig.supabaseAnonKey, ...(crmOnly ? { modo: DEPLOYMENT_MODE.CRM_ONLY } : {}) },
   });
 
   // Autentica e devolve o contexto. Só o servidor decide: o token é a única coisa do cliente que conta.
+  // Com o limitador (instância hospedada): um cliente que acumulou falhas fica bloqueado ANTES de qualquer verificação (429); cada recusa por sessão ausente ou inválida (401) conta uma falha.
+  // Indisponibilidade do Supabase (503) e conta sem acesso (403) não contam.
   async function authenticate(req, trace) {
-    const token = bearerToken(req.headers.authorization);
-    trace.token = token;
-    const identity = await withTimeout(verifyAccessToken(token), authTimeoutMs);
-    const context = resolveAuthorizationContext(userStore, identity);
-    requireActiveUser(context);
-    trace.userId = context.userId;
-    return context;
+    const limiterKey = authFailureLimiter ? clientKey(req, trustProxy) : null;
+    if (limiterKey !== null) {
+      const state = authFailureLimiter.check(limiterKey);
+      if (state.blocked) throw new HttpError('RATE_LIMITED', undefined, { 'Retry-After': String(state.retryAfterSeconds) });
+    }
+    try {
+      const token = bearerToken(req.headers.authorization);
+      trace.token = token;
+      const identity = await withTimeout(verifyAccessToken(token), authTimeoutMs);
+      const context = resolveAuthorizationContext(userStore, identity);
+      requireActiveUser(context);
+      trace.userId = context.userId;
+      return context;
+    } catch (error) {
+      if (limiterKey !== null && mapErrorToHttp(error).code === 'UNAUTHENTICATED') authFailureLimiter.fail(limiterKey);
+      throw error;
+    }
   }
 
   async function serveStatic(req, url) {
@@ -1370,6 +1419,31 @@ function createApp(dependencies) {
 
   async function dispatch(req, trace) {
     const url = parseTarget(req);
+
+    // O health check: público, sem autenticação, sem tocar em Supabase nem em disco, e sem dizer nada além de "ok" (nenhuma versão, caminho, contagem ou configuração). Fica fora do redirecionamento
+    // para HTTPS: a sonda da plataforma pode chegar por HTTP interno.
+    if (url.pathname === HEALTH_PATH) {
+      trace.label = 'health';
+      if (req.method !== 'GET' && req.method !== 'HEAD') throw new HttpError('METHOD_NOT_ALLOWED', undefined, { Allow: 'GET, HEAD' });
+      return respond(200, { status: 'ok' });
+    }
+
+    if (crmOnly) {
+      // HTTPS: se o proxy da plataforma diz que a requisição chegou por HTTP, o destino é SEMPRE a origem pública configurada (nunca o Host da requisição). Só leitura é redirecionada;
+      // qualquer escrita por HTTP é recusada (as credenciais da requisição já teriam trafegado em claro). Sem o cabeçalho do proxy nada se sabe e nada se redireciona: a imposição de HTTPS é
+      // do domínio/plataforma e do HSTS (docs/operations/web-hostinger.md).
+      if (forwardedProto(req) === 'http') {
+        trace.label = 'https-redirect';
+        if (req.method === 'GET' || req.method === 'HEAD') return { status: 308, headers: { Location: `${publicOrigin}${url.pathname}${url.search}`, 'Cache-Control': 'no-store' }, body: '' };
+        throw new HttpError('HTTPS_REQUIRED');
+      }
+      // Módulos que dependem de arquivo local: recusados aqui, antes da rota, da autenticação, do corpo e de qualquer Service — mesmo que alguém injete um por engano (createApp já o recusa).
+      if (isDisabledInCrmOnly(url.pathname)) {
+        trace.label = '/api/*';
+        throw new HttpError('MODULE_DISABLED');
+      }
+    }
+
     const route = matchRoute(url.pathname, {
       crm: crmService !== undefined,
       promotion: crmIntegrationService !== undefined,
@@ -1459,7 +1533,7 @@ function createApp(dependencies) {
 
   // Toda resposta — de API, de arquivo ou de erro — sai com os cabeçalhos de segurança e o CSP.
   function finalize(response) {
-    const headers = { ...response.headers, ...SECURITY_HEADERS, 'Content-Security-Policy': csp };
+    const headers = { ...response.headers, ...SECURITY_HEADERS, ...(crmOnly ? HOSTED_HEADERS : {}), 'Content-Security-Policy': csp };
     if (response.body !== undefined && headers['Content-Length'] === undefined) headers['Content-Length'] = String(Buffer.byteLength(response.body));
     return { ...response, headers };
   }
@@ -1475,7 +1549,7 @@ function createApp(dependencies) {
       if (failure.status >= 500) log(`erro ${failure.status} em ${req.method} ${trace.label}: ${describeError(error, trace.token)}`);
       response = errorResponse(failure);
     }
-    if (trace.label !== 'static') {
+    if (trace.label !== 'static' && trace.label !== 'health') {
       log(`${req.method} ${trace.label} ${response.status}${trace.userId ? ` user=${trace.userId}` : ''}`);
     }
     return finalize(response);

@@ -391,7 +391,7 @@ test('[PRO-API-18] a rota é só transporte e não abre um caminho até o CRM: a
     }
   }
   const app = analyzeSource(fs.readFileSync(path.join(raiz, 'src', 'server', 'app.js'), 'utf8'), 'src/server/app.js');
-  assert.deepEqual(app.refs.map((r) => r.specifier).sort(), ['../auth', './static']);
+  assert.deepEqual(app.refs.map((r) => r.specifier).sort(), ['../auth', './deployment', './static']); // './deployment' (Fase WEB 1): funções puras do modo de implantação
   const codigo = fs.readFileSync(path.join(raiz, 'src', 'server', 'app.js'), 'utf8').replace(/\/\/.*$/gm, '');
   const trecho = codigo.slice(codigo.indexOf("route.name === 'prospecting-submit'"), codigo.indexOf("route.name === 'prospecting-submit'") + 500);
   for (const proibido of [/createRecord|updateRecord|moveStatus|markDoNotContact/, /writeFile|saveQueue|\.add\(/, /approveProspect|rejectProspect|promoteProspect/, /PERMISSION|hasPermission|requirePermission/]) {

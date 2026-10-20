@@ -83,9 +83,15 @@ export const NAV_TREE = Object.freeze([
 // Os ícones que o menu usa (cada um existe em index.html como <svg id="rx7-icon-NOME">). Um teste confere que não falta nenhum.
 export const ICON_NAMES = Object.freeze(['home', 'users', 'search', 'bot', 'shield', 'chevron', 'collapse', 'menu', 'close', 'logout']);
 
+// A INSTÂNCIA HOSPEDADA (decisão 0033; /config.json com modo "crm-only"): o servidor desliga a Approval Queue, a prospecção e o que depende de arquivo local — as telas deles somem do menu e
+// um endereço digitado à mão mostra "módulo indisponível", sem chamar a API. É só conforto: quem recusa de verdade é o servidor (MODULE_DISABLED).
+export const CRM_ONLY_HIDDEN_NAV_IDS = Object.freeze(['prospecting-group', 'prospecting-exclusions']);
+export const CRM_ONLY_DISABLED_SECTIONS = Object.freeze(['approvals', 'rejected-leads', 'prospecting', 'prospecting-history', 'prospecting-exclusions']);
+
 // A árvore que ESTA conta enxerga: tira o que a permissão não cobre, e os pais que ficaram sem nada para mostrar. Devolve cópias novas (a árvore original não é alterada).
-export function visibleTree(tree, permissions) {
-  const allowed = (item) => !item.needs || Boolean(permissions && permissions[item.needs]);
+// `hide`: ids de entradas (e de tudo o que há dentro delas) que ficam de fora, quaisquer que sejam as permissões.
+export function visibleTree(tree, permissions, { hide = [] } = {}) {
+  const allowed = (item) => !hide.includes(item.id) && (!item.needs || Boolean(permissions && permissions[item.needs]));
   const walk = (items) =>
     items
       .filter(allowed)

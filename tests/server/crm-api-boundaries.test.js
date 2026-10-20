@@ -30,7 +30,8 @@ const textosDe = (analise) => analise.tokens.filter((token) => token.type === 's
 test('[CRM-API-ARCH-1] o adaptador HTTP (app.js) só importa o barrel de src/auth e o servidor de estáticos: nunca src/services, nunca src/crm, nunca um adapter', () => {
   const analise = analisar('src/server/app.js');
   assert.deepEqual(analise.issues, []);
-  assert.deepEqual(analise.refs.map((ref) => ref.specifier).sort(), ['../auth', './static']);
+  // './deployment' (Fase WEB 1, decisão 0033): funções PURAS do modo de implantação (prefixos desativados, cabeçalhos de proxy) — sem I/O, sem Service, sem domínio.
+  assert.deepEqual(analise.refs.map((ref) => ref.specifier).sort(), ['../auth', './deployment', './static']);
 });
 
 test('[CRM-API-ARCH-2] o adaptador HTTP não tem NENHUMA peça de autorização do CRM nem regra do domínio: não conhece permissões, roles, statuses, campos, deduplicação, DNC, adapters nem a fábrica do Service', () => {
@@ -87,6 +88,8 @@ test('[CRM-API-ARCH-3] a raiz de composição só chama a fábrica de src/servic
       '../services/prospectingFileService',
       '../services/prospectingJobFileService',
       './app',
+      './deployment', // Fase WEB 1 (decisão 0033): a configuração PURA do modo de implantação (local | crm-only)
+      './failureLimiter', // Fase WEB 1: o limitador de falhas de autenticação, em memória, sem I/O
       'node:fs',
       'node:http',
       'node:path',

@@ -62,9 +62,10 @@ test('[EXCL-COMPOSE-4] a raiz de composição liga a guarda de forma explícita 
   const codigo = fs.readFileSync(path.join(__dirname, '..', '..', 'src', 'server', 'index.js'), 'utf8');
   assert.match(codigo, /createConfiguredPermanentExclusionGuard\(\{ env, exclusionService: prospectingExclusionService \}\)/, 'a guarda nasce da MESMA função de composição e do MESMO serviço de exclusões');
   assert.match(codigo, /createFileBackedCrmIntegrationService\(\{[^}]*permanentExclusions,\s*\}\)/, 'e é passada à promoção');
-  assert.ok(codigo.indexOf('const permanentExclusions =') < codigo.indexOf('createFileBackedCrmIntegrationService({'), 'criada ANTES da promoção');
-  assert.ok(codigo.indexOf('const prospectingExclusionService =') < codigo.indexOf('const permanentExclusions ='), 'e depois do serviço de exclusões');
-  assert.match(codigo, /if \(permanentExclusionsMode !== GUARD_MODE\.ENFORCED\) console\.warn\(FILE_MODE_WARNING\)/, 'o aviso sai no console da inicialização');
+  // (desde a Fase WEB 1 estas peças são criadas dentro de `if (!crmOnly)`: atribuições, não `const`)
+  assert.ok(codigo.indexOf('permanentExclusions = createConfiguredPermanentExclusionGuard') < codigo.indexOf('createFileBackedCrmIntegrationService({'), 'criada ANTES da promoção');
+  assert.ok(codigo.indexOf('prospectingExclusionService = createConfiguredProspectingExclusionService') < codigo.indexOf('permanentExclusions = createConfiguredPermanentExclusionGuard'), 'e depois do serviço de exclusões');
+  assert.match(codigo, /if \(!hosted && permanentExclusionsMode !== GUARD_MODE\.ENFORCED\) console\.warn\(FILE_MODE_WARNING\)/, 'o aviso sai no console da inicialização (do modo local)');
   assert.doesNotMatch(codigo, /FILE_MODE_UNVERIFIED\b/, 'a raiz de composição nunca referencia o marcador diretamente');
   assert.ok(FILE_MODE_WARNING.length > 100);
 });

@@ -19,7 +19,7 @@ import { h } from './dom.mjs';
 import { createApiClient } from './api.mjs';
 import { roleLabel } from './format.mjs';
 import { parseRoute, buildHash, sectionOf, catalogListRouteName } from './router.mjs';
-import { NAV_TREE, visibleTree, menuItemOf } from './nav.mjs';
+import { NAV_TREE, visibleTree, menuItemOf, CRM_ONLY_HIDDEN_NAV_IDS, CRM_ONLY_DISABLED_SECTIONS } from './nav.mjs';
 import { PAGE_TITLES, SHELL_TEXT } from './i18n/pt-BR.mjs';
 import { permissionsOf } from './crm-model.mjs';
 import { createPasswordRecovery, RESET_HASH, RECOVERY_TEXT } from './passwordRecovery.mjs';
@@ -69,8 +69,11 @@ export function startDashboard({ document, root, fetchImpl, sdk, navigation, pre
 
   async function boot() {
     let client;
+    // Instância hospedada (só CRM): o servidor avisa em /config.json (modo "crm-only") e os módulos desligados somem daqui. É conforto — o servidor é quem os recusa.
+    let crmOnly = false;
     try {
       const config = await loadConfig();
+      crmOnly = config.modo === 'crm-only';
       if (!sdk || typeof sdk.createClient !== 'function') throw new Error('sdk');
       client = sdk.createClient(config.supabaseUrl, config.supabaseAnonKey, {
         auth: { persistSession: true, autoRefreshToken: true, detectSessionInUrl: false },
@@ -245,7 +248,7 @@ export function startDashboard({ document, root, fetchImpl, sdk, navigation, pre
       const win = document.defaultView || null;
       const sidebar = createSidebar({
         document,
-        tree: visibleTree(NAV_TREE, permissions),
+        tree: visibleTree(NAV_TREE, permissions, crmOnly ? { hide: CRM_ONLY_HIDDEN_NAV_IDS } : undefined),
         brand: brandBlock,
         footer: whoBlock(me),
         preferences,
@@ -329,6 +332,21 @@ export function startDashboard({ document, root, fetchImpl, sdk, navigation, pre
         if (currentSection === 'prospecting-history' && section !== 'prospecting-history') historyView.hide();
         if (currentSection === 'prospecting' && section !== 'prospecting') prospectingView.hide();
         currentSection = section;
+
+        if (crmOnly && CRM_ONLY_DISABLED_SECTIONS.includes(section)) {
+          // Instância hospedada: o módulo está desligado no servidor. Nada é montado nem chamado.
+          main.replaceChildren(
+            h(
+              document,
+              'section',
+              { className: 'overview' },
+              h(document, 'h2', { text: 'Módulo indisponível' }),
+              h(document, 'p', { className: 'muted', text: 'Este módulo não está disponível nesta instalação online do CRM.' }),
+              h(document, 'a', { href: buildHash({ name: 'overview' }), className: 'btn secondary', text: 'Ir para a Visão Geral' })
+            )
+          );
+          return;
+        }
 
         if (section === 'crm') {
           if (!permissions.canReadCrm) {
@@ -438,7 +456,8 @@ export function startDashboard({ document, root, fetchImpl, sdk, navigation, pre
         } else if (section === 'overview') {
           const target = container();
           main.replaceChildren(target);
-          transient = createOverviewView({ document, root: target, api, me, permissions });
+          // Instância hospedada: sem a fila de aprovação, o painel não pergunta por ela (canReview = false deixa o indicador desligado, sem chamada).
+          transient = createOverviewView({ document, root: target, api, me, permissions: crmOnly ? { ...permissions, canReview: false } : permissions });
           transient.load();
         } else {
           main.replaceChildren(
